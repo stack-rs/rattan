@@ -4,7 +4,7 @@ use rtnetlink::Handle;
 use std::net::{IpAddr, Ipv4Addr};
 use tokio::{runtime, task};
 
-async fn get_link_index(handle: &Handle, name: &str) -> anyhow::Result<u32> {
+pub async fn get_link_index(handle: &Handle, name: &str) -> anyhow::Result<u32> {
     Ok(handle
         .link()
         .get()
@@ -17,10 +17,10 @@ async fn get_link_index(handle: &Handle, name: &str) -> anyhow::Result<u32> {
         .index)
 }
 
-struct VethDevice {
-    handle: Handle,
-    index: u32,
-    name: String,
+pub struct VethDevice {
+    pub handle: Handle,
+    pub index: u32,
+    pub name: String,
 }
 
 impl VethDevice {
@@ -52,13 +52,13 @@ impl VethDevice {
     }
 }
 
-struct VethDevicePair {
-    left: VethDevice,
-    right: VethDevice,
+pub struct VethDevicePair {
+    pub left: VethDevice,
+    pub right: VethDevice,
 }
 
 impl VethDevicePair {
-    async fn new(left_name: &str, right_name: &str) -> anyhow::Result<Self> {
+    pub async fn new(left_name: &str, right_name: &str) -> anyhow::Result<Self> {
         let (connection, handle, _) = rtnetlink::new_connection().unwrap();
         tokio::spawn(connection);
 
@@ -89,25 +89,25 @@ impl VethDevicePair {
         })
     }
 
-    async fn enable(&mut self) -> anyhow::Result<()> {
+    pub async fn enable(&mut self) -> anyhow::Result<()> {
         self.left.enable().await?;
         self.right.enable().await?;
         Ok(())
     }
 
-    async fn disable(&mut self) -> anyhow::Result<()> {
+    pub async fn disable(&mut self) -> anyhow::Result<()> {
         self.left.disable().await?;
         self.right.disable().await?;
         Ok(())
     }
 
-    async fn set_l2_addr(&mut self, left_addr: &[u8], right_addr: &[u8]) -> anyhow::Result<()> {
+    pub async fn set_l2_addr(&mut self, left_addr: &[u8], right_addr: &[u8]) -> anyhow::Result<()> {
         self.left.set_l2_addr(left_addr).await?;
         self.right.set_l2_addr(right_addr).await?;
         Ok(())
     }
 
-    async fn set_l3_addr(
+    pub async fn set_l3_addr(
         &mut self,
         left_addr: IpAddr,
         left_prefix: u8,
