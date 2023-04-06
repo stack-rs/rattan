@@ -1,3 +1,5 @@
+/// This test need to be run as root (CAP_NET_ADMIN)
+/// CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test veth -- --ignored --nocapture
 use anyhow::anyhow;
 use futures::stream::TryStreamExt;
 use rtnetlink::Handle;
@@ -24,15 +26,15 @@ pub struct VethDevice {
 }
 
 impl VethDevice {
-    pub async fn enable(&mut self) -> anyhow::Result<()> {
+    async fn enable(&mut self) -> anyhow::Result<()> {
         Ok(self.handle.link().set(self.index).up().execute().await?)
     }
 
-    pub async fn disable(&mut self) -> anyhow::Result<()> {
+    async fn disable(&mut self) -> anyhow::Result<()> {
         Ok(self.handle.link().set(self.index).down().execute().await?)
     }
 
-    pub async fn set_l2_addr(&mut self, address: &[u8]) -> anyhow::Result<()> {
+    async fn set_l2_addr(&mut self, address: &[u8]) -> anyhow::Result<()> {
         Ok(self
             .handle
             .link()
@@ -42,7 +44,7 @@ impl VethDevice {
             .await?)
     }
 
-    pub async fn set_l3_addr(&mut self, address: IpAddr, prefix: u8) -> anyhow::Result<()> {
+    async fn set_l3_addr(&mut self, address: IpAddr, prefix: u8) -> anyhow::Result<()> {
         Ok(self
             .handle
             .address()
@@ -53,8 +55,8 @@ impl VethDevice {
 }
 
 pub struct VethDevicePair {
-    pub left: VethDevice,
-    pub right: VethDevice,
+    left: VethDevice,
+    right: VethDevice,
 }
 
 impl VethDevicePair {
@@ -131,7 +133,7 @@ impl Drop for VethDevicePair {
         });
 
         if let Err(e) = res {
-            eprintln!("failed to delete link: {:?} (you may need to delete it manually with 'sudo ip link del {}')", e, if_name);
+            eprintln!("failed to delete veth pair: {:?} (you may need to delete it manually with 'sudo ip link del {}')", e, if_name);
         }
     }
 }
