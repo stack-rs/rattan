@@ -1,0 +1,32 @@
+<domain type='kvm'>
+    <name>jammy-6.1</name>
+    <uuid>94894c3a-c0d7-40d6-a2f7-cfcb78acf7a8</uuid>
+    <os>
+        <type>hvm</type>
+        <boot dev='hd'/>
+        <bios useserial='yes' rebootTimeout='0'/>
+        <bootmenu enable='yes' timeout='3000'/>
+    </os>
+    <vcpu>4</vcpu>
+    <memory unit='GiB'>16</memory>
+    <currentMemory unit='GiB'>16</currentMemory>
+    <cpu mode="host-passthrough" migratable="off">
+    </cpu>
+    <on_reboot>restart</on_reboot>
+    <on_crash>restart</on_crash>
+    <devices>
+        <disk type='volume' device='disk'>
+            <driver name='qemu' type='qcow2'/>
+            <source pool='default' volume='jammy-6.1'/>
+            <target dev='hda'/>
+        </disk>
+        <serial type='pty'>
+            <target port='0'/>
+        </serial>
+        <interface type='network'>
+            <source network='default'/>
+            <mac address='52:54:06:01:31:80'/>
+            <model type='virtio'/>
+        </interface>
+    </devices>
+</domain>

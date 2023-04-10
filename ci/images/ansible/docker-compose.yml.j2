@@ -1,0 +1,20 @@
+version: '3'
+
+services:
+  worker:
+    image: myoung34/github-runner:latest
+    container_name: github-runner
+    restart: always
+    environment:
+      RUNNER_NAME: {{ runner_name }}
+      RUNNER_SCOPE: org
+      ORG_NAME: stack-rs
+      ACCESS_TOKEN: {{ github_access_key }}
+      RUNNER_WORKDIR: /tmp/runner/work
+      LABELS: linux,x64,{{ kernel_version }}
+    security_opt:
+      # needed on SELinux systems to allow docker container to manage other docker containers
+      - label:disable
+    volumes:
+      - '/var/run/docker.sock:/var/run/docker.sock'
+      - '/tmp/runner:/tmp/runner'

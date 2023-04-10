@@ -1,0 +1,39 @@
+---
+- name: Install and Run Githuh Self-hosted Runner
+  hosts: all
+  tasks:
+  - name: install pip
+    ansible.builtin.include_role:
+      name: geerlingguy.pip
+      apply:
+        become: true
+    vars:
+      pip_install_packages:
+        - name: docker
+        - name: docker-compose
+
+  - name: install docker and docker-compose
+    ansible.builtin.include_role:
+      name: geerlingguy.docker
+      apply:
+        become: true
+    vars:
+      - docker_install_compose: true
+
+  - name: set service configuration directory
+    become: true
+    ansible.builtin.file:
+      path: /etc/runner
+      state: directory
+
+  - name: copy github-runner docker-compose file
+    become: true
+    ansible.builtin.template:
+      src: docker-compose.yml.j2
+      dest: /etc/runner/docker-compose.yml
+
+  - name: start the github-runner container
+    become: true
+    community.docker.docker_compose:
+      project_src: /etc/runner
+      restarted: yes

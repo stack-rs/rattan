@@ -1,0 +1,32 @@
+<domain type='kvm'>
+    <name>focal-5.4</name>
+    <uuid>33ea0651-5b2b-445c-ad92-696e4c436f5c</uuid>
+    <os>
+        <type>hvm</type>
+        <boot dev='hd'/>
+        <bios useserial='yes' rebootTimeout='0'/>
+        <bootmenu enable='yes' timeout='3000'/>
+    </os>
+    <vcpu>4</vcpu>
+    <memory unit='GiB'>16</memory>
+    <currentMemory unit='GiB'>16</currentMemory>
+    <cpu mode="host-passthrough" migratable="off">
+    </cpu>
+    <on_reboot>restart</on_reboot>
+    <on_crash>restart</on_crash>
+    <devices>
+        <disk type='volume' device='disk'>
+            <driver name='qemu' type='qcow2'/>
+            <source pool='default' volume='focal-5.4'/>
+            <target dev='hda'/>
+        </disk>
+        <serial type='pty'>
+            <target port='0'/>
+        </serial>
+        <interface type='network'>
+            <source network='default'/>
+            <mac address='52:54:05:04:31:80'/>
+            <model type='virtio'/>
+        </interface>
+    </devices>
+</domain>
