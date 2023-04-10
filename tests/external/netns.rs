@@ -1,3 +1,5 @@
+/// This test need to be run as root (CAP_NET_ADMIN and CAP_SYS_ADMIN)
+/// CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test netns -- --ignored --nocapture
 use std::ops::{Deref, DerefMut};
 
 use netns_rs::NetNs;

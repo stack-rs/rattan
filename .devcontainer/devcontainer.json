@@ -1,0 +1,8 @@
+{
+    "name": "Rattan Dev Container",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    "features": {
+        "ghcr.io/devcontainers/features/rust:1": {}
+    },
+	"runArgs": [ "--cap-add=NET_ADMIN", "--cap-add=SYS_PTRACE", "--cap-add=SYS_ADMIN", "--security-opt", "apparmor=unconfined" ]
+}
