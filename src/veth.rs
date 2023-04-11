@@ -84,7 +84,7 @@ pub struct VethDevice {
 }
 
 impl VethDevice {
-    pub fn up(&self) -> Result<(), Error> {
+    pub fn up(&mut self) -> Result<&mut Self, Error> {
         let cur_netns = if let Some(ref ns) = self.ns_name {
             let cur_netns = get_current_netns()?;
             let netns = NetNs::get(ns)?;
@@ -110,11 +110,11 @@ impl VethDevice {
         if !output.status.success() {
             Err(VethError::SetError(String::from_utf8(output.stderr).unwrap()).into())
         } else {
-            Ok(())
+            Ok(self)
         }
     }
 
-    pub fn down(&self) -> Result<(), Error> {
+    pub fn down(&mut self) -> Result<&mut Self, Error> {
         let cur_netns = if let Some(ref ns) = self.ns_name {
             let cur_netns = get_current_netns()?;
             let netns = NetNs::get(ns)?;
@@ -140,11 +140,11 @@ impl VethDevice {
         if !output.status.success() {
             Err(VethError::SetError(String::from_utf8(output.stderr).unwrap()).into())
         } else {
-            Ok(())
+            Ok(self)
         }
     }
 
-    pub fn set_ns<S: Into<String>>(&mut self, ns_name: S) -> Result<(), VethError> {
+    pub fn set_ns<S: Into<String>>(&mut self, ns_name: S) -> Result<&mut Self, VethError> {
         if let Some(ref ns) = self.ns_name {
             return Err(VethError::AlreadyInNamespace(ns.clone()));
         }
@@ -163,11 +163,11 @@ impl VethDevice {
             ))
         } else {
             self.ns_name = Some(ns_name);
-            Ok(())
+            Ok(self)
         }
     }
 
-    pub fn set_l2_addr(&mut self, mac_addr: MacAddr) -> Result<(), Error> {
+    pub fn set_l2_addr(&mut self, mac_addr: MacAddr) -> Result<&mut Self, Error> {
         let cur_netns = if let Some(ref ns) = self.ns_name {
             let cur_netns = get_current_netns()?;
             let netns = NetNs::get(ns)?;
@@ -195,11 +195,11 @@ impl VethDevice {
             Err(VethError::SetError(String::from_utf8(output.stderr).unwrap()).into())
         } else {
             self.mac_addr = Some(mac_addr);
-            Ok(())
+            Ok(self)
         }
     }
 
-    pub fn set_l3_addr(&mut self, ip_addr: IpAddr, prefix: u8) -> Result<(), Error> {
+    pub fn set_l3_addr(&mut self, ip_addr: IpAddr, prefix: u8) -> Result<&mut Self, Error> {
         let cur_netns = if let Some(ref ns) = self.ns_name {
             let cur_netns = get_current_netns()?;
             let netns = NetNs::get(ns)?;
@@ -226,7 +226,7 @@ impl VethDevice {
             Err(VethError::SetError(String::from_utf8(output.stderr).unwrap()).into())
         } else {
             self.ip_addr = Some((ip_addr, prefix));
-            Ok(())
+            Ok(self)
         }
     }
 }
