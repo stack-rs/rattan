@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.69"
 futures = "0.3.26"
+libc = "0.2.141"
 nix = "0.26.2"
 rtnetlink = "0.12.0"
 thiserror = "1.0.40"
