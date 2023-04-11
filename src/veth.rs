@@ -1,5 +1,6 @@
 use crate::error::{Error, MacParseError, VethError};
 use crate::netns::{get_current_netns, NetNs};
+use nix::net::if_::if_nametoindex;
 use std::net::IpAddr;
 use std::process::Command;
 
@@ -28,12 +29,14 @@ impl VethPair {
             Ok(VethPair {
                 left: VethDevice {
                     name: name.as_ref().to_string(),
+                    index: if_nametoindex(name.as_ref())?,
                     mac_addr: None,
                     ip_addr: None,
                     ns_name: None,
                 },
                 right: VethDevice {
                     name: peer_name.as_ref().to_string(),
+                    index: if_nametoindex(peer_name.as_ref())?,
                     mac_addr: None,
                     ip_addr: None,
                     ns_name: None,
@@ -74,6 +77,7 @@ impl Drop for VethPair {
 
 pub struct VethDevice {
     pub name: String,
+    pub index: u32,
     pub mac_addr: Option<MacAddr>,
     pub ip_addr: Option<(IpAddr, u8)>,
     ns_name: Option<String>,

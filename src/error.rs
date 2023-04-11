@@ -55,6 +55,8 @@ pub enum VethError {
     CreateVethPairError(String),
     #[error("Encounter IO error, {0}")]
     IoError(#[from] std::io::Error),
+    #[error("Encounter system error, {0}")]
+    SystemError(#[from] nix::errno::Errno),
     #[error("Already in namespace {0}")]
     AlreadyInNamespace(String),
     #[error("Set Veth error, {0}")]

@@ -167,9 +167,7 @@ impl<E: Env> NetNs<E> {
             let new_thread: JoinHandle<Result<(), NsError>> =
                 thread::spawn(move || Self::persistent(&ns_path_clone, false));
             match new_thread.join() {
-                Ok(t) => {
-                    t?
-                }
+                Ok(t) => t?,
                 Err(e) => {
                     return Err(NsError::JoinThreadError(format!("{:?}", e)));
                 }
