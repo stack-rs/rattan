@@ -1,5 +1,5 @@
 use crate::error::{Error, MacParseError, VethError};
-use crate::netns::{get_current_netns, NetNs};
+use crate::netns::{NetNs, NetNsGuard};
 use nix::net::if_::if_nametoindex;
 use std::net::IpAddr;
 use std::process::Command;
@@ -32,14 +32,14 @@ impl VethPair {
                     index: if_nametoindex(name.as_ref())?,
                     mac_addr: None,
                     ip_addr: None,
-                    ns_name: None,
+                    namespace: NetNs::current()?,
                 },
                 right: VethDevice {
                     name: peer_name.as_ref().to_string(),
                     index: if_nametoindex(peer_name.as_ref())?,
                     mac_addr: None,
                     ip_addr: None,
-                    ns_name: None,
+                    namespace: NetNs::current()?,
                 },
             })
         }
@@ -48,22 +48,18 @@ impl VethPair {
 
 impl Drop for VethPair {
     fn drop(&mut self) {
-        let cur_netns = if let Some(ref ns) = self.left.ns_name {
-            let cur_netns = get_current_netns().unwrap();
-            let netns = NetNs::get(ns).unwrap();
-            netns.enter().unwrap();
-            Some(cur_netns)
-        } else {
-            None
-        };
+        let ns_guard = NetNsGuard::new(self.left.namespace.clone());
+        if let Err(e) = ns_guard {
+            eprintln!("Failed to enter netns: {}", e);
+            return;
+        }
+
         let output = Command::new("ip")
             .arg("link")
             .arg("del")
             .arg(&self.left.name)
             .output();
-        if let Some(netns) = cur_netns {
-            netns.enter().unwrap();
-        }
+
         if let Err(e) = output {
             eprintln!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &self.left.name);
         } else {
@@ -80,19 +76,12 @@ pub struct VethDevice {
     pub index: u32,
     pub mac_addr: Option<MacAddr>,
     pub ip_addr: Option<(IpAddr, u8)>,
-    ns_name: Option<String>,
+    namespace: std::sync::Arc<NetNs>,
 }
 
 impl VethDevice {
     pub fn up(&mut self) -> Result<&mut Self, Error> {
-        let cur_netns = if let Some(ref ns) = self.ns_name {
-            let cur_netns = get_current_netns()?;
-            let netns = NetNs::get(ns)?;
-            netns.enter()?;
-            Some(cur_netns)
-        } else {
-            None
-        };
+        let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
         let output = Command::new("ip")
             .arg("link")
             .arg("set")
@@ -104,9 +93,6 @@ impl VethDevice {
                 let err: VethError = e.into();
                 err
             })?;
-        if let Some(netns) = cur_netns {
-            netns.enter()?;
-        }
         if !output.status.success() {
             Err(VethError::SetError(String::from_utf8(output.stderr).unwrap()).into())
         } else {
@@ -115,14 +101,7 @@ impl VethDevice {
     }
 
     pub fn down(&mut self) -> Result<&mut Self, Error> {
-        let cur_netns = if let Some(ref ns) = self.ns_name {
-            let cur_netns = get_current_netns()?;
-            let netns = NetNs::get(ns)?;
-            netns.enter()?;
-            Some(cur_netns)
-        } else {
-            None
-        };
+        let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
         let output = Command::new("ip")
             .arg("link")
             .arg("set")
@@ -134,9 +113,6 @@ impl VethDevice {
                 let err: VethError = e.into();
                 err
             })?;
-        if let Some(netns) = cur_netns {
-            netns.enter()?;
-        }
         if !output.status.success() {
             Err(VethError::SetError(String::from_utf8(output.stderr).unwrap()).into())
         } else {
@@ -144,38 +120,39 @@ impl VethDevice {
         }
     }
 
-    pub fn set_ns<S: Into<String>>(&mut self, ns_name: S) -> Result<&mut Self, VethError> {
-        if let Some(ref ns) = self.ns_name {
-            return Err(VethError::AlreadyInNamespace(ns.clone()));
+    pub fn set_ns(&mut self, netns: std::sync::Arc<NetNs>) -> Result<&mut Self, VethError> {
+        if netns == self.namespace {
+            return Ok(self);
         }
-        let ns_name = ns_name.into();
+
+        // XXX(minhuw): ad-hoc solution here, maybe ip netns accept path, i.e., /var/run/netns/<netns>?
+        // or rtnetlink may use fd instead of so we can use netns.file directly.
+        let ns_name = netns
+            .as_ref()
+            .path()
+            .strip_prefix("/var/run/netns/")
+            .unwrap();
+
         let output = Command::new("ip")
             .arg("link")
             .arg("set")
             .arg("dev")
             .arg(&self.name)
             .arg("netns")
-            .arg(&ns_name)
+            .arg(ns_name)
             .output()?;
         if !output.status.success() {
             Err(VethError::SetError(
                 String::from_utf8(output.stderr).unwrap(),
             ))
         } else {
-            self.ns_name = Some(ns_name);
+            self.namespace = netns;
             Ok(self)
         }
     }
 
     pub fn set_l2_addr(&mut self, mac_addr: MacAddr) -> Result<&mut Self, Error> {
-        let cur_netns = if let Some(ref ns) = self.ns_name {
-            let cur_netns = get_current_netns()?;
-            let netns = NetNs::get(ns)?;
-            netns.enter()?;
-            Some(cur_netns)
-        } else {
-            None
-        };
+        let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
         let output = Command::new("ip")
             .arg("link")
             .arg("set")
@@ -188,9 +165,6 @@ impl VethDevice {
                 let err: VethError = e.into();
                 err
             })?;
-        if let Some(netns) = cur_netns {
-            netns.enter()?;
-        }
         if !output.status.success() {
             Err(VethError::SetError(String::from_utf8(output.stderr).unwrap()).into())
         } else {
@@ -200,14 +174,7 @@ impl VethDevice {
     }
 
     pub fn set_l3_addr(&mut self, ip_addr: IpAddr, prefix: u8) -> Result<&mut Self, Error> {
-        let cur_netns = if let Some(ref ns) = self.ns_name {
-            let cur_netns = get_current_netns()?;
-            let netns = NetNs::get(ns)?;
-            netns.enter()?;
-            Some(cur_netns)
-        } else {
-            None
-        };
+        let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
         let output = Command::new("ip")
             .arg("address")
             .arg("add")
@@ -219,9 +186,6 @@ impl VethDevice {
                 let err: VethError = e.into();
                 err
             })?;
-        if let Some(netns) = cur_netns {
-            netns.enter()?;
-        }
         if !output.status.success() {
             Err(VethError::SetError(String::from_utf8(output.stderr).unwrap()).into())
         } else {
@@ -231,25 +195,23 @@ impl VethDevice {
     }
 
     pub fn disable_checksum_offload(&mut self) -> Result<&mut Self, Error> {
-        let cur_netns = if let Some(ref ns) = self.ns_name {
-            let cur_netns = get_current_netns()?;
-            let netns = NetNs::get(ns)?;
-            netns.enter()?;
-            Some(cur_netns)
-        } else {
-            None
-        };
-        let output = Command::new("ethtool").args(["-K", &self.name, "tx-checksumming", "off", "rx-checksumming", "off"]).output()?;
-        if let Some(netns) = cur_netns {
-            netns.enter()?;
-        }
+        let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
+        let output = Command::new("ethtool")
+            .args([
+                "-K",
+                &self.name,
+                "tx-checksumming",
+                "off",
+                "rx-checksumming",
+                "off",
+            ])
+            .output()?;
         if !output.status.success() {
             Err(VethError::SetError(String::from_utf8(output.stderr).unwrap()).into())
         } else {
             Ok(self)
         }
     }
-
 }
 
 /// Contains the individual bytes of the MAC address.

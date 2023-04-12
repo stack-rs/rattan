@@ -1,10 +1,12 @@
+/// This test need to be run as root (CAP_NET_ADMIN, CAP_SYS_ADMIN and CAP_SYS_RAW)
+/// CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test af_packet -- --ignored --nocapture
 use anyhow;
 use libc::{c_void, size_t, sockaddr, sockaddr_ll, socklen_t};
 use nix::errno::Errno;
 use nix::sys::epoll::{epoll_create, epoll_ctl, epoll_wait, EpollEvent, EpollFlags};
 use nix::sys::socket::{AddressFamily, SockType};
+use rattan::env::get_std_env;
 use rattan::veth::{MacAddr, VethDevice};
-use rattan::{env::get_std_env, netns::NetNs};
 use std::{mem, ptr};
 
 fn create_dev_socket(veth: &VethDevice) -> anyhow::Result<i32> {
@@ -131,11 +133,11 @@ fn send_to_dev(
 }
 
 enum PacketType {
-    PACKET_HOST = 0,
-    PACKET_BROADCAST = 1,
-    PACKET_MULTICAST = 2,
-    PACKET_OTHERHOST = 3,
-    PACKET_OUTGOING = 4,
+    PacketHost = 0,
+    _PacketBroadcast = 1,
+    _PacketMulticast = 2,
+    _PacketOtherhost = 3,
+    PacketOutgoing = 4,
 }
 
 #[test]
@@ -145,7 +147,7 @@ fn af_packet_test() -> anyhow::Result<()> {
 
     // step into rattan namespace
     {
-        let netns = NetNs::get("ns-rattan").unwrap();
+        let netns = stdenv.rattan_ns;
         netns.enter().unwrap();
 
         let left_sniffer = create_dev_socket(&stdenv.left_pair.right).unwrap();
@@ -203,8 +205,8 @@ fn af_packet_test() -> anyhow::Result<()> {
                 let addr = addr.unwrap();
 
                 // ignore all outgoing packets
-                if addr.sll_pkttype == PacketType::PACKET_OUTGOING as u8
-                    || addr.sll_pkttype == PacketType::PACKET_HOST as u8
+                if addr.sll_pkttype == PacketType::PacketOutgoing as u8
+                    || addr.sll_pkttype == PacketType::PacketHost as u8
                 {
                     continue;
                 }
@@ -246,6 +248,5 @@ fn af_packet_test() -> anyhow::Result<()> {
         }
     }
 
-    stdenv.clean().unwrap();
     Ok(())
 }

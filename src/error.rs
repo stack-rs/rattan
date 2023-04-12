@@ -55,6 +55,8 @@ pub enum MacParseError {
 pub enum VethError {
     #[error("Can not create veth pair, {0}")]
     CreateVethPairError(String),
+    #[error("Encounter namespace error, {0}")]
+    NsError(#[from] NsError),
     #[error("Encounter IO error, {0}")]
     IoError(#[from] std::io::Error),
     #[error("Encounter system error, {0}")]

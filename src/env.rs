@@ -8,22 +8,11 @@ use std::net::{IpAddr, Ipv4Addr};
 // +-----------+                 +--------------------+                 +-----------+
 
 pub struct StdNetEnv {
-    pub left_ns: NetNs,
-    pub rattan_ns: NetNs,
-    pub right_ns: NetNs,
+    pub left_ns: std::sync::Arc<NetNs>,
+    pub rattan_ns: std::sync::Arc<NetNs>,
+    pub right_ns: std::sync::Arc<NetNs>,
     pub left_pair: VethPair,
     pub right_pair: VethPair,
-}
-
-impl StdNetEnv {
-    pub fn clean(self) -> anyhow::Result<()> {
-        std::mem::drop(self.left_pair);
-        std::mem::drop(self.right_pair);
-        self.left_ns.remove()?;
-        self.right_ns.remove()?;
-        self.rattan_ns.remove()?;
-        Ok(())
-    }
 }
 
 pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
@@ -34,7 +23,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
 
     veth_pair_client
         .left
-        .set_ns("ns-client")?
+        .set_ns(client_netns.clone())?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2a].into())?
         .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 24)?
         .disable_checksum_offload()?
@@ -42,7 +31,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
 
     veth_pair_client
         .right
-        .set_ns("ns-rattan")?
+        .set_ns(rattan_netns.clone())?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2b].into())?
         .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 24)?
         .disable_checksum_offload()?
@@ -51,7 +40,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
     let mut veth_pair_server = VethPair::new("rs-left", "rs-right")?;
     veth_pair_server
         .left
-        .set_ns("ns-rattan")?
+        .set_ns(rattan_netns.clone())?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2c].into())?
         .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 2)), 24)?
         .disable_checksum_offload()?
@@ -59,15 +48,41 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
 
     veth_pair_server
         .right
-        .set_ns("ns-server")?
+        .set_ns(server_netns.clone())?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2d].into())?
         .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24)?
         .disable_checksum_offload()?
         .up()?;
 
     // Set the default route of left and right namespaces
-    std::process::Command::new("ip").args(["netns", "exec", "ns-client", "ip", "route", "add", "default", "via", "192.168.1.1"]).output().unwrap();
-    std::process::Command::new("ip").args(["netns", "exec", "ns-server", "ip", "route", "add", "default", "via", "192.168.2.1"]).output().unwrap();
+    std::process::Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            "ns-client",
+            "ip",
+            "route",
+            "add",
+            "default",
+            "via",
+            "192.168.1.1",
+        ])
+        .output()
+        .unwrap();
+    std::process::Command::new("ip")
+        .args([
+            "netns",
+            "exec",
+            "ns-server",
+            "ip",
+            "route",
+            "add",
+            "default",
+            "via",
+            "192.168.2.1",
+        ])
+        .output()
+        .unwrap();
 
     let output = std::process::Command::new("ip")
         .arg("netns")
@@ -79,7 +94,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         String::from_utf8_lossy(&output.stdout)
     );
 
-    for ns in vec!["ns-client", "ns-server", "ns-rattan"] {
+    for ns in &["ns-client", "ns-server", "ns-rattan"] {
         let output = std::process::Command::new("ip")
             .args(["netns", "exec", ns, "ip", "addr", "show"])
             .output()
