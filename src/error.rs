@@ -6,6 +6,8 @@ pub enum Error {
     NsError(#[from] NsError),
     #[error("VethError: {0}")]
     VethError(#[from] VethError),
+    #[error("Encounter IO error, {0}")]
+    IoError(#[from] std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]

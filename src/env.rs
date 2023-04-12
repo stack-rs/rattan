@@ -8,11 +8,11 @@ use std::net::{IpAddr, Ipv4Addr};
 // +-----------+                 +--------------------+                 +-----------+
 
 pub struct StdNetEnv {
-    left_ns: NetNs,
-    rattan_ns: NetNs,
-    right_ns: NetNs,
-    left_pair: VethPair,
-    right_pair: VethPair,
+    pub left_ns: NetNs,
+    pub rattan_ns: NetNs,
+    pub right_ns: NetNs,
+    pub left_pair: VethPair,
+    pub right_pair: VethPair,
 }
 
 impl StdNetEnv {
@@ -37,6 +37,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         .set_ns("ns-client")?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2a].into())?
         .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 24)?
+        .disable_checksum_offload()?
         .up()?;
 
     veth_pair_client
@@ -44,14 +45,16 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         .set_ns("ns-rattan")?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2b].into())?
         .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 24)?
+        .disable_checksum_offload()?
         .up()?;
 
-    let mut veth_pair_server = VethPair::new("rs-dleft", "rs-right")?;
+    let mut veth_pair_server = VethPair::new("rs-left", "rs-right")?;
     veth_pair_server
         .left
         .set_ns("ns-rattan")?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2c].into())?
         .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 2)), 24)?
+        .disable_checksum_offload()?
         .up()?;
 
     veth_pair_server
@@ -59,7 +62,12 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         .set_ns("ns-server")?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2d].into())?
         .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24)?
+        .disable_checksum_offload()?
         .up()?;
+
+    // Set the default route of left and right namespaces
+    std::process::Command::new("ip").args(["netns", "exec", "ns-client", "ip", "route", "add", "default", "via", "192.168.1.1"]).output().unwrap();
+    std::process::Command::new("ip").args(["netns", "exec", "ns-server", "ip", "route", "add", "default", "via", "192.168.2.1"]).output().unwrap();
 
     let output = std::process::Command::new("ip")
         .arg("netns")

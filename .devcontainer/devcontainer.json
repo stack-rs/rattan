@@ -4,5 +4,5 @@
     "features": {
         "ghcr.io/devcontainers/features/rust:1": {}
     },
-	"runArgs": [ "--cap-add=NET_ADMIN", "--cap-add=SYS_PTRACE", "--cap-add=SYS_ADMIN", "--security-opt", "apparmor=unconfined" ]
+	"runArgs": [ "--cap-add=NET_ADMIN", "--cap-add=NET_RAW", "--cap-add=SYS_PTRACE", "--cap-add=SYS_ADMIN", "--security-opt", "apparmor=unconfined" ]
 }

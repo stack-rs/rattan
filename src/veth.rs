@@ -229,6 +229,27 @@ impl VethDevice {
             Ok(self)
         }
     }
+
+    pub fn disable_checksum_offload(&mut self) -> Result<&mut Self, Error> {
+        let cur_netns = if let Some(ref ns) = self.ns_name {
+            let cur_netns = get_current_netns()?;
+            let netns = NetNs::get(ns)?;
+            netns.enter()?;
+            Some(cur_netns)
+        } else {
+            None
+        };
+        let output = Command::new("ethtool").args(["-K", &self.name, "tx-checksumming", "off", "rx-checksumming", "off"]).output()?;
+        if let Some(netns) = cur_netns {
+            netns.enter()?;
+        }
+        if !output.status.success() {
+            Err(VethError::SetError(String::from_utf8(output.stderr).unwrap()).into())
+        } else {
+            Ok(self)
+        }
+    }
+
 }
 
 /// Contains the individual bytes of the MAC address.
