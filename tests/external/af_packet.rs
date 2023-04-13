@@ -6,7 +6,9 @@ use nix::errno::Errno;
 use nix::sys::epoll::{epoll_create, epoll_ctl, epoll_wait, EpollEvent, EpollFlags};
 use nix::sys::socket::{AddressFamily, SockType};
 use rattan::env::get_std_env;
-use rattan::veth::{MacAddr, VethDevice};
+use rattan::metal::veth::{MacAddr, VethDevice};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{mem, ptr};
 
 fn create_dev_socket(veth: &VethDevice) -> anyhow::Result<i32> {
@@ -150,8 +152,8 @@ fn af_packet_test() -> anyhow::Result<()> {
         let netns = stdenv.rattan_ns;
         netns.enter().unwrap();
 
-        let left_sniffer = create_dev_socket(&stdenv.left_pair.right).unwrap();
-        let right_sniffer = create_dev_socket(&stdenv.right_pair.left).unwrap();
+        let left_sniffer = create_dev_socket(&stdenv.left_pair.right.borrow()).unwrap();
+        let right_sniffer = create_dev_socket(&stdenv.right_pair.left.borrow()).unwrap();
         println!(
             "left sniffer: {}, right sniffer: {}",
             left_sniffer, right_sniffer
@@ -193,12 +195,16 @@ fn af_packet_test() -> anyhow::Result<()> {
         let mut events = [EpollEvent::empty(); 100];
         let timeout_ms = 1000;
 
-        let mut received = 0;
-        while received < 100 {
+        let running = Arc::new(AtomicBool::new(true));
+        let rclone = running.clone();
+        ctrlc::set_handler(move || {
+            rclone.store(false, Ordering::Release);
+        }).expect("unable to install ctrl+c handler");
+        
+        while running.load(Ordering::Acquire) {
             let num_events = epoll_wait(epoll_fd, &mut events, timeout_ms).unwrap();
 
             for i in 0..num_events {
-                received += 1;
 
                 let fd = events[i].data() as i32;
                 let (read, addr) = recv_from_dev(fd, &mut buf).expect("fail to recv");
@@ -221,10 +227,10 @@ fn af_packet_test() -> anyhow::Result<()> {
 
                 match fd {
                     x if x == left_sniffer => {
-                        assert_ne!(addr.sll_ifindex, stdenv.right_pair.left.index as i32);
+                        assert_ne!(addr.sll_ifindex, stdenv.right_pair.left.borrow().index as i32);
                         send_to_dev(
-                            stdenv.right_pair.left.index,
-                            &stdenv.right_pair.right.mac_addr.unwrap(),
+                            stdenv.right_pair.left.borrow().index,
+                            &stdenv.right_pair.right.borrow().mac_addr.unwrap(),
                             &addr,
                             send_sock,
                             &mut buf[0..read],
@@ -232,10 +238,10 @@ fn af_packet_test() -> anyhow::Result<()> {
                         // println!("forward packet (length: {}) from left to right, from index {}, target index {}", size, addr.sll_ifindex, stdenv.right_pair.left.index)
                     }
                     x if x == right_sniffer => {
-                        assert_ne!(addr.sll_ifindex, stdenv.left_pair.right.index as i32);
+                        assert_ne!(addr.sll_ifindex, stdenv.left_pair.right.borrow().index as i32);
                         send_to_dev(
-                            stdenv.left_pair.right.index,
-                            &stdenv.left_pair.left.mac_addr.unwrap(),
+                            stdenv.left_pair.right.borrow().index,
+                            &stdenv.left_pair.left.borrow().mac_addr.unwrap(),
                             &addr,
                             send_sock,
                             &mut buf[0..read],

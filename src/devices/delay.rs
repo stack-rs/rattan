@@ -23,7 +23,7 @@ impl<P> Device<P> for DelayDevice<P>
 where
     P: Packet + Send + Sync,
 {
-    async fn enqueue(&mut self, packet: P) -> bool {
+    fn enqueue(&mut self, packet: P) -> bool {
         // XXX(minhuw): handle possible error here
         self.ingress
             .send(DelayedPacket {

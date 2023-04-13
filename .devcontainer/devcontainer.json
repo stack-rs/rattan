@@ -2,7 +2,10 @@
     "name": "Rattan Dev Container",
     "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
     "features": {
-        "ghcr.io/devcontainers/features/rust:1": {}
+        "ghcr.io/devcontainers/features/rust:1": {},
+        "ghcr.io/rocker-org/devcontainer-features/apt-packages:1": {
+            "packages": "ethtool,iputils-ping"
+        }
     },
 	"runArgs": [ "--cap-add=NET_ADMIN", "--cap-add=NET_RAW", "--cap-add=SYS_PTRACE", "--cap-add=SYS_ADMIN", "--security-opt", "apparmor=unconfined" ]
 }

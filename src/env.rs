@@ -1,4 +1,4 @@
-use crate::{netns::NetNs, veth::VethPair};
+use crate::metal::{netns::NetNs, veth::VethPair};
 use std::net::{IpAddr, Ipv4Addr};
 
 //   ns-client                          ns-rattan                         ns-server
@@ -19,10 +19,12 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
     let client_netns = NetNs::new("ns-client")?;
     let server_netns = NetNs::new("ns-server")?;
     let rattan_netns = NetNs::new("ns-rattan")?;
-    let mut veth_pair_client = VethPair::new("rc-left", "rc-right")?;
 
+    let veth_pair_client = VethPair::new("rc-left", "rc-right")?;
+    
     veth_pair_client
         .left
+        .borrow_mut()
         .set_ns(client_netns.clone())?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2a].into())?
         .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 24)?
@@ -31,15 +33,17 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
 
     veth_pair_client
         .right
+        .borrow_mut()
         .set_ns(rattan_netns.clone())?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2b].into())?
         .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 24)?
         .disable_checksum_offload()?
         .up()?;
 
-    let mut veth_pair_server = VethPair::new("rs-left", "rs-right")?;
+    let veth_pair_server = VethPair::new("rs-left", "rs-right")?;
     veth_pair_server
         .left
+        .borrow_mut()
         .set_ns(rattan_netns.clone())?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2c].into())?
         .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 2)), 24)?
@@ -48,6 +52,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
 
     veth_pair_server
         .right
+        .borrow_mut()
         .set_ns(server_netns.clone())?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2d].into())?
         .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24)?

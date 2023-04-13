@@ -1,12 +1,14 @@
 use crate::error::{Error, MacParseError, VethError};
-use crate::netns::{NetNs, NetNsGuard};
+use crate::metal::netns::{NetNs, NetNsGuard};
 use nix::net::if_::if_nametoindex;
+use std::cell::{RefCell, Ref};
 use std::net::IpAddr;
 use std::process::Command;
+use std::rc::{Rc, Weak};
 
 pub struct VethPair {
-    pub left: VethDevice,
-    pub right: VethDevice,
+    pub left: Rc<RefCell<VethDevice>>,
+    pub right: Rc<RefCell<VethDevice>>,
 }
 
 impl VethPair {
@@ -26,29 +28,42 @@ impl VethPair {
                 String::from_utf8(output.stderr).unwrap(),
             ))
         } else {
-            Ok(VethPair {
-                left: VethDevice {
+            let pair = VethPair {
+                left: Rc::new(RefCell::new(VethDevice {
                     name: name.as_ref().to_string(),
                     index: if_nametoindex(name.as_ref())?,
                     mac_addr: None,
                     ip_addr: None,
+                    peer: None,
                     namespace: NetNs::current()?,
-                },
-                right: VethDevice {
+                })),
+                right: Rc::new(RefCell::new(VethDevice {
                     name: peer_name.as_ref().to_string(),
                     index: if_nametoindex(peer_name.as_ref())?,
                     mac_addr: None,
                     ip_addr: None,
+                    peer: None,
                     namespace: NetNs::current()?,
-                },
-            })
+                })),
+            };
+
+            pair.left
+                .borrow_mut()
+                .peer
+                .replace(Rc::downgrade(&pair.right));
+            pair.right
+                .borrow_mut()
+                .peer
+                .replace(Rc::downgrade(&pair.left));
+
+            Ok(pair)
         }
     }
 }
 
 impl Drop for VethPair {
     fn drop(&mut self) {
-        let ns_guard = NetNsGuard::new(self.left.namespace.clone());
+        let ns_guard = NetNsGuard::new(self.left.borrow().namespace.clone());
         if let Err(e) = ns_guard {
             eprintln!("Failed to enter netns: {}", e);
             return;
@@ -57,15 +72,15 @@ impl Drop for VethPair {
         let output = Command::new("ip")
             .arg("link")
             .arg("del")
-            .arg(&self.left.name)
+            .arg(&self.left.borrow().name)
             .output();
 
         if let Err(e) = output {
-            eprintln!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &self.left.name);
+            eprintln!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &self.left.borrow().name);
         } else {
             let output = output.unwrap();
             if !output.status.success() {
-                eprintln!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", String::from_utf8_lossy(&output.stderr), &self.left.name);
+                eprintln!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", String::from_utf8_lossy(&output.stderr), &self.left.borrow().name);
             }
         }
     }
@@ -76,10 +91,15 @@ pub struct VethDevice {
     pub index: u32,
     pub mac_addr: Option<MacAddr>,
     pub ip_addr: Option<(IpAddr, u8)>,
+    pub peer: Option<Weak<RefCell<VethDevice>>>,
     namespace: std::sync::Arc<NetNs>,
 }
 
 impl VethDevice {
+    pub fn peer(&self) -> Rc<RefCell<VethDevice>> {
+        self.peer.as_ref().unwrap().upgrade().unwrap()
+    }
+
     pub fn up(&mut self) -> Result<&mut Self, Error> {
         let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
         let output = Command::new("ip")
@@ -149,6 +169,7 @@ impl VethDevice {
             self.namespace = netns;
             Ok(self)
         }
+
     }
 
     pub fn set_l2_addr(&mut self, mac_addr: MacAddr) -> Result<&mut Self, Error> {

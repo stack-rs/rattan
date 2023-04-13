@@ -17,4 +17,5 @@ thiserror = "1.0.40"
 tokio = { version = "1.26.0", features = ["rt-multi-thread", "time", "net", "sync"] }
 
 [dev-dependencies]
+ctrlc = "3.2.5"
 netns-rs = "0.1.0"
