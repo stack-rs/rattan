@@ -18,7 +18,7 @@ fn create_dev_socket(veth: &VethDevice) -> anyhow::Result<i32> {
         ))?
     };
 
-    // It should work after this fix (https://github.com/nix-rust/nix/pull/1925) is avialable
+    // It should work after this fix (https://github.com/nix-rust/nix/pull/1925) is available
     // let raw_socket = socket(
     //     AddressFamily::Packet,
     //     SockType::Raw,
