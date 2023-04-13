@@ -8,6 +8,8 @@ pub enum Error {
     VethError(#[from] VethError),
     #[error("Encounter IO error, {0}")]
     IoError(#[from] std::io::Error),
+    #[error("Metal error: {0}")]
+    MetalError(#[from] crate::metal::error::MetalError),
 }
 
 #[derive(Debug, thiserror::Error)]

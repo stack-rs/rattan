@@ -1,4 +1,5 @@
 use crate::devices::{Device, Packet};
+use crate::error::Error;
 use async_trait::async_trait;
 use std::fmt::Debug;
 use tokio::sync::mpsc;
@@ -23,7 +24,7 @@ impl<P> Device<P> for DelayDevice<P>
 where
     P: Packet + Send + Sync,
 {
-    fn enqueue(&mut self, packet: P) -> bool {
+    fn enqueue(&mut self, packet: P) -> Result<(), Error> {
         // XXX(minhuw): handle possible error here
         self.ingress
             .send(DelayedPacket {
@@ -31,7 +32,7 @@ where
                 packet,
             })
             .unwrap();
-        true
+        Ok(())
     }
 
     async fn dequeue(&mut self) -> Option<P> {
