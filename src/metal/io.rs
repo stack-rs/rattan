@@ -1,9 +1,12 @@
-use std::{mem, ptr};
+use std::{
+    mem, ptr,
+    sync::{Arc, Mutex},
+};
 
 use libc::{c_void, size_t, sockaddr, sockaddr_ll, socklen_t};
 use nix::{
     errno::Errno,
-    sys::socket::{AddressFamily, SockType},
+    sys::socket::{AddressFamily, SockFlag, SockType},
 };
 
 use crate::devices::Packet;
@@ -18,80 +21,60 @@ enum PacketType {
     PacketOutgoing = 4,
 }
 
-pub trait InterfaceDriver<'b, P>
+pub trait InterfaceSender<P>
 where
     P: Packet,
 {
-    fn bind_device<'a>(device: &'a mut VethDevice) -> Result<Self, MetalError>
+    fn send(&self, packet: P) -> std::io::Result<()>;
+}
+
+pub trait InterfaceReceiver<P>
+where
+    P: Packet,
+{
+    fn receive(&mut self) -> std::io::Result<Option<P>>;
+}
+
+pub trait InterfaceDriver<P>
+where
+    P: Packet,
+{
+    type Sender: InterfaceSender<P>;
+    type Receiver: InterfaceReceiver<P>;
+
+    fn bind_device(device: Arc<Mutex<VethDevice>>) -> Result<Self, MetalError>
     where
-        'a: 'b,
         Self: Sized;
-    fn send(&mut self, packet: P) -> Result<(), MetalError>;
-    fn receive(&mut self) -> Result<P, MetalError>;
+    fn raw_fd(&self) -> i32;
+    fn sender(&self) -> Arc<Self::Sender>;
+    fn receiver(&mut self) -> &mut Self::Receiver;
 }
 
-pub struct AfPacketDriver<'a> {
-    raw_fd: i32,
-    device: &'a mut VethDevice,
+pub struct AfPacketSender {
+    raw_fd: Mutex<i32>,
+    device: Arc<Mutex<VethDevice>>,
 }
 
-impl<'b, P> InterfaceDriver<'b, P> for AfPacketDriver<'b>
+impl<P> InterfaceSender<P> for AfPacketSender
 where
     P: Packet,
 {
-    fn bind_device<'a>(device: &'a mut VethDevice) -> Result<Self, MetalError>
-    where
-        'a: 'b,
-    {
-        let raw_fd = unsafe {
-            Errno::result(libc::socket(
-                AddressFamily::Packet as libc::c_int,
-                SockType::Raw as libc::c_int,
-                (libc::ETH_P_ALL as u16).to_be() as i32,
-            ))?
+    fn send(&self, mut packet: P) -> std::io::Result<()> {
+        let peer_address = {
+            self.device
+                .lock()
+                .unwrap()
+                .peer()
+                .lock()
+                .unwrap()
+                .mac_addr
+                .unwrap()
         };
-
-        // It should work after this fix (https://github.com/nix-rust/nix/pull/1925) is available
-        // let raw_socket = socket(
-        //     AddressFamily::Packet,
-        //     SockType::Raw,
-        //     SockFlag::empty(),
-        //     SockProtocol::EthAll
-        // ).unwrap();
-
-        println!(
-            "create AF_PACKET socket {} on interface ({}:{})",
-            raw_fd, device.name, device.index
-        );
-
-        let bind_interface = libc::sockaddr_ll {
-            sll_family: libc::AF_PACKET as u16,
-            sll_protocol: (libc::ETH_P_ALL as u16).to_be(),
-            sll_ifindex: device.index as i32,
-            sll_hatype: 0,
-            sll_pkttype: 0,
-            sll_halen: 0,
-            sll_addr: [0; 8],
-        };
-
-        unsafe {
-            Errno::result(libc::bind(
-                raw_fd,
-                &bind_interface as *const sockaddr_ll as *const sockaddr,
-                std::mem::size_of::<sockaddr_ll>() as u32,
-            ))?;
-        };
-
-        Ok(Self { raw_fd, device })
-    }
-
-    fn send(&mut self, packet: P) -> Result<(), MetalError> {
-        let peer_address = &self.device.peer().lock().unwrap().mac_addr.unwrap();
 
         let mut target_interface = libc::sockaddr_ll {
             sll_family: libc::AF_PACKET as u16,
-            sll_protocol: packet.ether_hdr().ether_type,
-            sll_ifindex: self.device.index as i32,
+            sll_protocol: packet.ether_hdr().unwrap().ether_type,
+            sll_ifindex: self.device.lock().unwrap().index as i32,
             sll_hatype: 0,
             sll_pkttype: 0,
             sll_halen: peer_address.bytes().len() as u8,
@@ -102,13 +85,22 @@ where
         // modify deeper headers, such as TCP header. Not sure whether `etherparse` can support
         // inplace update of packet. Maybe a packet parser and manipulation library is necessary
         // eventually.
-        let mut ether = packet.ether_hdr().clone();
+        let mut ether = packet.ether_hdr().unwrap();
         ether
             .source
-            .copy_from_slice(&self.device.mac_addr.unwrap().bytes());
-        ether
-            .destination
-            .copy_from_slice(&self.device.peer().lock().unwrap().mac_addr.unwrap().bytes());
+            .copy_from_slice(&self.device.lock().unwrap().mac_addr.unwrap().bytes());
+        ether.destination.copy_from_slice(
+            &self
+                .device
+                .lock()
+                .unwrap()
+                .peer()
+                .lock()
+                .unwrap()
+                .mac_addr
+                .unwrap()
+                .bytes(),
+        );
 
         let buf = packet.as_raw_buffer();
         ether.write_to_slice(buf).unwrap();
@@ -120,8 +112,9 @@ where
                 peer_address.bytes().len(),
             );
 
+            let raw_fd = self.raw_fd.lock().unwrap();
             let _ret = Errno::result(libc::sendto(
-                self.raw_fd,
+                *raw_fd,
                 buf.as_ptr() as *mut c_void,
                 buf.len() as size_t,
                 0,
@@ -131,14 +124,23 @@ where
         }
         Ok(())
     }
+}
 
-    fn receive(&mut self) -> Result<P, MetalError> {
+pub struct AfPacketReceiver {
+    raw_fd: i32,
+}
+
+impl<P> InterfaceReceiver<P> for AfPacketReceiver
+where
+    P: Packet,
+{
+    fn receive(&mut self) -> std::io::Result<Option<P>> {
         let mut sockaddr = mem::MaybeUninit::<libc::sockaddr_ll>::uninit();
         let mut len = mem::size_of_val(&sockaddr) as socklen_t;
 
         let buf = [0u8; 65537];
 
-        let (_ret, addr_ll) = unsafe {
+        let (ret, addr_ll) = unsafe {
             let ret = Errno::result(libc::recvfrom(
                 self.raw_fd,
                 buf.as_ptr() as *mut c_void,
@@ -160,14 +162,102 @@ where
             (ret, addr_ll)
         };
 
+        println!(
+            "receive a packet from AF_PACKET {} (protocol: {:<04X}, pkttype: {}, source index: {}, hardware_addr: {:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X})",
+            self.raw_fd,
+            addr_ll.sll_protocol,
+            addr_ll.sll_pkttype, addr_ll.sll_ifindex,
+            addr_ll.sll_addr[0], addr_ll.sll_addr[1], addr_ll.sll_addr[2], addr_ll.sll_addr[3], addr_ll.sll_addr[4], addr_ll.sll_addr[5]
+        );
+
         // ignore all outgoing and loopback packets
         if addr_ll.sll_pkttype == PacketType::PacketOutgoing as u8
             || addr_ll.sll_pkttype == PacketType::PacketHost as u8
         {
-            Err(MetalError::NotInterestedPacket)
+            Ok(None)
         } else {
-            Ok(P::from_raw_buffer(&buf))
+            Ok(Some(P::from_raw_buffer(&buf[0..ret])))
         }
+    }
+}
+
+pub struct AfPacketDriver {
+    raw_fd: i32,
+    sender: Arc<AfPacketSender>,
+    receiver: AfPacketReceiver,
+    _device: Arc<Mutex<VethDevice>>,
+}
+
+impl<P> InterfaceDriver<P> for AfPacketDriver
+where
+    P: Packet,
+{
+    type Sender = AfPacketSender;
+    type Receiver = AfPacketReceiver;
+    fn bind_device(device: Arc<Mutex<VethDevice>>) -> Result<Self, MetalError> {
+        println!("bind device to AF_PACKET driver");
+        let raw_fd = unsafe {
+            Errno::result(libc::socket(
+                AddressFamily::Packet as libc::c_int,
+                SockType::Raw as libc::c_int | SockFlag::SOCK_NONBLOCK.bits() as libc::c_int,
+                (libc::ETH_P_ALL as u16).to_be() as i32,
+            ))?
+        };
+        {
+            let device = device.lock().unwrap();
+            // It should work after this fix (https://github.com/nix-rust/nix/pull/1925) is available
+            // let raw_socket = socket(
+            //     AddressFamily::Packet,
+            //     SockType::Raw,
+            //     SockFlag::empty(),
+            //     SockProtocol::EthAll
+            // ).unwrap();
+
+            println!(
+                "create AF_PACKET socket {} on interface ({}:{})",
+                raw_fd, device.name, device.index
+            );
+
+            let bind_interface = libc::sockaddr_ll {
+                sll_family: libc::AF_PACKET as u16,
+                sll_protocol: (libc::ETH_P_ALL as u16).to_be(),
+                sll_ifindex: device.index as i32,
+                sll_hatype: 0,
+                sll_pkttype: 0,
+                sll_halen: 0,
+                sll_addr: [0; 8],
+            };
+
+            unsafe {
+                Errno::result(libc::bind(
+                    raw_fd,
+                    &bind_interface as *const sockaddr_ll as *const sockaddr,
+                    std::mem::size_of::<sockaddr_ll>() as u32,
+                ))?;
+            };
+        }
+
+        Ok(Self {
+            sender: Arc::new(AfPacketSender {
+                raw_fd: Mutex::new(raw_fd),
+                device: device.clone(),
+            }),
+            receiver: AfPacketReceiver { raw_fd },
+            raw_fd,
+            _device: device,
+        })
+    }
+
+    fn raw_fd(&self) -> i32 {
+        self.raw_fd
+    }
+
+    fn sender(&self) -> Arc<Self::Sender> {
+        self.sender.clone()
+    }
+
+    fn receiver(&mut self) -> &mut Self::Receiver {
+        &mut self.receiver
     }
 }
 

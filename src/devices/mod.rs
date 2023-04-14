@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use etherparse::{Ethernet2Header, Ipv4Header};
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
 use crate::error::Error;
 
@@ -11,13 +11,62 @@ pub trait Packet: Debug {
     fn empty(maximum: usize) -> Self;
     fn from_raw_buffer(buf: &[u8]) -> Self;
     fn length(&self) -> usize;
-    fn as_raw_buffer<'a>(&self) -> &'a mut [u8];
-    fn ether_hdr(&self) -> &Ethernet2Header;
-    fn ip_hdr(&self) -> Option<&Ipv4Header>;
+    fn as_raw_buffer(&mut self) -> &mut [u8];
+    fn ether_hdr(&self) -> Option<Ethernet2Header>;
+    fn ip_hdr(&self) -> Option<Ipv4Header>;
+}
+
+#[derive(Debug)]
+pub struct StdPacket {
+    buf: Vec<u8>,
+}
+
+impl Packet for StdPacket {
+    fn empty(maximum: usize) -> Self {
+        Self {
+            buf: Vec::with_capacity(maximum),
+        }
+    }
+
+    fn from_raw_buffer(buf: &[u8]) -> Self {
+        Self { buf: buf.to_vec() }
+    }
+
+    fn length(&self) -> usize {
+        self.buf.len()
+    }
+
+    fn as_raw_buffer(&mut self) -> &mut [u8] {
+        self.buf.as_mut_slice()
+    }
+
+    fn ip_hdr(&self) -> Option<Ipv4Header> {
+        if let Ok(result) = etherparse::Ethernet2Header::from_slice(self.buf.as_slice()) {
+            if let Ok(ip_hdr) = etherparse::Ipv4Header::from_slice(result.1) {
+                return Some(ip_hdr.0);
+            }
+        }
+        None
+    }
+
+    fn ether_hdr(&self) -> Option<Ethernet2Header> {
+        etherparse::Ethernet2Header::from_slice(self.buf.as_slice()).map_or(None, |x| Some(x.0))
+    }
+}
+
+pub trait Ingress<P> {
+    fn enqueue(&self, packet: P) -> Result<(), Error>;
+}
+
+#[async_trait]
+pub trait Egress<P> {
+    async fn dequeue(&mut self) -> Option<P>;
 }
 
 #[async_trait]
 pub trait Device<P> {
-    fn enqueue(&mut self, packet: P) -> Result<(), Error>;
-    async fn dequeue(&mut self) -> Option<P>;
+    type IngressType: Ingress<P>;
+    type EgressType: Egress<P>;
+    fn sender(&self) -> Arc<Self::IngressType>;
+    fn receiver(&mut self) -> &mut Self::EgressType;
 }
