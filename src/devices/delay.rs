@@ -55,7 +55,6 @@ where
     async fn dequeue(&mut self) -> Option<P> {
         let packet = self.egress.recv().await.unwrap();
         let queuing_delay = Instant::now() - packet.ingress_time;
-        println!("pass {:?}", queuing_delay);
         if queuing_delay < Duration::from_millis(100) {
             sleep(Duration::from_millis(100) - queuing_delay).await;
         }

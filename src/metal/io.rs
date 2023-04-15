@@ -83,8 +83,8 @@ where
 
         // TODO(minhuw): modify the raw buffer is not a good idea, especially when we need to
         // modify deeper headers, such as TCP header. Not sure whether `etherparse` can support
-        // inplace update of packet. Maybe a packet parser and manipulation library is necessary
-        // eventually.
+        // inplace update of packet. Maybe a home made packet parser and manipulation library is 
+        // necessary eventually.
         let mut ether = packet.ether_hdr().unwrap();
         ether
             .source
@@ -162,20 +162,19 @@ where
             (ret, addr_ll)
         };
 
-        println!(
-            "receive a packet from AF_PACKET {} (protocol: {:<04X}, pkttype: {}, source index: {}, hardware_addr: {:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X})",
-            self.raw_fd,
-            addr_ll.sll_protocol,
-            addr_ll.sll_pkttype, addr_ll.sll_ifindex,
-            addr_ll.sll_addr[0], addr_ll.sll_addr[1], addr_ll.sll_addr[2], addr_ll.sll_addr[3], addr_ll.sll_addr[4], addr_ll.sll_addr[5]
-        );
-
         // ignore all outgoing and loopback packets
         if addr_ll.sll_pkttype == PacketType::PacketOutgoing as u8
             || addr_ll.sll_pkttype == PacketType::PacketHost as u8
         {
             Ok(None)
         } else {
+            println!(
+                "receive a packet from AF_PACKET {} (protocol: {:<04X}, pkttype: {}, source index: {}, hardware_addr: {:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X})",
+                self.raw_fd,
+                addr_ll.sll_protocol,
+                addr_ll.sll_pkttype, addr_ll.sll_ifindex,
+                addr_ll.sll_addr[0], addr_ll.sll_addr[1], addr_ll.sll_addr[2], addr_ll.sll_addr[3], addr_ll.sll_addr[4], addr_ll.sll_addr[5]
+            );
             Ok(Some(P::from_raw_buffer(&buf[0..ret])))
         }
     }
