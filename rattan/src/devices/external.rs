@@ -16,7 +16,7 @@ use std::{
 use async_trait::async_trait;
 use tokio::io::unix::AsyncFd;
 
-use super::{Egress, Ingress};
+use super::{ControlInterface, Egress, Ingress};
 
 pub struct VirtualEthernetIngress<P, D>
 where
@@ -84,6 +84,18 @@ where
 
 pub struct VirtualEthernetConfig {}
 
+pub struct VirtualEthernetControlInterface {
+    config: VirtualEthernetConfig,
+}
+
+impl ControlInterface for VirtualEthernetControlInterface {
+    type Config = VirtualEthernetConfig;
+    fn set_config(&mut self, config: VirtualEthernetConfig) -> Result<(), Error> {
+        self.config = config;
+        Ok(())
+    }
+}
+
 pub struct VirtualEthernet<P: Packet, D: InterfaceDriver<P>>
 where
     P: Packet + Send + Sync,
@@ -94,7 +106,7 @@ where
     _device: Arc<Mutex<VethDevice>>,
     ingress: Arc<VirtualEthernetIngress<P, D>>,
     egress: VirtualEthernetEgress<P, D>,
-    config: VirtualEthernetConfig,
+    control_interface: Arc<VirtualEthernetControlInterface>,
 }
 
 impl<P: Packet, D: InterfaceDriver<P>> VirtualEthernet<P, D>
@@ -117,7 +129,9 @@ where
                 driver,
                 phantom: PhantomData,
             },
-            config: VirtualEthernetConfig {},
+            control_interface: Arc::new(VirtualEthernetControlInterface {
+                config: VirtualEthernetConfig {},
+            }),
         }
     }
 }
@@ -131,7 +145,7 @@ where
 {
     type IngressType = VirtualEthernetIngress<P, D>;
     type EgressType = VirtualEthernetEgress<P, D>;
-    type Config = VirtualEthernetConfig;
+    type ControlInterfaceType = VirtualEthernetControlInterface;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -145,8 +159,7 @@ where
         self.egress
     }
 
-    fn set_config(&mut self, config: Self::Config) -> Result<(), Error> {
-        self.config = config;
-        Ok(())
+    fn control_interface(&self) -> Arc<Self::ControlInterfaceType> {
+        Arc::clone(&self.control_interface)
     }
 }

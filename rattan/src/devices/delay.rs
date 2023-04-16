@@ -2,11 +2,12 @@ use crate::devices::{Device, Packet};
 use crate::error::Error;
 use async_trait::async_trait;
 use std::fmt::Debug;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration, Instant};
 
-use super::{Egress, Ingress};
+use super::{ControlInterface, Egress, Ingress};
 
 #[derive(Debug)]
 struct DelayedPacket<P>
@@ -56,7 +57,8 @@ where
     P: Packet,
 {
     egress: mpsc::UnboundedReceiver<DelayedPacket<P>>,
-    delay: Duration,
+    /// Stored as nanoseconds
+    delay: Arc<AtomicU64>,
 }
 
 #[async_trait]
@@ -66,9 +68,10 @@ where
 {
     async fn dequeue(&mut self) -> Option<P> {
         let packet = self.egress.recv().await.unwrap();
+        let delay = Duration::from_nanos(self.delay.load(Ordering::Relaxed));
         let queuing_delay = Instant::now() - packet.ingress_time;
-        if queuing_delay < self.delay {
-            sleep(self.delay - queuing_delay).await;
+        if queuing_delay < delay {
+            sleep(delay - queuing_delay).await;
         }
         Some(packet.packet)
     }
@@ -78,10 +81,34 @@ pub struct DelayDeviceConfig {
     delay: Duration,
 }
 
+impl DelayDeviceConfig {
+    pub fn new(delay: Duration) -> Self {
+        Self { delay }
+    }
+}
+
+#[derive(Debug)]
+pub struct DelayDeviceControlInterface {
+    /// Stored as nanoseconds
+    delay: Arc<AtomicU64>,
+}
+
+impl ControlInterface for DelayDeviceControlInterface {
+    type Config = DelayDeviceConfig;
+
+    fn set_config(&mut self, config: Self::Config) -> Result<(), Error> {
+        let delay = u64::try_from(config.delay.as_nanos()).map_err(|e| {
+            Error::ConfigError(format!("Delay must be less than 2^64 nanoseconds: {}", e))
+        })?;
+        self.delay.store(delay, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
 pub struct DelayDevice<P: Packet> {
     ingress: Arc<DelayDeviceIngress<P>>,
     egress: DelayedDeviceEgress<P>,
-    config: DelayDeviceConfig,
+    control_interface: Arc<DelayDeviceControlInterface>,
 }
 
 impl<P> Device<P> for DelayDevice<P>
@@ -90,7 +117,7 @@ where
 {
     type IngressType = DelayDeviceIngress<P>;
     type EgressType = DelayedDeviceEgress<P>;
-    type Config = DelayDeviceConfig;
+    type ControlInterfaceType = DelayDeviceControlInterface;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -104,10 +131,8 @@ where
         self.egress
     }
 
-    fn set_config(&mut self, config: Self::Config) -> Result<(), Error> {
-        self.config = config;
-        self.egress.delay = self.config.delay;
-        Ok(())
+    fn control_interface(&self) -> Arc<Self::ControlInterfaceType> {
+        Arc::clone(&self.control_interface)
     }
 }
 
@@ -117,15 +142,14 @@ where
 {
     pub fn new() -> DelayDevice<P> {
         let (rx, tx) = mpsc::unbounded_channel();
+        let delay = Arc::new(AtomicU64::new(0));
         DelayDevice {
             ingress: Arc::new(DelayDeviceIngress { ingress: rx }),
             egress: DelayedDeviceEgress {
                 egress: tx,
-                delay: Duration::ZERO,
+                delay: Arc::clone(&delay),
             },
-            config: DelayDeviceConfig {
-                delay: Duration::ZERO,
-            },
+            control_interface: Arc::new(DelayDeviceControlInterface { delay }),
         }
     }
 }

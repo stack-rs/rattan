@@ -69,6 +69,11 @@ where
     async fn dequeue(&mut self) -> Option<P>;
 }
 
+pub trait ControlInterface {
+    type Config;
+    fn set_config(&mut self, config: Self::Config) -> Result<(), Error>;
+}
+
 #[async_trait]
 pub trait Device<P>
 where
@@ -76,10 +81,10 @@ where
 {
     type IngressType: Ingress<P> + 'static;
     type EgressType: Egress<P> + 'static;
-    type Config;
+    type ControlInterfaceType: ControlInterface + 'static;
 
     fn sender(&self) -> Arc<Self::IngressType>;
     fn receiver(&mut self) -> &mut Self::EgressType;
     fn into_receiver(self) -> Self::EgressType;
-    fn set_config(&mut self, config: Self::Config) -> Result<(), Error>;
+    fn control_interface(&self) -> Arc<Self::ControlInterfaceType>;
 }
