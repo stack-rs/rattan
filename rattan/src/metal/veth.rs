@@ -218,14 +218,7 @@ impl VethDevice {
     pub fn disable_checksum_offload(&mut self) -> Result<&mut Self, Error> {
         let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
         let output = Command::new("ethtool")
-            .args([
-                "-K",
-                &self.name,
-                "tx-checksumming",
-                "off",
-                "rx-checksumming",
-                "off",
-            ])
+            .args(["-K", &self.name, "tx", "off", "rx", "off"])
             .output()?;
         if !output.status.success() {
             Err(VethError::SetError(String::from_utf8(output.stderr).unwrap()).into())
