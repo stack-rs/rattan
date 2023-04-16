@@ -56,6 +56,7 @@ where
     P: Packet,
 {
     egress: mpsc::UnboundedReceiver<DelayedPacket<P>>,
+    delay: Duration,
 }
 
 #[async_trait]
@@ -66,16 +67,21 @@ where
     async fn dequeue(&mut self) -> Option<P> {
         let packet = self.egress.recv().await.unwrap();
         let queuing_delay = Instant::now() - packet.ingress_time;
-        if queuing_delay < Duration::from_millis(100) {
-            sleep(Duration::from_millis(100) - queuing_delay).await;
+        if queuing_delay < self.delay {
+            sleep(self.delay - queuing_delay).await;
         }
         Some(packet.packet)
     }
 }
 
+pub struct DelayDeviceConfig {
+    delay: Duration,
+}
+
 pub struct DelayDevice<P: Packet> {
     ingress: Arc<DelayDeviceIngress<P>>,
     egress: DelayedDeviceEgress<P>,
+    config: DelayDeviceConfig,
 }
 
 impl<P> Device<P> for DelayDevice<P>
@@ -84,6 +90,7 @@ where
 {
     type IngressType = DelayDeviceIngress<P>;
     type EgressType = DelayedDeviceEgress<P>;
+    type Config = DelayDeviceConfig;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -96,6 +103,12 @@ where
     fn into_receiver(self) -> Self::EgressType {
         self.egress
     }
+
+    fn set_config(&mut self, config: Self::Config) -> Result<(), Error> {
+        self.config = config;
+        self.egress.delay = self.config.delay;
+        Ok(())
+    }
 }
 
 impl<P> DelayDevice<P>
@@ -106,7 +119,13 @@ where
         let (rx, tx) = mpsc::unbounded_channel();
         DelayDevice {
             ingress: Arc::new(DelayDeviceIngress { ingress: rx }),
-            egress: DelayedDeviceEgress { egress: tx },
+            egress: DelayedDeviceEgress {
+                egress: tx,
+                delay: Duration::ZERO,
+            },
+            config: DelayDeviceConfig {
+                delay: Duration::ZERO,
+            },
         }
     }
 }

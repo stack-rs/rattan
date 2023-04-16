@@ -12,7 +12,8 @@ fn main() -> anyhow::Result<()> {
 
     ctrlc::set_handler(move || {
         canncel_token.cancel();
-    }).unwrap();
+    })
+    .unwrap();
 
     {
         _std_env.rattan_ns.enter().unwrap();

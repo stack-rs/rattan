@@ -10,6 +10,8 @@ pub enum Error {
     IoError(#[from] std::io::Error),
     #[error("Metal error: {0}")]
     MetalError(#[from] crate::metal::error::MetalError),
+    #[error("Config error: {0}")]
+    ConfigError(String),
 }
 
 #[derive(Debug, thiserror::Error)]

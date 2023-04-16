@@ -76,8 +76,10 @@ where
 {
     type IngressType: Ingress<P> + 'static;
     type EgressType: Egress<P> + 'static;
+    type Config;
 
     fn sender(&self) -> Arc<Self::IngressType>;
     fn receiver(&mut self) -> &mut Self::EgressType;
     fn into_receiver(self) -> Self::EgressType;
+    fn set_config(&mut self, config: Self::Config) -> Result<(), Error>;
 }

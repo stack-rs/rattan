@@ -6,8 +6,8 @@ use crate::{
         veth::VethDevice,
     },
 };
-/// External devices are all devices not created by Rattan. Network interfaces, physical or virtual, are
-/// examples of external devices.
+/// External devices are all devices not created by Rattan.
+/// Network interfaces, physical or virtual, are examples of external devices.
 use std::{
     marker::PhantomData,
     sync::{Arc, Mutex},
@@ -82,6 +82,8 @@ where
     }
 }
 
+pub struct VirtualEthernetConfig {}
+
 pub struct VirtualEthernet<P: Packet, D: InterfaceDriver<P>>
 where
     P: Packet + Send + Sync,
@@ -92,6 +94,7 @@ where
     _device: Arc<Mutex<VethDevice>>,
     ingress: Arc<VirtualEthernetIngress<P, D>>,
     egress: VirtualEthernetEgress<P, D>,
+    config: VirtualEthernetConfig,
 }
 
 impl<P: Packet, D: InterfaceDriver<P>> VirtualEthernet<P, D>
@@ -114,6 +117,7 @@ where
                 driver,
                 phantom: PhantomData,
             },
+            config: VirtualEthernetConfig {},
         }
     }
 }
@@ -127,6 +131,7 @@ where
 {
     type IngressType = VirtualEthernetIngress<P, D>;
     type EgressType = VirtualEthernetEgress<P, D>;
+    type Config = VirtualEthernetConfig;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -138,5 +143,10 @@ where
 
     fn into_receiver(self) -> Self::EgressType {
         self.egress
+    }
+
+    fn set_config(&mut self, config: Self::Config) -> Result<(), Error> {
+        self.config = config;
+        Ok(())
     }
 }
