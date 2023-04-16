@@ -22,14 +22,29 @@ pub struct VirtualEthernetIngress<P, D>
 where
     P: Packet + Send + Sync,
     D: InterfaceDriver<P> + Send + Sync,
+    D::Sender: Send + Sync,
 {
     sender: Arc<D::Sender>,
+}
+
+impl<P, D> Clone for VirtualEthernetIngress<P, D>
+where
+    P: Packet + Send + Sync,
+    D: InterfaceDriver<P> + Send + Sync,
+    D::Sender: Send + Sync,
+{
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+        }
+    }
 }
 
 impl<P, D> Ingress<P> for VirtualEthernetIngress<P, D>
 where
     P: Packet + Send + Sync,
     D: InterfaceDriver<P> + Send + Sync,
+    D::Sender: Send + Sync,
 {
     fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.sender.as_ref().send(packet).map_err(|e| e.into())
@@ -71,7 +86,8 @@ pub struct VirtualEthernet<P: Packet, D: InterfaceDriver<P>>
 where
     P: Packet + Send + Sync,
     D: InterfaceDriver<P> + Send + Sync,
-    D::Receiver: Send,
+    D::Sender: Send + Sync,
+    D::Receiver: Send + Sync,
 {
     _device: Arc<Mutex<VethDevice>>,
     ingress: Arc<VirtualEthernetIngress<P, D>>,
@@ -82,7 +98,8 @@ impl<P: Packet, D: InterfaceDriver<P>> VirtualEthernet<P, D>
 where
     P: Packet + Send + Sync,
     D: InterfaceDriver<P> + Send + Sync,
-    D::Receiver: Send,
+    D::Sender: Send + Sync,
+    D::Receiver: Send + Sync,
 {
     pub fn new(device: Arc<Mutex<VethDevice>>) -> Self {
         println!("create virtual ethernet");
@@ -103,9 +120,10 @@ where
 
 impl<P, D> Device<P> for VirtualEthernet<P, D>
 where
-    P: Packet + Send + Sync,
-    D: InterfaceDriver<P> + Send + Sync,
-    D::Receiver: Send,
+    P: Packet + Send + Sync + 'static,
+    D: InterfaceDriver<P> + Send + Sync + 'static,
+    D::Sender: Send + Sync,
+    D::Receiver: Send + Sync,
 {
     type IngressType = VirtualEthernetIngress<P, D>;
     type EgressType = VirtualEthernetEgress<P, D>;
@@ -116,5 +134,9 @@ where
 
     fn receiver(&mut self) -> &mut Self::EgressType {
         &mut self.egress
+    }
+
+    fn into_receiver(self) -> Self::EgressType {
+        self.egress
     }
 }

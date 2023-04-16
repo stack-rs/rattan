@@ -1,114 +1,80 @@
+use std::{collections::HashMap, sync::Arc};
+
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    devices::{delay::DelayDevice, external::VirtualEthernet, Device, Egress, Ingress, StdPacket},
-    env::StdNetEnv,
-    metal::io::AfPacketDriver,
-};
+use crate::devices::{Device, Egress, Ingress, Packet};
 
-pub struct RattanMachine {
+pub struct RattanMachine<P>
+where
+    P: Packet,
+{
     token: CancellationToken,
+    sender: HashMap<usize, Arc<dyn Ingress<P>>>,
+    receiver: HashMap<usize, Box<dyn Egress<P>>>,
+    router: HashMap<usize, usize>,
 }
 
-impl RattanMachine {
+impl<P> Default for RattanMachine<P>
+where
+    P: Packet + 'static,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<P> RattanMachine<P>
+where
+    P: Packet + 'static,
+{
     pub fn new() -> Self {
         Self {
             token: CancellationToken::new(),
+            sender: HashMap::new(),
+            receiver: HashMap::new(),
+            router: HashMap::new(),
         }
+    }
+
+    pub fn add_device(&mut self, device: impl Device<P>) -> (usize, usize) {
+        let tx_id = self.sender.len();
+        self.sender.insert(tx_id, device.sender());
+        let rx_id = self.receiver.len();
+        self.receiver
+            .insert(rx_id, Box::new(device.into_receiver()));
+        (tx_id, rx_id)
+    }
+
+    pub fn link_device(&mut self, rx_id: usize, tx_id: usize) {
+        self.router.insert(rx_id, tx_id);
     }
 
     pub fn cancel_token(&self) -> CancellationToken {
         self.token.clone()
     }
 
-    pub async fn run(&mut self, env: StdNetEnv) {
+    pub async fn core_loop(&mut self) {
         let mut handles = Vec::new();
-        let mut left_delay_device = DelayDevice::new();
-        let mut right_delay_device = DelayDevice::new();
-        let mut left_device =
-            VirtualEthernet::<StdPacket, AfPacketDriver>::new(env.left_pair.right.clone());
-        let mut right_device =
-            VirtualEthernet::<StdPacket, AfPacketDriver>::new(env.right_pair.left.clone());
-
-        let left_device_tx = left_device.sender();
-        let right_device_tx = right_device.sender();
-        let delay_device_ltor_tx = left_delay_device.sender();
-        let delay_device_rtol_tx = right_delay_device.sender();
-
-        let token_dup = self.token.clone();
-        handles.push(tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    packet = left_device.receiver().dequeue() => {
-                        if let Some(p) = packet {
-                            println!("forward a packet from left device to delay device");
-                            delay_device_ltor_tx.enqueue(p).unwrap();
+        for (&rx_id, &tx_id) in self.router.iter() {
+            let mut rx = self.receiver.remove(&rx_id).unwrap();
+            let tx = self.sender.get(&tx_id).unwrap().clone();
+            let token_dup = self.token.clone();
+            handles.push(tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        packet = rx.dequeue() => {
+                            if let Some(p) = packet {
+                                println!("forward a packet from {} to {}", rx_id, tx_id);
+                                tx.enqueue(p).unwrap();
+                            }
+                        }
+                        _ = token_dup.cancelled() => {
+                            return
                         }
                     }
-                    _ = token_dup.cancelled() => {
-                        return
-                    }
                 }
-            }
-        }));
-
-        let token_dup = self.token.clone();
-        handles.push(tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    packet = left_delay_device.receiver().dequeue() => {
-                        if let Some(p) = packet {
-                            println!("forward a packet from delay device to right device");
-                            right_device_tx.enqueue(p).unwrap();
-                        }
-                    }
-                    _ = token_dup.cancelled() => {
-                        return
-                    }
-                }
-            }
-        }));
-
-        let token_dup = self.token.clone();
-        handles.push(tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    packet = right_device.receiver().dequeue() => {
-                        if let Some(p) = packet {
-                            println!("forward a packet from right device to delay device");
-                            delay_device_rtol_tx.enqueue(p).unwrap();
-                        }
-                    }
-                    _ = token_dup.cancelled() => {
-                        return
-                    }
-                }
-            }
-        }));
-
-        let token_dup = self.token.clone();
-        handles.push(tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    packet = right_delay_device.receiver().dequeue() => {
-                        if let Some(p) = packet {
-                            println!("forward a packet from delay device to left device");
-                            left_device_tx.enqueue(p).unwrap();
-                        }
-                    }
-                    _ = token_dup.cancelled() => {
-                        return
-                    }
-                }
-            }
-        }));
-
-        let token_dup = self.token.clone();
-        tokio::spawn(async move {
-            tokio::signal::ctrl_c().await.unwrap();
-            token_dup.cancel();
-        });
-
+            }));
+        }
         for handle in handles {
             handle.await.unwrap();
         }

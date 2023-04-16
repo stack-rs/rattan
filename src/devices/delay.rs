@@ -24,9 +24,20 @@ where
     ingress: mpsc::UnboundedSender<DelayedPacket<P>>,
 }
 
-impl<P> Ingress<P> for DelayDeviceIngress<P>
+impl<P> Clone for DelayDeviceIngress<P>
 where
     P: Packet,
+{
+    fn clone(&self) -> Self {
+        Self {
+            ingress: self.ingress.clone(),
+        }
+    }
+}
+
+impl<P> Ingress<P> for DelayDeviceIngress<P>
+where
+    P: Packet + Send,
 {
     fn enqueue(&self, packet: P) -> Result<(), Error> {
         // XXX(minhuw): handle possible error here
@@ -69,7 +80,7 @@ pub struct DelayDevice<P: Packet> {
 
 impl<P> Device<P> for DelayDevice<P>
 where
-    P: Packet + Send + Sync,
+    P: Packet + Send + Sync + 'static,
 {
     type IngressType = DelayDeviceIngress<P>;
     type EgressType = DelayedDeviceEgress<P>;
@@ -80,6 +91,10 @@ where
 
     fn receiver(&mut self) -> &mut Self::EgressType {
         &mut self.egress
+    }
+
+    fn into_receiver(self) -> Self::EgressType {
+        self.egress
     }
 }
 

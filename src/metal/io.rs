@@ -83,7 +83,7 @@ where
 
         // TODO(minhuw): modify the raw buffer is not a good idea, especially when we need to
         // modify deeper headers, such as TCP header. Not sure whether `etherparse` can support
-        // inplace update of packet. Maybe a home made packet parser and manipulation library is 
+        // inplace update of packet. Maybe a home made packet parser and manipulation library is
         // necessary eventually.
         let mut ether = packet.ether_hdr().unwrap();
         ether

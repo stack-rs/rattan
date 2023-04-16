@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.69"
 async-trait = "0.1.68"
+ctrlc = "3.2.5"
 etherparse = "0.13.0"
 futures = "0.3.26"
 libc = "0.2.141"

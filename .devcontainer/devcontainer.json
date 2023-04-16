@@ -7,5 +7,12 @@
             "packages": "ethtool,iputils-ping,iperf"
         }
     },
-	"runArgs": [ "--cap-add=NET_ADMIN", "--cap-add=NET_RAW", "--cap-add=SYS_PTRACE", "--cap-add=SYS_ADMIN", "--security-opt", "apparmor=unconfined" ]
+	"runArgs": [ "--cap-add=NET_ADMIN", "--cap-add=NET_RAW", "--cap-add=SYS_PTRACE", "--cap-add=SYS_ADMIN", "--security-opt", "apparmor=unconfined" ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "GitHub.copilot-nightly"
+            ]
+        }
+    }
 }

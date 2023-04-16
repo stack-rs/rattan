@@ -7,7 +7,7 @@ use crate::error::Error;
 pub mod delay;
 pub mod external;
 
-pub trait Packet: Debug {
+pub trait Packet: Debug + 'static + Send {
     fn empty(maximum: usize) -> Self;
     fn from_raw_buffer(buf: &[u8]) -> Self;
     fn length(&self) -> usize;
@@ -54,19 +54,30 @@ impl Packet for StdPacket {
     }
 }
 
-pub trait Ingress<P> {
+pub trait Ingress<P>: Send + Sync
+where
+    P: Packet,
+{
     fn enqueue(&self, packet: P) -> Result<(), Error>;
 }
 
 #[async_trait]
-pub trait Egress<P> {
+pub trait Egress<P>: Send
+where
+    P: Packet,
+{
     async fn dequeue(&mut self) -> Option<P>;
 }
 
 #[async_trait]
-pub trait Device<P> {
-    type IngressType: Ingress<P>;
-    type EgressType: Egress<P>;
+pub trait Device<P>
+where
+    P: Packet,
+{
+    type IngressType: Ingress<P> + 'static;
+    type EgressType: Egress<P> + 'static;
+
     fn sender(&self) -> Arc<Self::IngressType>;
     fn receiver(&mut self) -> &mut Self::EgressType;
+    fn into_receiver(self) -> Self::EgressType;
 }
