@@ -12,9 +12,12 @@ services:
       ACCESS_TOKEN: {{ github_access_key }}
       RUNNER_WORKDIR: /tmp/runner/work
       LABELS: linux,x64,{{ kernel_version }}
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_ADMIN
     security_opt:
-      # needed on SELinux systems to allow docker container to manage other docker containers
-      - label:disable
+      - apparmor=unconfined
     volumes:
       - '/var/run/docker.sock:/var/run/docker.sock'
       - '/tmp/runner:/tmp/runner'
