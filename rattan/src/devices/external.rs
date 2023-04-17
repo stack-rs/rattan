@@ -101,7 +101,7 @@ where
     P: Packet + Send + Sync,
     D: InterfaceDriver<P> + Send + Sync,
     D::Sender: Send + Sync,
-    D::Receiver: Send + Sync,
+    D::Receiver: Send,
 {
     _device: Arc<Mutex<VethDevice>>,
     ingress: Arc<VirtualEthernetIngress<P, D>>,
@@ -114,7 +114,7 @@ where
     P: Packet + Send + Sync,
     D: InterfaceDriver<P> + Send + Sync,
     D::Sender: Send + Sync,
-    D::Receiver: Send + Sync,
+    D::Receiver: Send,
 {
     pub fn new(device: Arc<Mutex<VethDevice>>) -> Self {
         println!("create virtual ethernet");
@@ -141,7 +141,7 @@ where
     P: Packet + Send + Sync + 'static,
     D: InterfaceDriver<P> + Send + Sync + 'static,
     D::Sender: Send + Sync,
-    D::Receiver: Send + Sync,
+    D::Receiver: Send,
 {
     type IngressType = VirtualEthernetIngress<P, D>;
     type EgressType = VirtualEthernetEgress<P, D>;
