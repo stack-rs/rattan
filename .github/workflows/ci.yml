@@ -24,7 +24,7 @@ jobs:
     name: cargo test
     strategy:
       matrix:
-        kernel: [ 5.15 ]
+        kernel: [ 5.4, 5.15, 6.1 ]
     runs-on: ${{ matrix.kernel }}
     steps:
       - uses: actions/checkout@v3
