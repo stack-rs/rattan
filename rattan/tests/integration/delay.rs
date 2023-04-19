@@ -1,7 +1,5 @@
 /// This test need to be run as root (CAP_NET_ADMIN, CAP_SYS_ADMIN and CAP_SYS_RAW)
 /// CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test delay -- --nocapture
-use std::sync::Arc;
-use std::time::Duration;
 use rattan::core::RattanMachine;
 use rattan::devices::delay::{DelayDevice, DelayDeviceConfig, DelayDeviceControlInterface};
 use rattan::devices::external::VirtualEthernet;
@@ -9,6 +7,8 @@ use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::get_std_env;
 use rattan::metal::io::AfPacketDriver;
 use regex::Regex;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::oneshot;
 
 #[test]
@@ -34,9 +34,9 @@ fn test_delay() {
             let right_delay_device = DelayDevice::<StdPacket>::new();
             let left_control_interface = left_delay_device.control_interface();
             let right_control_interface = right_delay_device.control_interface();
-            control_tx
-                .send((left_control_interface, right_control_interface))
-                .unwrap();
+            if let Err(_) = control_tx.send((left_control_interface, right_control_interface)) {
+                eprintln!("send control interface failed");
+            }
             let left_device =
                 VirtualEthernet::<StdPacket, AfPacketDriver>::new(_std_env.left_pair.right.clone());
             let right_device =

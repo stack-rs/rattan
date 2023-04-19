@@ -1,16 +1,17 @@
 use crate::devices::{Device, Packet};
 use crate::error::Error;
+use crate::utils::sync::AtomicRawCell;
 use async_trait::async_trait;
+use netem_trace::Delay;
 use std::fmt::Debug;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{sleep, Instant};
 
 use super::{ControlInterface, Egress, Ingress};
 
 #[derive(Debug)]
-struct DelayedPacket<P>
+struct DelayPacket<P>
 where
     P: Packet,
 {
@@ -22,7 +23,7 @@ pub struct DelayDeviceIngress<P>
 where
     P: Packet,
 {
-    ingress: mpsc::UnboundedSender<DelayedPacket<P>>,
+    ingress: mpsc::UnboundedSender<DelayPacket<P>>,
 }
 
 impl<P> Clone for DelayDeviceIngress<P>
@@ -43,7 +44,7 @@ where
     fn enqueue(&self, packet: P) -> Result<(), Error> {
         // XXX(minhuw): handle possible error here
         self.ingress
-            .send(DelayedPacket {
+            .send(DelayPacket {
                 ingress_time: Instant::now(),
                 packet,
             })
@@ -52,62 +53,61 @@ where
     }
 }
 
-pub struct DelayedDeviceEgress<P>
+pub struct DelayDeviceEgress<P>
 where
     P: Packet,
 {
-    egress: mpsc::UnboundedReceiver<DelayedPacket<P>>,
-    /// Stored as nanoseconds
-    delay: Arc<AtomicU64>,
+    egress: mpsc::UnboundedReceiver<DelayPacket<P>>,
+    delay: Arc<AtomicRawCell<Delay>>,
+    inner_delay: Box<Delay>,
 }
 
 #[async_trait]
-impl<P> Egress<P> for DelayedDeviceEgress<P>
+impl<P> Egress<P> for DelayDeviceEgress<P>
 where
     P: Packet + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
         let packet = self.egress.recv().await.unwrap();
-        let delay = Duration::from_nanos(self.delay.load(Ordering::Relaxed));
+        if let Some(delay) = self.delay.swap_null() {
+            self.inner_delay = delay;
+        }
         let queuing_delay = Instant::now() - packet.ingress_time;
-        if queuing_delay < delay {
-            sleep(delay - queuing_delay).await;
+        if queuing_delay < *self.inner_delay {
+            sleep(*self.inner_delay - queuing_delay).await;
         }
         Some(packet.packet)
     }
 }
 
 pub struct DelayDeviceConfig {
-    delay: Duration,
+    delay: Delay,
 }
 
 impl DelayDeviceConfig {
-    pub fn new(delay: Duration) -> Self {
-        Self { delay }
+    pub fn new<T: Into<Delay>>(delay: T) -> Self {
+        Self {
+            delay: delay.into(),
+        }
     }
 }
 
-#[derive(Debug)]
 pub struct DelayDeviceControlInterface {
-    /// Stored as nanoseconds
-    delay: Arc<AtomicU64>,
+    delay: Arc<AtomicRawCell<Delay>>,
 }
 
 impl ControlInterface for DelayDeviceControlInterface {
     type Config = DelayDeviceConfig;
 
     fn set_config(&mut self, config: Self::Config) -> Result<(), Error> {
-        let delay = u64::try_from(config.delay.as_nanos()).map_err(|e| {
-            Error::ConfigError(format!("Delay must be less than 2^64 nanoseconds: {}", e))
-        })?;
-        self.delay.store(delay, Ordering::Relaxed);
+        self.delay.store(Box::new(config.delay));
         Ok(())
     }
 }
 
 pub struct DelayDevice<P: Packet> {
     ingress: Arc<DelayDeviceIngress<P>>,
-    egress: DelayedDeviceEgress<P>,
+    egress: DelayDeviceEgress<P>,
     control_interface: Arc<DelayDeviceControlInterface>,
 }
 
@@ -116,7 +116,7 @@ where
     P: Packet + Send + Sync + 'static,
 {
     type IngressType = DelayDeviceIngress<P>;
-    type EgressType = DelayedDeviceEgress<P>;
+    type EgressType = DelayDeviceEgress<P>;
     type ControlInterfaceType = DelayDeviceControlInterface;
 
     fn sender(&self) -> Arc<Self::IngressType> {
@@ -142,12 +142,13 @@ where
 {
     pub fn new() -> DelayDevice<P> {
         let (rx, tx) = mpsc::unbounded_channel();
-        let delay = Arc::new(AtomicU64::new(0));
+        let delay = Arc::new(AtomicRawCell::new(Box::default()));
         DelayDevice {
             ingress: Arc::new(DelayDeviceIngress { ingress: rx }),
-            egress: DelayedDeviceEgress {
+            egress: DelayDeviceEgress {
                 egress: tx,
                 delay: Arc::clone(&delay),
+                inner_delay: Box::default(),
             },
             control_interface: Arc::new(DelayDeviceControlInterface { delay }),
         }
