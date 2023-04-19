@@ -1,5 +1,7 @@
 use crate::metal::{netns::NetNs, veth::VethPair};
 use std::net::{IpAddr, Ipv4Addr};
+use rand::{thread_rng, Rng};
+use rand::distributions::Alphanumeric;
 
 //   ns-client                          ns-rattan                         ns-server
 // +-----------+    veth pair    +--------------------+    veth pair    +-----------+
@@ -16,11 +18,19 @@ pub struct StdNetEnv {
 }
 
 pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
-    let client_netns = NetNs::new("ns-client")?;
-    let server_netns = NetNs::new("ns-server")?;
-    let rattan_netns = NetNs::new("ns-rattan")?;
+    let rand_string: String = thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(6)
+        .map(char::from)
+        .collect();
+    let client_netns_name = format!("ns-client-{}", rand_string);
+    let server_netns_name = format!("ns-server-{}", rand_string);
+    let rattan_netns_name = format!("ns-rattan-{}", rand_string);
+    let client_netns = NetNs::new(&client_netns_name)?;
+    let server_netns = NetNs::new(&server_netns_name)?;
+    let rattan_netns = NetNs::new(&rattan_netns_name)?;
 
-    let veth_pair_client = VethPair::new("rc-left", "rc-right")?;
+    let veth_pair_client = VethPair::new(format!("rc-left-{}", rand_string), format!("rc-right-{}", rand_string))?;
 
     veth_pair_client
         .left
@@ -42,7 +52,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         .disable_checksum_offload()?
         .up()?;
 
-    let veth_pair_server = VethPair::new("rs-left", "rs-right")?;
+    let veth_pair_server = VethPair::new(format!("rs-left-{}", rand_string), format!("rs-right-{}", rand_string))?;
     veth_pair_server
         .left
         .lock()
@@ -68,7 +78,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         .args([
             "netns",
             "exec",
-            "ns-client",
+            &client_netns_name,
             "ip",
             "route",
             "add",
@@ -82,7 +92,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         .args([
             "netns",
             "exec",
-            "ns-server",
+            &server_netns_name,
             "ip",
             "route",
             "add",
@@ -103,7 +113,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         String::from_utf8_lossy(&output.stdout)
     );
 
-    for ns in &["ns-client", "ns-server", "ns-rattan"] {
+    for ns in &[&client_netns_name, &server_netns_name, &rattan_netns_name] {
         let output = std::process::Command::new("ip")
             .args(["netns", "exec", ns, "ip", "addr", "show"])
             .output()

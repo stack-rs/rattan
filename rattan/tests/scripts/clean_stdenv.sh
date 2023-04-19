@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
+suffix=$1
 
-ip netns del ns-rattan
-ip netns del ns-client
-ip netns del ns-server
+if [ -n "$suffix" ]; then
+    suffix="-$suffix"
+fi
+ip netns del ns-rattan"$suffix"
+ip netns del ns-client"$suffix"
+ip netns del ns-server"$suffix"
 
