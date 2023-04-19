@@ -6,6 +6,7 @@ use crate::error::Error;
 
 pub mod delay;
 pub mod external;
+pub mod loss;
 
 pub trait Packet: Debug + 'static + Send {
     fn empty(maximum: usize) -> Self;

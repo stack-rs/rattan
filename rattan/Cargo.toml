@@ -12,6 +12,7 @@ ctrlc = "3.2.5"
 etherparse = "0.13.0"
 futures = "0.3.26"
 libc = "0.2.141"
+netem-trace = { version = "0.1.0", default-features = false }
 nix = "0.26.2"
 rand = "0.8.5"
 regex = "1.7.3"
