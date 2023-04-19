@@ -64,7 +64,7 @@ where
                     tokio::select! {
                         packet = rx.dequeue() => {
                             if let Some(p) = packet {
-                                println!("forward a packet from {} to {}", rx_id, tx_id);
+                                // println!("forward a packet from {} to {}", rx_id, tx_id);
                                 tx.enqueue(p).unwrap();
                             }
                         }

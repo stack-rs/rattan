@@ -168,13 +168,13 @@ where
         {
             Ok(None)
         } else {
-            println!(
-                "receive a packet from AF_PACKET {} (protocol: {:<04X}, pkttype: {}, source index: {}, hardware_addr: {:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X})",
-                self.raw_fd,
-                addr_ll.sll_protocol,
-                addr_ll.sll_pkttype, addr_ll.sll_ifindex,
-                addr_ll.sll_addr[0], addr_ll.sll_addr[1], addr_ll.sll_addr[2], addr_ll.sll_addr[3], addr_ll.sll_addr[4], addr_ll.sll_addr[5]
-            );
+            // println!(
+            //     "receive a packet from AF_PACKET {} (protocol: {:<04X}, pkttype: {}, source index: {}, hardware_addr: {:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X})",
+            //     self.raw_fd,
+            //     addr_ll.sll_protocol,
+            //     addr_ll.sll_pkttype, addr_ll.sll_ifindex,
+            //     addr_ll.sll_addr[0], addr_ll.sll_addr[1], addr_ll.sll_addr[2], addr_ll.sll_addr[3], addr_ll.sll_addr[4], addr_ll.sll_addr[5]
+            // );
             Ok(Some(P::from_raw_buffer(&buf[0..ret])))
         }
     }
