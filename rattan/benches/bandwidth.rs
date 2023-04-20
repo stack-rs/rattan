@@ -1,7 +1,12 @@
-use std::{thread::JoinHandle, sync::Arc};
+use std::{sync::Arc, thread::JoinHandle};
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use rattan::{env::get_std_env, core::RattanMachine, devices::{StdPacket, bandwidth::BwDevice, external::VirtualEthernet}, metal::{io::AfPacketDriver, netns::NetNs}};
+use rattan::{
+    core::RattanMachine,
+    devices::{bandwidth::BwDevice, external::VirtualEthernet, StdPacket},
+    env::get_std_env,
+    metal::{io::AfPacketDriver, netns::NetNs},
+};
 use tokio_util::sync::CancellationToken;
 
 fn prepare_env() -> (JoinHandle<()>, CancellationToken, Arc<NetNs>, Arc<NetNs>) {
@@ -83,7 +88,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     let (rattan_thread, cancel_token, left_ns, right_ns) = prepare_env();
 
     let mut group = c.benchmark_group("Bandwidth");
-    group.sample_size(10).bench_function("af_packet", |b| b.iter(|| run_iperf(&left_ns, &right_ns)));
+    group
+        .sample_size(10)
+        .bench_function("af_packet", |b| b.iter(|| run_iperf(&left_ns, &right_ns)));
 
     group.finish();
     cancel_token.cancel();

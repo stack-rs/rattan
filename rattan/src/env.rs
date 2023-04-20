@@ -1,7 +1,7 @@
 use crate::metal::{netns::NetNs, veth::VethPair};
-use std::net::{IpAddr, Ipv4Addr};
-use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
+use std::net::{IpAddr, Ipv4Addr};
 
 //   ns-client                          ns-rattan                         ns-server
 // +-----------+    veth pair    +--------------------+    veth pair    +-----------+
@@ -30,7 +30,10 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
     let server_netns = NetNs::new(&server_netns_name)?;
     let rattan_netns = NetNs::new(&rattan_netns_name)?;
 
-    let veth_pair_client = VethPair::new(format!("rc-left-{}", rand_string), format!("rc-right-{}", rand_string))?;
+    let veth_pair_client = VethPair::new(
+        format!("rc-left-{}", rand_string),
+        format!("rc-right-{}", rand_string),
+    )?;
 
     veth_pair_client
         .left
@@ -52,7 +55,10 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         .disable_checksum_offload()?
         .up()?;
 
-    let veth_pair_server = VethPair::new(format!("rs-left-{}", rand_string), format!("rs-right-{}", rand_string))?;
+    let veth_pair_server = VethPair::new(
+        format!("rs-left-{}", rand_string),
+        format!("rs-right-{}", rand_string),
+    )?;
     veth_pair_server
         .left
         .lock()
