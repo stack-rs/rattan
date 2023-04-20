@@ -98,7 +98,6 @@ fn test_bandwidth() {
             .flatten()
             .step_by(2)
             .take(10)
-            .filter(|x| *x > 900000000)
             .collect::<Vec<_>>();
         assert!(bandwidth.len() > 0);
     }

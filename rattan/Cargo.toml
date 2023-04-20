@@ -25,3 +25,8 @@ tokio-util = "0.7.7"
 [dev-dependencies]
 ctrlc = "3.2.5"
 netns-rs = "0.1.0"
+criterion = "0.4"
+
+[[bench]]
+name = "bandwidth"
+harness = false

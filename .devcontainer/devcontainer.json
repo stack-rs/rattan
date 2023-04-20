@@ -4,7 +4,7 @@
     "features": {
         "ghcr.io/devcontainers/features/rust:1": {},
         "ghcr.io/rocker-org/devcontainer-features/apt-packages:1": {
-            "packages": "ethtool,iputils-ping,iperf"
+            "packages": "ethtool,iputils-ping,iperf,iperf3"
         }
     },
 	"runArgs": [ "--cap-add=NET_ADMIN", "--cap-add=NET_RAW", "--cap-add=SYS_PTRACE", "--cap-add=SYS_ADMIN", "--security-opt", "apparmor=unconfined" ],
