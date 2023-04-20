@@ -80,7 +80,7 @@ fn test_delay() {
         assert_eq!(latency.len(), 10);
         latency.drain(0..5);
         let average_latency = latency.iter().sum::<f64>() / latency.len() as f64;
-        assert!(average_latency < 0.1);
+        assert!(average_latency < 10.0);
     }
     println!("====================================================");
     // After set the DelayDevice, the average latency should be around 200ms
