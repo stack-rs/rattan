@@ -1,5 +1,6 @@
 use crate::devices::{Device, Packet};
 use crate::error::Error;
+use crate::metal::timer::Timer;
 use crate::utils::sync::AtomicRawCell;
 use async_trait::async_trait;
 use netem_trace::{Bandwidth, Delay};
@@ -7,7 +8,6 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
-use tokio_timerfd::Delay as DelayTimer;
 
 use super::{ControlInterface, Egress, Ingress};
 
@@ -19,7 +19,6 @@ where
     P: Packet,
 {
     ingress_time: Instant,
-    length: usize,
     packet: P,
 }
 
@@ -50,7 +49,6 @@ where
         self.ingress
             .send(BwPacket {
                 ingress_time: Instant::now(),
-                length: packet.length(),
                 packet,
             })
             .unwrap();
@@ -75,7 +73,7 @@ where
     bandwidth: Arc<AtomicRawCell<Bandwidth>>,
     inner_bandwidth: Box<Bandwidth>,
     next_available: Instant,
-    timer: Arc<DelayTimer>,
+    timer: Timer,
 }
 
 #[async_trait]
@@ -85,24 +83,23 @@ where
 {
     async fn dequeue(&mut self) -> Option<P> {
         let packet = self.egress.recv().await.unwrap();
-        if let Some(delay) = self.bandwidth.swap_null() {
-            self.inner_bandwidth = delay;
+        if let Some(bandwidth) = self.bandwidth.swap_null() {
+            self.inner_bandwidth = bandwidth;
         }
         let now = Instant::now();
         if packet.ingress_time >= self.next_available {
             // no need to wait, since the packet arrives after next_available
-            let transfer_time = transfer_time(packet.length, *self.inner_bandwidth);
+            let transfer_time = transfer_time(packet.packet.length(), *self.inner_bandwidth);
             self.next_available = packet.ingress_time + transfer_time;
         } else if now >= self.next_available {
             // the current time is already after next_available
-            let transfer_time = transfer_time(packet.length, *self.inner_bandwidth);
+            let transfer_time = transfer_time(packet.packet.length(), *self.inner_bandwidth);
             self.next_available += transfer_time;
         } else {
             // wait until next_available
-            let timer = Arc::get_mut(&mut self.timer).unwrap();
-            timer.reset(self.next_available.into_std());
-            timer.await.unwrap();
-            let transfer_time = transfer_time(packet.length, *self.inner_bandwidth);
+            let wait_time = self.next_available - now;
+            self.timer.sleep(wait_time).await.unwrap();
+            let transfer_time = transfer_time(packet.packet.length(), *self.inner_bandwidth);
             self.next_available += transfer_time;
         }
         Some(packet.packet)
@@ -177,7 +174,6 @@ where
     pub fn new() -> BwDevice<P> {
         let (rx, tx) = mpsc::unbounded_channel();
         let bandwidth = Arc::new(AtomicRawCell::new(Box::new(Bandwidth::from_bps(u64::MAX))));
-        let timer = DelayTimer::new(std::time::Instant::now()).unwrap();
         BwDevice {
             ingress: Arc::new(BwDeviceIngress { ingress: rx }),
             egress: BwDeviceEgress {
@@ -185,7 +181,7 @@ where
                 bandwidth: Arc::clone(&bandwidth),
                 inner_bandwidth: Box::new(Bandwidth::from_bps(u64::MAX)),
                 next_available: Instant::now(),
-                timer: Arc::new(timer),
+                timer: Timer::new().unwrap(),
             },
             control_interface: Arc::new(BwDeviceControlInterface { bandwidth }),
         }

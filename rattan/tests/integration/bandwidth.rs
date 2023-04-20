@@ -131,7 +131,6 @@ fn test_bandwidth() {
 
         let stdout = String::from_utf8(output.stdout).unwrap();
         handle.join().unwrap();
-        println!("{}", stdout);
 
         let re = Regex::new(r#""bits_per_second":\s*(\d+)"#).unwrap();
         let mut bandwidth = re
