@@ -1,13 +1,13 @@
 use crate::devices::{Device, Packet};
 use crate::error::Error;
 use crate::utils::sync::AtomicRawCell;
-use async_timer::timer::new_timer;
 use async_trait::async_trait;
 use netem_trace::{Bandwidth, Delay};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
+use tokio_timerfd::Delay as DelayTimer;
 
 use super::{ControlInterface, Egress, Ingress};
 
@@ -75,6 +75,7 @@ where
     bandwidth: Arc<AtomicRawCell<Bandwidth>>,
     inner_bandwidth: Box<Bandwidth>,
     next_available: Instant,
+    timer: Arc<DelayTimer>,
 }
 
 #[async_trait]
@@ -98,8 +99,9 @@ where
             self.next_available += transfer_time;
         } else {
             // wait until next_available
-            let wait_time = self.next_available - now;
-            new_timer(wait_time).await;
+            let timer = Arc::get_mut(&mut self.timer).unwrap();
+            timer.reset(self.next_available.into_std());
+            timer.await.unwrap();
             let transfer_time = transfer_time(packet.length, *self.inner_bandwidth);
             self.next_available += transfer_time;
         }
@@ -175,6 +177,7 @@ where
     pub fn new() -> BwDevice<P> {
         let (rx, tx) = mpsc::unbounded_channel();
         let bandwidth = Arc::new(AtomicRawCell::new(Box::new(Bandwidth::from_bps(u64::MAX))));
+        let timer = DelayTimer::new(std::time::Instant::now()).unwrap();
         BwDevice {
             ingress: Arc::new(BwDeviceIngress { ingress: rx }),
             egress: BwDeviceEgress {
@@ -182,6 +185,7 @@ where
                 bandwidth: Arc::clone(&bandwidth),
                 inner_bandwidth: Box::new(Bandwidth::from_bps(u64::MAX)),
                 next_available: Instant::now(),
+                timer: Arc::new(timer),
             },
             control_interface: Arc::new(BwDeviceControlInterface { bandwidth }),
         }

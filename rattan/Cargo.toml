@@ -7,7 +7,6 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.69"
-async-timer = { version = "1.0.0-beta.9", features = ["tokio1"] }
 async-trait = "0.1.68"
 ctrlc = "3.2.5"
 etherparse = "0.13.0"
@@ -20,6 +19,7 @@ regex = "1.7.3"
 rtnetlink = "0.12.0"
 thiserror = "1.0.40"
 tokio = { version = "1.26.0", features = ["rt-multi-thread", "time", "net", "sync", "signal", "tokio-macros", "macros"] }
+tokio-timerfd = "0.2.0"
 tokio-util = "0.7.7"
 
 [dev-dependencies]
