@@ -131,7 +131,7 @@ fn test_bandwidth() {
 
         let stdout = String::from_utf8(output.stdout).unwrap();
         handle.join().unwrap();
-        // println!("{}", stdout);
+        println!("{}", stdout);
 
         let re = Regex::new(r#""bits_per_second":\s*(\d+)"#).unwrap();
         let mut bandwidth = re
@@ -141,6 +141,7 @@ fn test_bandwidth() {
             .step_by(2)
             .take(10)
             .collect::<Vec<_>>();
+
         bandwidth.drain(0..4);
         let bitrate = bandwidth.iter().sum::<u64>() / bandwidth.len() as u64;
         assert!(bitrate > 90000000 && bitrate < 100000000);

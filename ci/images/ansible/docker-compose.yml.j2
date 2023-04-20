@@ -16,6 +16,10 @@ services:
       - NET_ADMIN
       - NET_RAW
       - SYS_ADMIN
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
     security_opt:
       - apparmor=unconfined
     volumes:
