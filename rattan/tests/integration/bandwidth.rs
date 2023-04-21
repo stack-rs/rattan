@@ -68,12 +68,13 @@ fn test_bandwidth() {
             std::thread::spawn(|| {
                 std::process::Command::new("iperf3")
                     .args(["-s", "-p", "9000", "-1"])
+                    .stdout(std::process::Stdio::null())
                     .spawn()
                     .unwrap();
             })
         };
         left_ns.enter().unwrap();
-        let output = std::process::Command::new("iperf3")
+        let client_handle = std::process::Command::new("iperf3")
             .args([
                 "-c",
                 "192.168.2.1",
@@ -85,9 +86,10 @@ fn test_bandwidth() {
                 "-C",
                 "reno",
             ])
-            .output()
+            .stdout(std::process::Stdio::piped())
+            .spawn()
             .unwrap();
-
+        let output = client_handle.wait_with_output().unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
         handle.join().unwrap();
         // println!("{}", stdout);
@@ -118,17 +120,19 @@ fn test_bandwidth() {
             right_ns.enter().unwrap();
             std::thread::spawn(|| {
                 std::process::Command::new("iperf3")
-                    .args(["-s", "-p", "9000", "-1"])
+                    .args(["-s", "-p", "9001", "-1"])
+                    .stdout(std::process::Stdio::null())
                     .spawn()
                     .unwrap();
             })
         };
         left_ns.enter().unwrap();
-        let output = std::process::Command::new("iperf3")
-            .args(["-c", "192.168.2.1", "-p", "9000", "-t", "10", "-J"])
-            .output()
+        let client_handle = std::process::Command::new("iperf3")
+            .args(["-c", "192.168.2.1", "-p", "9001", "-t", "10", "-J"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
             .unwrap();
-
+        let output = client_handle.wait_with_output().unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
         handle.join().unwrap();
 

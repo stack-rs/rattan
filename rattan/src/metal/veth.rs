@@ -12,7 +12,7 @@ pub struct VethPair {
 
 impl VethPair {
     pub fn new<S: AsRef<str>>(name: S, peer_name: S) -> Result<VethPair, VethError> {
-        let output = Command::new("ip")
+        let handle = Command::new("ip")
             .arg("link")
             .arg("add")
             .arg(name.as_ref())
@@ -21,7 +21,8 @@ impl VethPair {
             .arg("peer")
             .arg("name")
             .arg(peer_name.as_ref())
-            .output()?;
+            .spawn()?;
+        let output = handle.wait_with_output()?;
         if !output.status.success() {
             Err(VethError::CreateVethPairError(
                 String::from_utf8(output.stderr).unwrap(),

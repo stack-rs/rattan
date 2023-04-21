@@ -63,11 +63,12 @@ fn test_delay() {
     {
         println!("try to ping with no delay");
         left_ns.enter().unwrap();
-        let output = std::process::Command::new("ping")
+        let handle = std::process::Command::new("ping")
             .args(["192.168.2.1", "-c", "10"])
-            .output()
+            .stdout(std::process::Stdio::piped())
+            .spawn()
             .unwrap();
-
+        let output = handle.wait_with_output().unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
 
         let re = Regex::new(r"time=(\d+)").unwrap();
@@ -97,11 +98,12 @@ fn test_delay() {
             .set_config(DelayDeviceConfig::new(Duration::from_millis(100)))
             .unwrap();
         left_ns.enter().unwrap();
-        let output = std::process::Command::new("ping")
+        let handle = std::process::Command::new("ping")
             .args(["192.168.2.1", "-c", "10"])
-            .output()
+            .stdout(std::process::Stdio::piped())
+            .spawn()
             .unwrap();
-
+        let output = handle.wait_with_output().unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
 
         let re = Regex::new(r"time=(\d+)").unwrap();

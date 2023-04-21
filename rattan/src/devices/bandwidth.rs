@@ -61,7 +61,6 @@ fn transfer_time(length: usize, bandwidth: Bandwidth) -> Delay {
     let bits = length * 8;
     let capacity = bandwidth.as_bps() as u64;
     let seconds = bits as f64 / capacity as f64;
-    // println!("{} {} {}", bits, capacity, seconds);
     Delay::from_secs_f64(seconds)
 }
 

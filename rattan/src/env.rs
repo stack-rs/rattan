@@ -80,7 +80,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         .up()?;
 
     // Set the default route of left and right namespaces
-    std::process::Command::new("ip")
+    let mut client_exec_handle = std::process::Command::new("ip")
         .args([
             "netns",
             "exec",
@@ -92,9 +92,9 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
             "via",
             "192.168.1.1",
         ])
-        .output()
+        .spawn()
         .unwrap();
-    std::process::Command::new("ip")
+    let mut server_exec_handle = std::process::Command::new("ip")
         .args([
             "netns",
             "exec",
@@ -106,78 +106,84 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
             "via",
             "192.168.2.1",
         ])
-        .output()
+        .spawn()
         .unwrap();
+    client_exec_handle.wait()?;
+    server_exec_handle.wait()?;
 
-    let output = std::process::Command::new("ip")
-        .arg("netns")
-        .arg("list")
-        .output()
-        .unwrap();
-    println!(
-        "ip netns list:\n{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-
-    for ns in &[&client_netns_name, &server_netns_name, &rattan_netns_name] {
+    if std::env::var("TEST_STD_NS").is_ok() {
         let output = std::process::Command::new("ip")
-            .args(["netns", "exec", ns, "ip", "addr", "show"])
+            .arg("netns")
+            .arg("list")
+            .output()
+            .unwrap();
+        println!(
+            "ip netns list:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+
+        for ns in &[&client_netns_name, &server_netns_name, &rattan_netns_name] {
+            let output = std::process::Command::new("ip")
+                .args(["netns", "exec", ns, "ip", "addr", "show"])
+                .output()
+                .unwrap();
+
+            println!(
+                "ip netns exec {} ip link list:\n{}",
+                ns,
+                String::from_utf8_lossy(&output.stdout)
+            );
+
+            let output = std::process::Command::new("ip")
+                .args(["netns", "exec", ns, "ip", "-4", "route", "show"])
+                .output()
+                .unwrap();
+
+            println!(
+                "ip netns exec {} ip -4 route show:\n{}",
+                ns,
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+
+        let output = std::process::Command::new("ip")
+            .args([
+                "netns",
+                "exec",
+                &rattan_netns_name,
+                "ping",
+                "-c",
+                "3",
+                "192.168.1.1",
+            ])
             .output()
             .unwrap();
 
         println!(
-            "ip netns exec {} ip link list:\n{}",
-            ns,
+            "ip netns exec {} ping -c 3 192.168.1.1:\n{}",
+            &rattan_netns_name,
             String::from_utf8_lossy(&output.stdout)
         );
 
         let output = std::process::Command::new("ip")
-            .args(["netns", "exec", ns, "ip", "-4", "route", "show"])
+            .args([
+                "netns",
+                "exec",
+                &rattan_netns_name,
+                "ping",
+                "-c",
+                "3",
+                "192.168.2.1",
+            ])
             .output()
             .unwrap();
 
         println!(
-            "ip netns exec {} ip -4 route show:\n{}",
-            ns,
+            "ip netns exec {} ping -c 3 192.168.2.1:\n{}",
+            &rattan_netns_name,
             String::from_utf8_lossy(&output.stdout)
         );
     }
-
-    let output = std::process::Command::new("ip")
-        .args([
-            "netns",
-            "exec",
-            "ns-rattan",
-            "ping",
-            "-c",
-            "3",
-            "192.168.1.1",
-        ])
-        .output()
-        .unwrap();
-
-    println!(
-        "ip netns exec ns-rattan ping -c 3 192.168.1.1:\n{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-
-    let output = std::process::Command::new("ip")
-        .args([
-            "netns",
-            "exec",
-            "ns-rattan",
-            "ping",
-            "-c",
-            "3",
-            "192.168.2.1",
-        ])
-        .output()
-        .unwrap();
-
-    println!(
-        "ip netns exec ns-rattan ping -c 3 192.168.2.1:\n{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
 
     Ok(StdNetEnv {
         left_ns: client_netns,

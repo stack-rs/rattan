@@ -365,30 +365,38 @@ fn test_netns() {
 
     {
         let netns = NetNs::new(&namespace_name).unwrap();
-        let output = std::process::Command::new("ip")
+        let handle = std::process::Command::new("ip")
             .args(["netns", "ls"])
-            .output()
+            .stdout(std::process::Stdio::piped())
+            .spawn()
             .unwrap();
+        let output = handle.wait_with_output().unwrap();
         assert!(String::from_utf8_lossy(&output.stdout).contains(&namespace_name));
 
         {
             let _netns_guard = NetNsGuard::new(netns.clone()).unwrap();
-            let output = std::process::Command::new("ip")
+            let inner_handle = std::process::Command::new("ip")
                 .args(["netns", "identify"])
-                .output()
+                .stdout(std::process::Stdio::piped())
+                .spawn()
                 .unwrap();
+            let output = inner_handle.wait_with_output().unwrap();
             assert!(String::from_utf8_lossy(&output.stdout).contains(&namespace_name));
         }
-        let output = std::process::Command::new("ip")
+        let handle = std::process::Command::new("ip")
             .args(["netns", "identify"])
-            .output()
+            .stdout(std::process::Stdio::piped())
+            .spawn()
             .unwrap();
+        let output = handle.wait_with_output().unwrap();
         assert!(!String::from_utf8_lossy(&output.stdout).contains(&namespace_name));
     }
 
-    let output = std::process::Command::new("ip")
+    let handle = std::process::Command::new("ip")
         .args(["netns", "ls"])
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .spawn()
         .unwrap();
+    let output = handle.wait_with_output().unwrap();
     assert!(!String::from_utf8_lossy(&output.stdout).contains(&namespace_name));
 }
