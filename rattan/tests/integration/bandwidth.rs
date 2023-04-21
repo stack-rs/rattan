@@ -80,6 +80,8 @@ fn test_bandwidth() {
                 "192.168.2.1",
                 "-p",
                 "9000",
+                "--cport",
+                "10000",
                 "-t",
                 "10",
                 "-J",
@@ -128,7 +130,17 @@ fn test_bandwidth() {
         };
         left_ns.enter().unwrap();
         let client_handle = std::process::Command::new("iperf3")
-            .args(["-c", "192.168.2.1", "-p", "9001", "-t", "10", "-J"])
+            .args([
+                "-c",
+                "192.168.2.1",
+                "-p",
+                "9001",
+                "--cport",
+                "10001",
+                "-t",
+                "10",
+                "-J",
+            ])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
