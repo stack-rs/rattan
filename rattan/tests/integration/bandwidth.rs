@@ -7,8 +7,10 @@ use rattan::devices::external::VirtualEthernet;
 use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::get_std_env;
 use rattan::metal::io::AfPacketDriver;
+use std::time::Duration;
 use regex::Regex;
 use std::sync::Arc;
+use std::thread::sleep;
 use tokio::sync::oneshot;
 
 #[test]
@@ -77,6 +79,7 @@ fn test_bandwidth() {
             })
         };
         left_ns.enter().unwrap();
+        sleep(Duration::from_secs(1));
         let client_handle = std::process::Command::new("iperf3")
             .args([
                 "-c",
@@ -106,6 +109,7 @@ fn test_bandwidth() {
             .step_by(2)
             .take(10)
             .collect::<Vec<_>>();
+
         assert!(bandwidth.len() > 0);
     }
     println!("====================================================");
@@ -132,6 +136,7 @@ fn test_bandwidth() {
             })
         };
         left_ns.enter().unwrap();
+        sleep(Duration::from_secs(1));
         let client_handle = std::process::Command::new("iperf3")
             .args([
                 "-c",
