@@ -23,9 +23,11 @@ tokio-timerfd = "0.2.0"
 tokio-util = "0.7.7"
 
 [dev-dependencies]
-ctrlc = "3.2.5"
-netns-rs = "0.1.0"
 criterion = "0.4"
+ctrlc = "3.2.5"
+lazy_static = "1.4.0"
+netns-rs = "0.1.0"
+parking_lot = "0.12.1"
 
 [[bench]]
 name = "bandwidth"

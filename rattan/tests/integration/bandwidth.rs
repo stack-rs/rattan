@@ -13,7 +13,10 @@ use tokio::sync::oneshot;
 
 #[test]
 fn test_bandwidth() {
-    let _std_env = get_std_env().unwrap();
+    let _std_env = {
+        let _guard = crate::integration::STD_ENV_LOCK.lock();
+        get_std_env().unwrap()
+    };
     let left_ns = _std_env.left_ns.clone();
     let right_ns = _std_env.right_ns.clone();
 
@@ -123,7 +126,7 @@ fn test_bandwidth() {
             std::thread::spawn(|| {
                 std::process::Command::new("iperf3")
                     .args(["-s", "-p", "9001", "-1"])
-                    .stdout(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::piped())
                     .spawn()
                     .unwrap();
             })
@@ -146,6 +149,8 @@ fn test_bandwidth() {
             .unwrap();
         let output = client_handle.wait_with_output().unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        println!("{}", stderr);
         handle.join().unwrap();
 
         let re = Regex::new(r#""bits_per_second":\s*(\d+)"#).unwrap();
