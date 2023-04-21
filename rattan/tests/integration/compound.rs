@@ -20,10 +20,7 @@ use tokio::sync::oneshot;
 
 #[test]
 fn test_compound() {
-    let _std_env = {
-        let _guard = crate::integration::STD_ENV_LOCK.lock();
-        get_std_env().unwrap()
-    };
+    let _std_env = get_std_env().unwrap();
     let left_ns = _std_env.left_ns.clone();
     let right_ns = _std_env.right_ns.clone();
 

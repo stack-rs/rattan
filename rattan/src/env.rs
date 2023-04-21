@@ -2,12 +2,17 @@ use crate::metal::{netns::NetNs, veth::VethPair};
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
 
 //   ns-client                          ns-rattan                         ns-server
 // +-----------+    veth pair    +--------------------+    veth pair    +-----------+
 // |    rc-left| <-------------> |rc-right [P] rs-left| <-------------> |rs-right   |
 // |    .1.1/24|                 |.1.2/24      .2.2/24|                 |.2.1/24    |
 // +-----------+                 +--------------------+                 +-----------+
+
+lazy_static::lazy_static! {
+    static ref STD_ENV_LOCK: Arc<parking_lot::Mutex<()>> = Arc::new(parking_lot::Mutex::new(()));
+}
 
 pub struct StdNetEnv {
     pub left_ns: std::sync::Arc<NetNs>,
@@ -18,6 +23,7 @@ pub struct StdNetEnv {
 }
 
 pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
+    let _guard = STD_ENV_LOCK.lock();
     let rand_string: String = thread_rng()
         .sample_iter(&Alphanumeric)
         .take(6)
