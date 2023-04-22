@@ -55,8 +55,7 @@ fn test_delay() {
         });
     });
 
-    let (left_control_interface, right_control_interface) =
-        control_rx.blocking_recv().unwrap();
+    let (left_control_interface, right_control_interface) = control_rx.blocking_recv().unwrap();
 
     // Before set the DelayDevice, the average latency should be less than 0.1ms
     {
