@@ -42,7 +42,7 @@ fn main() -> anyhow::Result<()> {
             machine.link_device(right_device_rx, right_delay_tx);
             machine.link_device(right_delay_rx, left_device_tx);
 
-            machine.core_loop(original_ns).await
+            machine.core_loop(original_ns, 8080).await
         });
     }
     Ok(())

@@ -2,13 +2,13 @@ use crate::devices::{Device, Packet};
 use crate::error::Error;
 use crate::utils::sync::AtomicRawCell;
 use async_trait::async_trait;
+use duration_str::deserialize_duration;
 use netem_trace::Delay;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Instant};
-use duration_str::deserialize_duration;
 
 use super::{ControlInterface, Egress, Ingress};
 

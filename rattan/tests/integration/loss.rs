@@ -4,12 +4,11 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rattan::core::RattanMachine;
 use rattan::devices::external::VirtualEthernet;
-use rattan::devices::loss::{LossDevice, LossDeviceConfig, LossDeviceControlInterface};
+use rattan::devices::loss::{LossDevice, LossDeviceConfig};
 use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::get_std_env;
 use rattan::metal::io::AfPacketDriver;
 use regex::Regex;
-use std::sync::Arc;
 use tokio::sync::oneshot;
 
 #[test]
@@ -54,11 +53,11 @@ fn test_loss() {
             machine.link_device(right_device_rx, right_loss_tx);
             machine.link_device(right_loss_rx, left_device_tx);
 
-            machine.core_loop(original_ns).await
+            machine.core_loop(original_ns, 8083).await
         });
     });
 
-    let (mut left_control_interface, _) = control_rx.blocking_recv().unwrap();
+    let (left_control_interface, _) = control_rx.blocking_recv().unwrap();
 
     // Before set the LossDevice, the average loss rate should be 0%
     {
@@ -84,9 +83,7 @@ fn test_loss() {
     // After set the LossDevice, the average loss rate should be between 40%-60%
     {
         println!("try to ping with loss set to 0.5");
-        Arc::<LossDeviceControlInterface>::get_mut(&mut left_control_interface)
-            .as_mut()
-            .unwrap()
+        left_control_interface
             .set_config(LossDeviceConfig::new(vec![0.5; 10]))
             .unwrap();
         left_ns.enter().unwrap();

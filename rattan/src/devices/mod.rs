@@ -1,10 +1,7 @@
 use async_trait::async_trait;
 use etherparse::{Ethernet2Header, Ipv4Header};
 use serde::Deserialize;
-use std::{
-    fmt::Debug,
-    sync::Arc,
-};
+use std::{fmt::Debug, sync::Arc};
 
 use crate::error::Error;
 

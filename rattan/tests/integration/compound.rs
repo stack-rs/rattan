@@ -4,16 +4,15 @@ use netem_trace::Bandwidth;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rattan::core::RattanMachine;
-use rattan::devices::bandwidth::{BwDevice, BwDeviceConfig, BwDeviceControlInterface};
-use rattan::devices::delay::{DelayDevice, DelayDeviceConfig, DelayDeviceControlInterface};
-use rattan::devices::loss::{LossDevice, LossDeviceConfig, LossDeviceControlInterface};
+use rattan::devices::bandwidth::{BwDevice, BwDeviceConfig};
+use rattan::devices::delay::{DelayDevice, DelayDeviceConfig};
+use rattan::devices::loss::{LossDevice, LossDeviceConfig};
 
 use rattan::devices::external::VirtualEthernet;
 use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::get_std_env;
 use rattan::metal::io::AfPacketDriver;
 use regex::Regex;
-use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -90,13 +89,13 @@ fn test_compound() {
             machine.link_device(right_delay_rx, right_loss_tx);
             machine.link_device(right_loss_rx, left_device_tx);
 
-            machine.core_loop(original_ns).await
+            machine.core_loop(original_ns, 8084).await
         });
     });
 
-    let (mut left_bw_ctl, mut right_bw_ctl) = bw_control_rx.blocking_recv().unwrap();
-    let (mut left_delay_ctl, mut right_delay_ctl) = delay_control_rx.blocking_recv().unwrap();
-    let (mut left_loss_ctl, _) = loss_control_rx.blocking_recv().unwrap();
+    let (left_bw_ctl, right_bw_ctl) = bw_control_rx.blocking_recv().unwrap();
+    let (left_delay_ctl, right_delay_ctl) = delay_control_rx.blocking_recv().unwrap();
+    let (left_loss_ctl, _) = loss_control_rx.blocking_recv().unwrap();
 
     // Before set the BwDevice, the bandwidth should be around 1Gbps
     {
@@ -150,27 +149,19 @@ fn test_compound() {
     std::thread::sleep(std::time::Duration::from_secs(1));
     {
         println!("try to iperf with bandwidth limit set to 100Mbps");
-        Arc::<BwDeviceControlInterface>::get_mut(&mut left_bw_ctl)
-            .unwrap()
+        left_bw_ctl
             .set_config(BwDeviceConfig::new(Bandwidth::from_mbps(100)))
             .unwrap();
-        Arc::<BwDeviceControlInterface>::get_mut(&mut right_bw_ctl)
-            .unwrap()
+        right_bw_ctl
             .set_config(BwDeviceConfig::new(Bandwidth::from_mbps(100)))
             .unwrap();
-        Arc::<DelayDeviceControlInterface>::get_mut(&mut left_delay_ctl)
-            .as_mut()
-            .unwrap()
+        left_delay_ctl
             .set_config(DelayDeviceConfig::new(Duration::from_millis(50)))
             .unwrap();
-        Arc::<DelayDeviceControlInterface>::get_mut(&mut right_delay_ctl)
-            .as_mut()
-            .unwrap()
+        right_delay_ctl
             .set_config(DelayDeviceConfig::new(Duration::from_millis(50)))
             .unwrap();
-        Arc::<LossDeviceControlInterface>::get_mut(&mut left_loss_ctl)
-            .as_mut()
-            .unwrap()
+        left_loss_ctl
             .set_config(LossDeviceConfig::new(vec![0.01; 10]))
             .unwrap();
 

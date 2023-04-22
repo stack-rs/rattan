@@ -43,7 +43,7 @@ fn prepare_env() -> (JoinHandle<()>, CancellationToken, Arc<NetNs>, Arc<NetNs>) 
             machine.link_device(right_device_rx, right_bw_tx);
             machine.link_device(right_bw_rx, left_device_tx);
 
-            machine.core_loop(original_ns).await
+            machine.core_loop(original_ns, 8080).await
         });
     });
 

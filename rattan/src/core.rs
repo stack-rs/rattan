@@ -4,7 +4,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     control::{http::HttpControlEndpoint, ControlEndpoint},
-    devices::{Device, Egress, Ingress, Packet}, metal::netns::NetNs,
+    devices::{Device, Egress, Ingress, Packet},
+    metal::netns::NetNs,
 };
 
 pub struct RattanMachine<P>
@@ -64,7 +65,7 @@ where
         self.token.clone()
     }
 
-    pub async fn core_loop(&mut self, original_ns: Arc<NetNs>) {
+    pub async fn core_loop(&mut self, original_ns: Arc<NetNs>, port: u16) {
         let mut handles = Vec::new();
         let router_clone = self.config_endpoint.router();
         let token_dup = self.token.clone();
@@ -78,9 +79,11 @@ where
                 .build()
                 .unwrap();
             rt.block_on(async move {
-                let server = axum::Server::bind(&"127.0.0.1:8080".parse().unwrap()).serve(router_clone.into_make_service()).with_graceful_shutdown(async {
-                    token_dup.cancelled().await;
-                });
+                let server = axum::Server::bind(&format!("127.0.0.1:{}", port).parse().unwrap())
+                    .serve(router_clone.into_make_service())
+                    .with_graceful_shutdown(async {
+                        token_dup.cancelled().await;
+                    });
                 match server.await {
                     Ok(_) => {}
                     Err(e) => {

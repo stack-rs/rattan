@@ -2,13 +2,12 @@
 /// CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test bandwidth -- --nocapture
 use netem_trace::Bandwidth;
 use rattan::core::RattanMachine;
-use rattan::devices::bandwidth::{BwDevice, BwDeviceConfig, BwDeviceControlInterface};
+use rattan::devices::bandwidth::{BwDevice, BwDeviceConfig};
 use rattan::devices::external::VirtualEthernet;
 use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::get_std_env;
 use rattan::metal::io::AfPacketDriver;
 use regex::Regex;
-use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -55,12 +54,11 @@ fn test_bandwidth() {
             machine.link_device(right_device_rx, right_bw_tx);
             machine.link_device(right_bw_rx, left_device_tx);
 
-            machine.core_loop(original_ns).await
+            machine.core_loop(original_ns, 8081).await
         });
     });
 
-    let (mut left_control_interface, mut right_control_interface) =
-        control_rx.blocking_recv().unwrap();
+    let (left_control_interface, right_control_interface) = control_rx.blocking_recv().unwrap();
 
     // Before set the BwDevice, the bandwidth should be around 1Gbps
     {
@@ -114,12 +112,10 @@ fn test_bandwidth() {
     std::thread::sleep(std::time::Duration::from_secs(1));
     {
         println!("try to iperf with bandwidth limit set to 100Mbps");
-        Arc::<BwDeviceControlInterface>::get_mut(&mut left_control_interface)
-            .unwrap()
+        left_control_interface
             .set_config(BwDeviceConfig::new(Bandwidth::from_mbps(100)))
             .unwrap();
-        Arc::<BwDeviceControlInterface>::get_mut(&mut right_control_interface)
-            .unwrap()
+        right_control_interface
             .set_config(BwDeviceConfig::new(Bandwidth::from_mbps(100)))
             .unwrap();
         let handle = {

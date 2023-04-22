@@ -1,13 +1,12 @@
 /// This test need to be run as root (CAP_NET_ADMIN, CAP_SYS_ADMIN and CAP_SYS_RAW)
 /// CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test delay -- --nocapture
 use rattan::core::RattanMachine;
-use rattan::devices::delay::{DelayDevice, DelayDeviceConfig, DelayDeviceControlInterface};
+use rattan::devices::delay::{DelayDevice, DelayDeviceConfig};
 use rattan::devices::external::VirtualEthernet;
 use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::get_std_env;
 use rattan::metal::io::AfPacketDriver;
 use regex::Regex;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot;
 
@@ -52,11 +51,11 @@ fn test_delay() {
             machine.link_device(right_device_rx, right_delay_tx);
             machine.link_device(right_delay_rx, left_device_tx);
 
-            machine.core_loop(original_ns).await
+            machine.core_loop(original_ns, 8082).await
         });
     });
 
-    let (mut left_control_interface, mut right_control_interface) =
+    let (left_control_interface, right_control_interface) =
         control_rx.blocking_recv().unwrap();
 
     // Before set the DelayDevice, the average latency should be less than 0.1ms
@@ -87,14 +86,10 @@ fn test_delay() {
     // After set the DelayDevice, the average latency should be around 200ms
     {
         println!("try to ping with delay set to 100ms (rtt = 200ms)");
-        Arc::<DelayDeviceControlInterface>::get_mut(&mut left_control_interface)
-            .as_mut()
-            .unwrap()
+        left_control_interface
             .set_config(DelayDeviceConfig::new(Duration::from_millis(100)))
             .unwrap();
-        Arc::<DelayDeviceControlInterface>::get_mut(&mut right_control_interface)
-            .as_mut()
-            .unwrap()
+        right_control_interface
             .set_config(DelayDeviceConfig::new(Duration::from_millis(100)))
             .unwrap();
         left_ns.enter().unwrap();
