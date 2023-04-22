@@ -4,6 +4,7 @@ use crate::metal::timer::Timer;
 use crate::utils::sync::AtomicRawCell;
 use async_trait::async_trait;
 use netem_trace::{Bandwidth, Delay};
+use serde::Deserialize;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -105,6 +106,7 @@ where
     }
 }
 
+#[derive(Debug, Deserialize)]
 pub struct BwDeviceConfig {
     bandwidth: Bandwidth,
 }
@@ -124,7 +126,7 @@ pub struct BwDeviceControlInterface {
 impl ControlInterface for BwDeviceControlInterface {
     type Config = BwDeviceConfig;
 
-    fn set_config(&mut self, config: Self::Config) -> Result<(), Error> {
+    fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         if config.bandwidth > MAX_BANDWIDTH {
             return Err(Error::ConfigError(
                 "Bandwidth should be less than 2^64 bps".to_string(),
@@ -162,7 +164,7 @@ where
     }
 
     fn control_interface(&self) -> Arc<Self::ControlInterfaceType> {
-        Arc::clone(&self.control_interface)
+        self.control_interface.clone()
     }
 }
 

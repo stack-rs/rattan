@@ -32,7 +32,7 @@ fn test_compound() {
     let (bw_control_tx, bw_control_rx) = oneshot::channel();
 
     let rattan_thread = std::thread::spawn(move || {
-        _std_env.rattan_ns.enter().unwrap();
+        let original_ns = _std_env.rattan_ns.enter().unwrap();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_io()
             .enable_time()
@@ -90,7 +90,7 @@ fn test_compound() {
             machine.link_device(right_delay_rx, right_loss_tx);
             machine.link_device(right_loss_rx, left_device_tx);
 
-            machine.core_loop().await
+            machine.core_loop(original_ns).await
         });
     });
 

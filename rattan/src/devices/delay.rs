@@ -3,10 +3,12 @@ use crate::error::Error;
 use crate::utils::sync::AtomicRawCell;
 use async_trait::async_trait;
 use netem_trace::Delay;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Instant};
+use duration_str::deserialize_duration;
 
 use super::{ControlInterface, Egress, Ingress};
 
@@ -80,7 +82,9 @@ where
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct DelayDeviceConfig {
+    #[serde(deserialize_with = "deserialize_duration")]
     delay: Delay,
 }
 
@@ -99,7 +103,8 @@ pub struct DelayDeviceControlInterface {
 impl ControlInterface for DelayDeviceControlInterface {
     type Config = DelayDeviceConfig;
 
-    fn set_config(&mut self, config: Self::Config) -> Result<(), Error> {
+    fn set_config(&self, config: Self::Config) -> Result<(), Error> {
+        println!("Setting delay to {:?}", config.delay);
         self.delay.store(Box::new(config.delay));
         Ok(())
     }

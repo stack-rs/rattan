@@ -18,7 +18,7 @@ fn prepare_env() -> (JoinHandle<()>, CancellationToken, Arc<NetNs>, Arc<NetNs>) 
     let cancel_token = machine.cancel_token();
 
     let rattan_thread = std::thread::spawn(move || {
-        _std_env.rattan_ns.enter().unwrap();
+        let original_ns = _std_env.rattan_ns.enter().unwrap();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_io()
             .enable_time()
@@ -43,7 +43,7 @@ fn prepare_env() -> (JoinHandle<()>, CancellationToken, Arc<NetNs>, Arc<NetNs>) 
             machine.link_device(right_device_rx, right_bw_tx);
             machine.link_device(right_bw_rx, left_device_tx);
 
-            machine.core_loop().await
+            machine.core_loop(original_ns).await
         });
     });
 

@@ -1,6 +1,10 @@
 use async_trait::async_trait;
 use etherparse::{Ethernet2Header, Ipv4Header};
-use std::{fmt::Debug, sync::Arc};
+use serde::Deserialize;
+use std::{
+    fmt::Debug,
+    sync::Arc,
+};
 
 use crate::error::Error;
 
@@ -71,9 +75,9 @@ where
     async fn dequeue(&mut self) -> Option<P>;
 }
 
-pub trait ControlInterface {
-    type Config;
-    fn set_config(&mut self, config: Self::Config) -> Result<(), Error>;
+pub trait ControlInterface: Send + Sync + 'static {
+    type Config: for<'a> Deserialize<'a> + Send;
+    fn set_config(&self, config: Self::Config) -> Result<(), Error>;
 }
 
 #[async_trait]
@@ -83,7 +87,7 @@ where
 {
     type IngressType: Ingress<P> + 'static;
     type EgressType: Egress<P> + 'static;
-    type ControlInterfaceType: ControlInterface + 'static;
+    type ControlInterfaceType: ControlInterface;
 
     fn sender(&self) -> Arc<Self::IngressType>;
     fn receiver(&mut self) -> &mut Self::EgressType;

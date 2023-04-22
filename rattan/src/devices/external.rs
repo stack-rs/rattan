@@ -14,6 +14,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use serde::Deserialize;
 use tokio::io::unix::AsyncFd;
 
 use super::{ControlInterface, Egress, Ingress};
@@ -82,16 +83,16 @@ where
     }
 }
 
+#[derive(Debug, Deserialize)]
 pub struct VirtualEthernetConfig {}
 
 pub struct VirtualEthernetControlInterface {
-    config: VirtualEthernetConfig,
+    _config: VirtualEthernetConfig,
 }
 
 impl ControlInterface for VirtualEthernetControlInterface {
     type Config = VirtualEthernetConfig;
-    fn set_config(&mut self, config: VirtualEthernetConfig) -> Result<(), Error> {
-        self.config = config;
+    fn set_config(&self, _config: VirtualEthernetConfig) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -130,7 +131,7 @@ where
                 phantom: PhantomData,
             },
             control_interface: Arc::new(VirtualEthernetControlInterface {
-                config: VirtualEthernetConfig {},
+                _config: VirtualEthernetConfig {},
             }),
         }
     }
@@ -160,6 +161,6 @@ where
     }
 
     fn control_interface(&self) -> Arc<Self::ControlInterfaceType> {
-        Arc::clone(&self.control_interface)
+        self.control_interface.clone()
     }
 }
