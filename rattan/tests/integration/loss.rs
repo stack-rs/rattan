@@ -2,7 +2,7 @@
 /// CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test loss -- --nocapture
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use rattan::core::RattanMachine;
+use rattan::core::{RattanMachine, RattanMachineConfig};
 use rattan::devices::external::VirtualEthernet;
 use rattan::devices::loss::{LossDevice, LossDeviceConfig};
 use rattan::devices::{ControlInterface, Device, StdPacket};
@@ -53,7 +53,11 @@ fn test_loss() {
             machine.link_device(right_device_rx, right_loss_tx);
             machine.link_device(right_loss_rx, left_device_tx);
 
-            machine.core_loop(original_ns, 8083).await
+            let config = RattanMachineConfig {
+                original_ns,
+                port: 8083,
+            };
+            machine.core_loop(config).await
         });
     });
 

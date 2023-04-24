@@ -1,7 +1,7 @@
 /// This test need to be run as root (CAP_NET_ADMIN, CAP_SYS_ADMIN and CAP_SYS_RAW)
 /// CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test bandwidth -- --nocapture
 use netem_trace::Bandwidth;
-use rattan::core::RattanMachine;
+use rattan::core::{RattanMachine, RattanMachineConfig};
 use rattan::devices::bandwidth::{BwDevice, BwDeviceConfig};
 use rattan::devices::external::VirtualEthernet;
 use rattan::devices::{ControlInterface, Device, StdPacket};
@@ -54,7 +54,11 @@ fn test_bandwidth() {
             machine.link_device(right_device_rx, right_bw_tx);
             machine.link_device(right_bw_rx, left_device_tx);
 
-            machine.core_loop(original_ns, 8081).await
+            let config = RattanMachineConfig {
+                original_ns,
+                port: 8081,
+            };
+            machine.core_loop(config).await
         });
     });
 

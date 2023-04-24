@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use etherparse::{Ethernet2Header, Ipv4Header};
+#[cfg(feature = "serde")]
 use serde::Deserialize;
 use std::{fmt::Debug, sync::Arc};
 
@@ -73,7 +74,10 @@ where
 }
 
 pub trait ControlInterface: Send + Sync + 'static {
+    #[cfg(feature = "serde")]
     type Config: for<'a> Deserialize<'a> + Send;
+    #[cfg(not(feature = "serde"))]
+    type Config: Send;
     fn set_config(&self, config: Self::Config) -> Result<(), Error>;
 }
 

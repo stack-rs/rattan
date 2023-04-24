@@ -8,11 +8,11 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.69"
 async-trait = "0.1.68"
-axum = "0.6.16"
-axum-macros = "0.3.7"
-bandwidth = { version = "0.3.0", features = ["serde"] }
+axum = { version = "0.6.16", optional = true }
+axum-macros = { version = "0.3.7", optional = true }
+bandwidth = "0.3.0"
 ctrlc = "3.2.5"
-duration-str = "0.5.0"
+duration-str = { version = "0.5.0", optional = true }
 etherparse = "0.13.0"
 futures = "0.3.26"
 lazy_static = "1.4.0"
@@ -23,8 +23,8 @@ parking_lot = "0.12.1"
 rand = "0.8.5"
 regex = "1.7.3"
 rtnetlink = "0.12.0"
-serde = { version = "1.0.160", features = ["serde_derive"] }
-serde_json = "1.0.96"
+serde = { version = "1.0.160", optional = true, features = ["derive"] }
+serde_json = { version = "1.0.96", optional = true }
 thiserror = "1.0.40"
 tokio = { version = "1.26.0", features = [
     "rt-multi-thread",
@@ -45,3 +45,9 @@ netns-rs = "0.1.0"
 [[bench]]
 name = "bandwidth"
 harness = false
+
+[features]
+control = []
+default = []
+http = ["control", "serde", "dep:axum", "dep:axum-macros"]
+serde = ["dep:duration-str", "dep:serde", "dep:serde_json", "bandwidth/serde"]

@@ -2,7 +2,7 @@ use std::{sync::Arc, thread::JoinHandle};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use rattan::{
-    core::RattanMachine,
+    core::{RattanMachine, RattanMachineConfig},
     devices::{bandwidth::BwDevice, external::VirtualEthernet, StdPacket},
     env::get_std_env,
     metal::{io::AfPacketDriver, netns::NetNs},
@@ -43,7 +43,11 @@ fn prepare_env() -> (JoinHandle<()>, CancellationToken, Arc<NetNs>, Arc<NetNs>) 
             machine.link_device(right_device_rx, right_bw_tx);
             machine.link_device(right_bw_rx, left_device_tx);
 
-            machine.core_loop(original_ns, 8080).await
+            let config = RattanMachineConfig {
+                original_ns,
+                port: 8080,
+            };
+            machine.core_loop(config).await
         });
     });
 

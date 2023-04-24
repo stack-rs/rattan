@@ -14,6 +14,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+#[cfg(feature = "serde")]
 use serde::Deserialize;
 use tokio::io::unix::AsyncFd;
 
@@ -83,7 +84,8 @@ where
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "serde", derive(Deserialize))]
+#[derive(Debug)]
 pub struct VirtualEthernetConfig {}
 
 pub struct VirtualEthernetControlInterface {

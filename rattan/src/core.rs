@@ -3,10 +3,17 @@ use std::{collections::HashMap, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    control::{http::HttpControlEndpoint, ControlEndpoint},
     devices::{Device, Egress, Ingress, Packet},
     metal::netns::NetNs,
 };
+
+#[cfg(feature = "http")]
+use crate::control::{http::HttpControlEndpoint, ControlEndpoint};
+
+pub struct RattanMachineConfig {
+    pub original_ns: Arc<NetNs>,
+    pub port: u16,
+}
 
 pub struct RattanMachine<P>
 where
@@ -16,6 +23,7 @@ where
     sender: HashMap<usize, Arc<dyn Ingress<P>>>,
     receiver: HashMap<usize, Box<dyn Egress<P>>>,
     router: HashMap<usize, usize>,
+    #[cfg(feature = "http")]
     config_endpoint: HttpControlEndpoint,
 }
 
@@ -38,6 +46,7 @@ where
             sender: HashMap::new(),
             receiver: HashMap::new(),
             router: HashMap::new(),
+            #[cfg(feature = "http")]
             config_endpoint: HttpControlEndpoint::new(),
         }
     }
@@ -46,7 +55,9 @@ where
         let tx_id = self.sender.len();
         let rx_id = self.receiver.len();
 
+        #[cfg(feature = "http")]
         let control_interface = device.control_interface();
+        #[cfg(feature = "http")]
         self.config_endpoint
             .register_device(rx_id, control_interface);
 
@@ -65,13 +76,16 @@ where
         self.token.clone()
     }
 
-    pub async fn core_loop(&mut self, original_ns: Arc<NetNs>, port: u16) {
+    pub async fn core_loop(&mut self, _config: RattanMachineConfig) {
         let mut handles = Vec::new();
+        #[cfg(feature = "control")]
         let router_clone = self.config_endpoint.router();
+        #[cfg(feature = "control")]
         let token_dup = self.token.clone();
 
+        #[cfg(feature = "control")]
         let control_thread = std::thread::spawn(move || {
-            original_ns.enter().unwrap();
+            _config.original_ns.enter().unwrap();
             println!("control thread started");
 
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -79,11 +93,14 @@ where
                 .build()
                 .unwrap();
             rt.block_on(async move {
-                let server = axum::Server::bind(&format!("127.0.0.1:{}", port).parse().unwrap())
-                    .serve(router_clone.into_make_service())
-                    .with_graceful_shutdown(async {
-                        token_dup.cancelled().await;
-                    });
+                #[cfg(feature = "http")]
+                let server =
+                    axum::Server::bind(&format!("127.0.0.1:{}", _config.port).parse().unwrap())
+                        .serve(router_clone.into_make_service())
+                        .with_graceful_shutdown(async {
+                            token_dup.cancelled().await;
+                        });
+                #[cfg(feature = "http")]
                 match server.await {
                     Ok(_) => {}
                     Err(e) => {
@@ -118,6 +135,7 @@ where
             handle.await.unwrap();
         }
 
+        #[cfg(feature = "control")]
         control_thread.join().unwrap();
     }
 }

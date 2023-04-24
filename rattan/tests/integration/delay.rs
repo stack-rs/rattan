@@ -1,6 +1,6 @@
 /// This test need to be run as root (CAP_NET_ADMIN, CAP_SYS_ADMIN and CAP_SYS_RAW)
 /// CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test delay -- --nocapture
-use rattan::core::RattanMachine;
+use rattan::core::{RattanMachine, RattanMachineConfig};
 use rattan::devices::delay::{DelayDevice, DelayDeviceConfig};
 use rattan::devices::external::VirtualEthernet;
 use rattan::devices::{ControlInterface, Device, StdPacket};
@@ -51,7 +51,11 @@ fn test_delay() {
             machine.link_device(right_device_rx, right_delay_tx);
             machine.link_device(right_delay_rx, left_device_tx);
 
-            machine.core_loop(original_ns, 8082).await
+            let config = RattanMachineConfig {
+                original_ns,
+                port: 8082,
+            };
+            machine.core_loop(config).await
         });
     });
 

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::devices::ControlInterface;
 
+#[cfg(feature = "http")]
 pub mod http;
 
 pub trait ControlEndpoint {

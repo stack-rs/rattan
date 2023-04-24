@@ -1,5 +1,5 @@
 use rattan::{
-    core::RattanMachine,
+    core::{RattanMachine, RattanMachineConfig},
     devices::{delay::DelayDevice, external::VirtualEthernet, StdPacket},
     env::get_std_env,
     metal::io::AfPacketDriver,
@@ -42,7 +42,11 @@ fn main() -> anyhow::Result<()> {
             machine.link_device(right_device_rx, right_delay_tx);
             machine.link_device(right_delay_rx, left_device_tx);
 
-            machine.core_loop(original_ns, 8080).await
+            let config = RattanMachineConfig {
+                original_ns,
+                port: 8080,
+            };
+            machine.core_loop(config).await
         });
     }
     Ok(())

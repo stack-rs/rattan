@@ -3,7 +3,7 @@
 use netem_trace::Bandwidth;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use rattan::core::RattanMachine;
+use rattan::core::{RattanMachine, RattanMachineConfig};
 use rattan::devices::bandwidth::{BwDevice, BwDeviceConfig};
 use rattan::devices::delay::{DelayDevice, DelayDeviceConfig};
 use rattan::devices::loss::{LossDevice, LossDeviceConfig};
@@ -89,7 +89,11 @@ fn test_compound() {
             machine.link_device(right_delay_rx, right_loss_tx);
             machine.link_device(right_loss_rx, left_device_tx);
 
-            machine.core_loop(original_ns, 8084).await
+            let config = RattanMachineConfig {
+                original_ns,
+                port: 8084,
+            };
+            machine.core_loop(config).await
         });
     });
 

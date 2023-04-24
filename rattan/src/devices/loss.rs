@@ -4,6 +4,7 @@ use crate::utils::sync::AtomicRawCell;
 use async_trait::async_trait;
 use netem_trace::LossPattern;
 use rand::Rng;
+#[cfg(feature = "serde")]
 use serde::Deserialize;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -90,7 +91,8 @@ where
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "serde", derive(Deserialize))]
+#[derive(Debug)]
 pub struct LossDeviceConfig {
     pattern: LossPattern,
 }
