@@ -1,12 +1,12 @@
 use rattan::{
     core::{RattanMachine, RattanMachineConfig},
     devices::{delay::DelayDevice, external::VirtualEthernet, StdPacket},
-    env::get_std_env,
+    env::{get_std_env, StdNetEnvConfig},
     metal::io::AfPacketDriver,
 };
 
 fn main() -> anyhow::Result<()> {
-    let _std_env = get_std_env().unwrap();
+    let _std_env = get_std_env(StdNetEnvConfig::default()).unwrap();
     let mut machine = RattanMachine::<StdPacket>::new();
     let canncel_token = machine.cancel_token();
 

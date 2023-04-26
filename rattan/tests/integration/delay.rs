@@ -4,7 +4,7 @@ use rattan::core::{RattanMachine, RattanMachineConfig};
 use rattan::devices::delay::{DelayDevice, DelayDeviceConfig};
 use rattan::devices::external::VirtualEthernet;
 use rattan::devices::{ControlInterface, Device, StdPacket};
-use rattan::env::get_std_env;
+use rattan::env::{get_std_env, StdNetEnvConfig};
 use rattan::metal::io::AfPacketDriver;
 use regex::Regex;
 use std::time::Duration;
@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 
 #[test]
 fn test_delay() {
-    let _std_env = get_std_env().unwrap();
+    let _std_env = get_std_env(StdNetEnvConfig::default()).unwrap();
     let left_ns = _std_env.left_ns.clone();
 
     let mut machine = RattanMachine::<StdPacket>::new();
@@ -66,7 +66,7 @@ fn test_delay() {
         println!("try to ping with no delay");
         left_ns.enter().unwrap();
         let handle = std::process::Command::new("ping")
-            .args(["192.168.2.1", "-c", "10"])
+            .args(["192.168.12.1", "-c", "10"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
@@ -97,7 +97,7 @@ fn test_delay() {
             .unwrap();
         left_ns.enter().unwrap();
         let handle = std::process::Command::new("ping")
-            .args(["192.168.2.1", "-c", "10"])
+            .args(["192.168.12.1", "-c", "10"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();

@@ -14,6 +14,24 @@ lazy_static::lazy_static! {
     static ref STD_ENV_LOCK: Arc<parking_lot::Mutex<()>> = Arc::new(parking_lot::Mutex::new(()));
 }
 
+pub enum StdNetEnvMode {
+    Compatible,
+    Isolated,
+    Container,
+}
+
+pub struct StdNetEnvConfig {
+    pub mode: StdNetEnvMode,
+}
+
+impl Default for StdNetEnvConfig {
+    fn default() -> Self {
+        StdNetEnvConfig {
+            mode: StdNetEnvMode::Isolated,
+        }
+    }
+}
+
 pub struct StdNetEnv {
     pub left_ns: std::sync::Arc<NetNs>,
     pub rattan_ns: std::sync::Arc<NetNs>,
@@ -22,7 +40,7 @@ pub struct StdNetEnv {
     pub right_pair: VethPair,
 }
 
-pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
+pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
     let _guard = STD_ENV_LOCK.lock();
     let rand_string: String = thread_rng()
         .sample_iter(&Alphanumeric)
@@ -33,7 +51,11 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
     let server_netns_name = format!("ns-server-{}", rand_string);
     let rattan_netns_name = format!("ns-rattan-{}", rand_string);
     let client_netns = NetNs::new(&client_netns_name)?;
-    let server_netns = NetNs::new(&server_netns_name)?;
+    let server_netns = match config.mode {
+        StdNetEnvMode::Compatible => NetNs::current()?,
+        StdNetEnvMode::Isolated => NetNs::new(&server_netns_name)?,
+        StdNetEnvMode::Container => NetNs::new(&server_netns_name)?,
+    };
     let rattan_netns = NetNs::new(&rattan_netns_name)?;
 
     let veth_pair_client = VethPair::new(
@@ -47,7 +69,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         .unwrap()
         .set_ns(client_netns.clone())?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2a].into())?
-        .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 24)?
+        .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 11, 1)), 24)?
         .disable_checksum_offload()?
         .up()?;
 
@@ -57,7 +79,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         .unwrap()
         .set_ns(rattan_netns.clone())?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2b].into())?
-        .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 24)?
+        .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 11, 2)), 24)?
         .disable_checksum_offload()?
         .up()?;
 
@@ -71,7 +93,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         .unwrap()
         .set_ns(rattan_netns.clone())?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2c].into())?
-        .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 2)), 24)?
+        .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 12, 2)), 24)?
         .disable_checksum_offload()?
         .up()?;
 
@@ -81,7 +103,7 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
         .unwrap()
         .set_ns(server_netns.clone())?
         .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2d].into())?
-        .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 24)?
+        .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 12, 1)), 24)?
         .disable_checksum_offload()?
         .up()?;
 
@@ -96,26 +118,37 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
             "add",
             "default",
             "via",
-            "192.168.1.1",
+            "192.168.11.1",
         ])
         .spawn()
         .unwrap();
-    let mut server_exec_handle = std::process::Command::new("ip")
-        .args([
-            "netns",
-            "exec",
-            &server_netns_name,
-            "ip",
-            "route",
-            "add",
-            "default",
-            "via",
-            "192.168.2.1",
-        ])
-        .spawn()
-        .unwrap();
+    match config.mode {
+        StdNetEnvMode::Compatible => {
+            let mut server_exec_handle = std::process::Command::new("ip")
+                .args(["route", "add", "192.168.11.0/24", "via", "192.168.12.1"])
+                .spawn()
+                .unwrap();
+            server_exec_handle.wait()?;
+        }
+        _ => {
+            let mut server_exec_handle = std::process::Command::new("ip")
+                .args([
+                    "netns",
+                    "exec",
+                    &server_netns_name,
+                    "ip",
+                    "route",
+                    "add",
+                    "default",
+                    "via",
+                    "192.168.12.1",
+                ])
+                .spawn()
+                .unwrap();
+            server_exec_handle.wait()?;
+        }
+    }
     client_exec_handle.wait()?;
-    server_exec_handle.wait()?;
 
     if std::env::var("TEST_STD_NS").is_ok() {
         let output = std::process::Command::new("ip")
@@ -160,13 +193,13 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
                 "ping",
                 "-c",
                 "3",
-                "192.168.1.1",
+                "192.168.11.1",
             ])
             .output()
             .unwrap();
 
         println!(
-            "ip netns exec {} ping -c 3 192.168.1.1:\n{}",
+            "ip netns exec {} ping -c 3 192.168.11.1:\n{}",
             &rattan_netns_name,
             String::from_utf8_lossy(&output.stdout)
         );
@@ -179,13 +212,13 @@ pub fn get_std_env() -> anyhow::Result<StdNetEnv> {
                 "ping",
                 "-c",
                 "3",
-                "192.168.2.1",
+                "192.168.12.1",
             ])
             .output()
             .unwrap();
 
         println!(
-            "ip netns exec {} ping -c 3 192.168.2.1:\n{}",
+            "ip netns exec {} ping -c 3 192.168.12.1:\n{}",
             &rattan_netns_name,
             String::from_utf8_lossy(&output.stdout)
         );

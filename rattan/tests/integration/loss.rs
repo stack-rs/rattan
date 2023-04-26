@@ -6,14 +6,14 @@ use rattan::core::{RattanMachine, RattanMachineConfig};
 use rattan::devices::external::VirtualEthernet;
 use rattan::devices::loss::{IIDLossDevice, IIDLossDeviceConfig, LossDevice, LossDeviceConfig};
 use rattan::devices::{ControlInterface, Device, StdPacket};
-use rattan::env::get_std_env;
+use rattan::env::{get_std_env, StdNetEnvConfig};
 use rattan::metal::io::AfPacketDriver;
 use regex::Regex;
 use tokio::sync::oneshot;
 
 #[test]
 fn test_loss_pattern() {
-    let _std_env = get_std_env().unwrap();
+    let _std_env = get_std_env(StdNetEnvConfig::default()).unwrap();
     let left_ns = _std_env.left_ns.clone();
 
     let mut machine = RattanMachine::<StdPacket>::new();
@@ -68,7 +68,7 @@ fn test_loss_pattern() {
         println!("try to ping with no loss");
         left_ns.enter().unwrap();
         let handle = std::process::Command::new("ping")
-            .args(["192.168.2.1", "-c", "10"])
+            .args(["192.168.12.1", "-c", "10"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
@@ -92,7 +92,7 @@ fn test_loss_pattern() {
             .unwrap();
         left_ns.enter().unwrap();
         let handle = std::process::Command::new("ping")
-            .args(["192.168.2.1", "-c", "50"])
+            .args(["192.168.12.1", "-c", "50"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
@@ -115,7 +115,7 @@ fn test_loss_pattern() {
 // cargo test --package rattan --test main --features http -- integration::loss::test_iid_loss --exact --nocapture
 #[test]
 fn test_iid_loss() {
-    let _std_env = get_std_env().unwrap();
+    let _std_env = get_std_env(StdNetEnvConfig::default()).unwrap();
     let left_ns = _std_env.left_ns.clone();
 
     let mut machine = RattanMachine::<StdPacket>::new();
@@ -170,7 +170,7 @@ fn test_iid_loss() {
         println!("try to ping with no loss");
         left_ns.enter().unwrap();
         let handle = std::process::Command::new("ping")
-            .args(["192.168.2.1", "-c", "10"])
+            .args(["192.168.12.1", "-c", "10"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
@@ -194,7 +194,7 @@ fn test_iid_loss() {
             .unwrap();
         left_ns.enter().unwrap();
         let handle = std::process::Command::new("ping")
-            .args(["192.168.2.1", "-c", "50"])
+            .args(["192.168.12.1", "-c", "50"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();

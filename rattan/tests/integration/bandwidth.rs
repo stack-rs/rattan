@@ -5,7 +5,7 @@ use rattan::core::{RattanMachine, RattanMachineConfig};
 use rattan::devices::bandwidth::{BwDevice, BwDeviceConfig};
 use rattan::devices::external::VirtualEthernet;
 use rattan::devices::{ControlInterface, Device, StdPacket};
-use rattan::env::get_std_env;
+use rattan::env::{get_std_env, StdNetEnvConfig};
 use rattan::metal::io::AfPacketDriver;
 use regex::Regex;
 use std::thread::sleep;
@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
 
 #[test]
 fn test_bandwidth() {
-    let _std_env = get_std_env().unwrap();
+    let _std_env = get_std_env(StdNetEnvConfig::default()).unwrap();
     let left_ns = _std_env.left_ns.clone();
     let right_ns = _std_env.right_ns.clone();
 
@@ -82,7 +82,7 @@ fn test_bandwidth() {
         let client_handle = std::process::Command::new("iperf3")
             .args([
                 "-c",
-                "192.168.2.1",
+                "192.168.12.1",
                 "-p",
                 "9000",
                 "--cport",
@@ -137,7 +137,7 @@ fn test_bandwidth() {
         let client_handle = std::process::Command::new("iperf3")
             .args([
                 "-c",
-                "192.168.2.1",
+                "192.168.12.1",
                 "-p",
                 "9001",
                 "--cport",

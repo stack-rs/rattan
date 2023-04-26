@@ -4,13 +4,13 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use rattan::{
     core::{RattanMachine, RattanMachineConfig},
     devices::{bandwidth::BwDevice, external::VirtualEthernet, StdPacket},
-    env::get_std_env,
+    env::{get_std_env, StdNetEnvConfig},
     metal::{io::AfPacketDriver, netns::NetNs},
 };
 use tokio_util::sync::CancellationToken;
 
 fn prepare_env() -> (JoinHandle<()>, CancellationToken, Arc<NetNs>, Arc<NetNs>) {
-    let _std_env = get_std_env().unwrap();
+    let _std_env = get_std_env(StdNetEnvConfig::default()).unwrap();
     let left_ns = _std_env.left_ns.clone();
     let right_ns = _std_env.right_ns.clone();
 
@@ -72,7 +72,7 @@ fn run_iperf(left_ns: &Arc<NetNs>, right_ns: &Arc<NetNs>) {
         std::process::Command::new("iperf3")
             .args([
                 "-c",
-                "192.168.2.1",
+                "192.168.12.1",
                 "-p",
                 "9000",
                 "-n",
