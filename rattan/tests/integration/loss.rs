@@ -81,6 +81,7 @@ fn test_loss_pattern() {
             .map(|cap| cap[1].parse::<u64>())
             .unwrap()
             .unwrap();
+        println!("loss_percentage: {}", loss_percentage);
         assert!(loss_percentage == 0);
     }
     println!("====================================================");
@@ -105,6 +106,7 @@ fn test_loss_pattern() {
             .map(|cap| cap[1].parse::<u64>())
             .unwrap()
             .unwrap();
+        println!("loss_percentage: {}", loss_percentage);
         assert!(loss_percentage >= 45 && loss_percentage <= 55);
     }
 
@@ -183,6 +185,7 @@ fn test_iid_loss() {
             .map(|cap| cap[1].parse::<u64>())
             .unwrap()
             .unwrap();
+        println!("loss_percentage: {}", loss_percentage);
         assert!(loss_percentage == 0);
     }
     println!("====================================================");
@@ -207,6 +210,7 @@ fn test_iid_loss() {
             .map(|cap| cap[1].parse::<u64>())
             .unwrap()
             .unwrap();
+        println!("loss_percentage: {}", loss_percentage);
         assert!(loss_percentage >= 45 && loss_percentage <= 55);
     }
 

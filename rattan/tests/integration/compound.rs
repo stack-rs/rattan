@@ -145,7 +145,7 @@ fn test_compound() {
             .step_by(2)
             .take(10)
             .collect::<Vec<_>>();
-
+        println!("bandwidth: {:?}", bandwidth);
         assert!(bandwidth.len() > 0);
     }
     println!("====================================================");

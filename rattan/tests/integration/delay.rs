@@ -83,6 +83,7 @@ fn test_delay() {
         assert_eq!(latency.len(), 10);
         latency.drain(0..5);
         let average_latency = latency.iter().sum::<f64>() / latency.len() as f64;
+        println!("average latency: {}", average_latency);
         assert!(average_latency < 10.0);
     }
     println!("====================================================");
@@ -114,6 +115,7 @@ fn test_delay() {
         assert_eq!(latency.len(), 10);
         latency.drain(0..5);
         let average_latency = latency.iter().sum::<u64>() / latency.len() as u64;
+        println!("average latency: {}", average_latency);
         assert!(average_latency > 195 && average_latency < 205);
     }
 

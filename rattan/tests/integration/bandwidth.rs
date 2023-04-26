@@ -108,7 +108,7 @@ fn test_bandwidth() {
             .step_by(2)
             .take(10)
             .collect::<Vec<_>>();
-
+        println!("bandwidth: {:?}", bandwidth);
         assert!(bandwidth.len() > 0);
     }
     println!("====================================================");
@@ -166,6 +166,7 @@ fn test_bandwidth() {
 
         bandwidth.drain(0..4);
         let bitrate = bandwidth.iter().sum::<u64>() / bandwidth.len() as u64;
+        println!("bitrate: {}", bitrate);
         assert!(bitrate > 90000000 && bitrate < 100000000);
     }
 
