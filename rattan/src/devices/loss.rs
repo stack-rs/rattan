@@ -1,12 +1,13 @@
 use crate::devices::{Device, Packet};
 use crate::error::Error;
-use crate::utils::sync::AtomicRawCell;
+use crate::utils::sync::{AtomicF64, AtomicRawCell};
 use async_trait::async_trait;
 use netem_trace::LossPattern;
 use rand::Rng;
 #[cfg(feature = "serde")]
 use serde::Deserialize;
 use std::fmt::Debug;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -169,6 +170,113 @@ where
                 rng,
             },
             control_interface: Arc::new(LossDeviceControlInterface { pattern }),
+        }
+    }
+}
+
+pub struct IIDLossDeviceEgress<P, R>
+where
+    P: Packet,
+    R: Rng,
+{
+    egress: mpsc::UnboundedReceiver<LossPacket<P>>,
+    /// Between 0.0 and 1.0
+    loss: Arc<AtomicF64>,
+    rng: R,
+}
+
+#[async_trait]
+impl<P, R> Egress<P> for IIDLossDeviceEgress<P, R>
+where
+    P: Packet + Send + Sync,
+    R: Rng + Send + Sync,
+{
+    async fn dequeue(&mut self) -> Option<P> {
+        let packet = self.egress.recv().await.unwrap();
+        let loss_rate = self.loss.load(Ordering::Relaxed);
+        let rand_num = self.rng.gen_range(0.0..1.0);
+        if rand_num < loss_rate {
+            None
+        } else {
+            Some(packet.packet)
+        }
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Deserialize))]
+#[derive(Debug)]
+pub struct IIDLossDeviceConfig {
+    loss: f64,
+}
+
+impl IIDLossDeviceConfig {
+    pub fn new<T: Into<f64>>(loss: T) -> Self {
+        Self { loss: loss.into() }
+    }
+}
+
+pub struct IIDLossDeviceControlInterface {
+    /// Stored as nanoseconds
+    loss: Arc<AtomicF64>,
+}
+
+impl ControlInterface for IIDLossDeviceControlInterface {
+    type Config = IIDLossDeviceConfig;
+
+    fn set_config(&self, config: Self::Config) -> Result<(), Error> {
+        self.loss.store(config.loss, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+pub struct IIDLossDevice<P: Packet, R: Rng> {
+    ingress: Arc<LossDeviceIngress<P>>,
+    egress: IIDLossDeviceEgress<P, R>,
+    control_interface: Arc<IIDLossDeviceControlInterface>,
+}
+
+impl<P, R> Device<P> for IIDLossDevice<P, R>
+where
+    P: Packet + Send + Sync + 'static,
+    R: Rng + Send + Sync + 'static,
+{
+    type IngressType = LossDeviceIngress<P>;
+    type EgressType = IIDLossDeviceEgress<P, R>;
+    type ControlInterfaceType = IIDLossDeviceControlInterface;
+
+    fn sender(&self) -> Arc<Self::IngressType> {
+        self.ingress.clone()
+    }
+
+    fn receiver(&mut self) -> &mut Self::EgressType {
+        &mut self.egress
+    }
+
+    fn into_receiver(self) -> Self::EgressType {
+        self.egress
+    }
+
+    fn control_interface(&self) -> Arc<Self::ControlInterfaceType> {
+        Arc::clone(&self.control_interface)
+    }
+}
+
+impl<P, R> IIDLossDevice<P, R>
+where
+    P: Packet,
+    R: Rng,
+{
+    pub fn new(rng: R) -> IIDLossDevice<P, R> {
+        let (rx, tx) = mpsc::unbounded_channel();
+        let loss = Arc::new(AtomicF64::new(0.0));
+        IIDLossDevice {
+            ingress: Arc::new(LossDeviceIngress { ingress: rx }),
+            egress: IIDLossDeviceEgress {
+                egress: tx,
+                loss: loss.clone(),
+                rng,
+            },
+            control_interface: Arc::new(IIDLossDeviceControlInterface { loss }),
         }
     }
 }
