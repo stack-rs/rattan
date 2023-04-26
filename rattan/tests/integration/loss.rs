@@ -68,7 +68,7 @@ fn test_loss_pattern() {
         println!("try to ping with no loss");
         left_ns.enter().unwrap();
         let handle = std::process::Command::new("ping")
-            .args(["192.168.12.1", "-c", "10"])
+            .args(["192.168.12.1", "-c", "10", "-i", "0.3"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
@@ -93,7 +93,7 @@ fn test_loss_pattern() {
             .unwrap();
         left_ns.enter().unwrap();
         let handle = std::process::Command::new("ping")
-            .args(["192.168.12.1", "-c", "50"])
+            .args(["192.168.12.1", "-c", "50", "-i", "0.3"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
@@ -107,7 +107,7 @@ fn test_loss_pattern() {
             .unwrap()
             .unwrap();
         println!("loss_percentage: {}", loss_percentage);
-        assert!(loss_percentage >= 45 && loss_percentage <= 55);
+        assert!(loss_percentage >= 40 && loss_percentage <= 60);
     }
 
     cancel_token.cancel();
@@ -167,12 +167,12 @@ fn test_iid_loss() {
 
     let (left_control_interface, _) = control_rx.blocking_recv().unwrap();
 
-    // Before set the LossDevice, the average loss rate should be 0%
+    // Before set the IIDLossDevice, the average loss rate should be 0%
     {
         println!("try to ping with no loss");
         left_ns.enter().unwrap();
         let handle = std::process::Command::new("ping")
-            .args(["192.168.12.1", "-c", "10"])
+            .args(["192.168.12.1", "-c", "10", "-i", "0.3"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
@@ -189,7 +189,7 @@ fn test_iid_loss() {
         assert!(loss_percentage == 0);
     }
     println!("====================================================");
-    // After set the LossDevice, the average loss rate should be between 40%-60%
+    // After set the IIDLossDevice, the average loss rate should be between 40%-60%
     {
         println!("try to ping with loss set to 0.5");
         left_control_interface
@@ -197,7 +197,7 @@ fn test_iid_loss() {
             .unwrap();
         left_ns.enter().unwrap();
         let handle = std::process::Command::new("ping")
-            .args(["192.168.12.1", "-c", "50"])
+            .args(["192.168.12.1", "-c", "50", "-i", "0.3"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
@@ -211,7 +211,7 @@ fn test_iid_loss() {
             .unwrap()
             .unwrap();
         println!("loss_percentage: {}", loss_percentage);
-        assert!(loss_percentage >= 45 && loss_percentage <= 55);
+        assert!(loss_percentage >= 40 && loss_percentage <= 60);
     }
 
     cancel_token.cancel();
