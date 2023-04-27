@@ -6,6 +6,7 @@ use rattan::devices::external::VirtualEthernet;
 use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::{get_std_env, StdNetEnvConfig};
 use rattan::metal::io::AfPacketDriver;
+use rattan::metal::netns::NetNsGuard;
 use regex::Regex;
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -64,9 +65,9 @@ fn test_delay() {
     // Before set the DelayDevice, the average latency should be less than 0.1ms
     {
         println!("try to ping with no delay");
-        left_ns.enter().unwrap();
+        let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
         let handle = std::process::Command::new("ping")
-            .args(["192.168.12.1", "-c", "10"])
+            .args(["192.168.12.1", "-c", "10", "-i", "0.3"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
@@ -96,9 +97,9 @@ fn test_delay() {
         right_control_interface
             .set_config(DelayDeviceConfig::new(Duration::from_millis(100)))
             .unwrap();
-        left_ns.enter().unwrap();
+        let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
         let handle = std::process::Command::new("ping")
-            .args(["192.168.12.1", "-c", "10"])
+            .args(["192.168.12.1", "-c", "10", "-i", "0.3"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();

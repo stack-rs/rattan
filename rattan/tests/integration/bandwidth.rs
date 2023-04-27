@@ -7,6 +7,7 @@ use rattan::devices::external::VirtualEthernet;
 use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::{get_std_env, StdNetEnvConfig};
 use rattan::metal::io::AfPacketDriver;
+use rattan::metal::netns::NetNsGuard;
 use regex::Regex;
 use std::thread::sleep;
 use std::time::Duration;
@@ -68,7 +69,7 @@ fn test_bandwidth() {
     {
         println!("try to iperf with no bandwidth limit");
         let handle = {
-            right_ns.enter().unwrap();
+            let _right_ns_guard = NetNsGuard::new(right_ns.clone()).unwrap();
             std::thread::spawn(|| {
                 std::process::Command::new("iperf3")
                     .args(["-s", "-p", "9000", "-1"])
@@ -77,7 +78,7 @@ fn test_bandwidth() {
                     .unwrap();
             })
         };
-        left_ns.enter().unwrap();
+        let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
         sleep(Duration::from_secs(1));
         let client_handle = std::process::Command::new("iperf3")
             .args([
@@ -123,7 +124,7 @@ fn test_bandwidth() {
             .set_config(BwDeviceConfig::new(Bandwidth::from_mbps(100)))
             .unwrap();
         let handle = {
-            right_ns.enter().unwrap();
+            let _right_ns_guard = NetNsGuard::new(right_ns.clone()).unwrap();
             std::thread::spawn(|| {
                 std::process::Command::new("iperf3")
                     .args(["-s", "-p", "9001", "-1"])
@@ -132,7 +133,7 @@ fn test_bandwidth() {
                     .unwrap();
             })
         };
-        left_ns.enter().unwrap();
+        let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
         sleep(Duration::from_secs(1));
         let client_handle = std::process::Command::new("iperf3")
             .args([

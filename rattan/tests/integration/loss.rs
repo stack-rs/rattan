@@ -8,6 +8,7 @@ use rattan::devices::loss::{IIDLossDevice, IIDLossDeviceConfig, LossDevice, Loss
 use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::{get_std_env, StdNetEnvConfig};
 use rattan::metal::io::AfPacketDriver;
+use rattan::metal::netns::NetNsGuard;
 use regex::Regex;
 use tokio::sync::oneshot;
 
@@ -170,7 +171,7 @@ fn test_iid_loss() {
     // Before set the IIDLossDevice, the average loss rate should be 0%
     {
         println!("try to ping with no loss");
-        left_ns.enter().unwrap();
+        let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
         let handle = std::process::Command::new("ping")
             .args(["192.168.12.1", "-c", "10", "-i", "0.3"])
             .stdout(std::process::Stdio::piped())
@@ -195,7 +196,7 @@ fn test_iid_loss() {
         left_control_interface
             .set_config(IIDLossDeviceConfig::new(0.5))
             .unwrap();
-        left_ns.enter().unwrap();
+        let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
         let handle = std::process::Command::new("ping")
             .args(["192.168.12.1", "-c", "50", "-i", "0.3"])
             .stdout(std::process::Stdio::piped())
