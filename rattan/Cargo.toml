@@ -41,7 +41,10 @@ tokio-util = "0.7.7"
 [dev-dependencies]
 criterion = "0.4"
 netns-rs = "0.1.0"
-reqwest = { version = "0.11.16", features = ["json", "blocking"] }
+reqwest = { version = "0.11.16", default-features = false, features = [
+    "json",
+    "blocking",
+] }
 
 [[bench]]
 name = "bandwidth"
