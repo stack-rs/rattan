@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use netem_trace::LossPattern;
 use rand::Rng;
 #[cfg(feature = "serde")]
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -92,7 +92,7 @@ where
     }
 }
 
-#[cfg_attr(feature = "serde", derive(Deserialize))]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Debug)]
 pub struct LossDeviceConfig {
     pattern: LossPattern,

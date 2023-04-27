@@ -2,8 +2,6 @@ use crate::devices::{Device, Packet};
 use crate::error::Error;
 use crate::utils::sync::AtomicRawCell;
 use async_trait::async_trait;
-#[cfg(feature = "serde")]
-use duration_str::deserialize_duration;
 use netem_trace::Delay;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -86,7 +84,7 @@ where
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DelayDeviceConfig {
-    #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_duration"))]
+    #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
     delay: Delay,
 }
 

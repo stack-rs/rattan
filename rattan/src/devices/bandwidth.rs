@@ -5,7 +5,7 @@ use crate::utils::sync::AtomicRawCell;
 use async_trait::async_trait;
 use netem_trace::{Bandwidth, Delay};
 #[cfg(feature = "serde")]
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -107,7 +107,7 @@ where
     }
 }
 
-#[cfg_attr(feature = "serde", derive(Deserialize))]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Debug)]
 pub struct BwDeviceConfig {
     bandwidth: Bandwidth,
