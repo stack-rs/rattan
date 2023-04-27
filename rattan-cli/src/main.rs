@@ -21,7 +21,7 @@ struct CommandArgs {
     verbose: bool,
     #[arg(long, short)]
     loss: Option<f64>,
-    #[arg(long, short, value_parser = duration_str::parse)]
+    #[arg(long, short, value_parser = humantime::parse_duration)]
     delay: Option<Delay>,
     #[arg(long, short)]
     bandwidth: Option<u64>,
