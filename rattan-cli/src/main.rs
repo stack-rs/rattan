@@ -25,6 +25,7 @@ struct CommandArgs {
     delay: Option<Delay>,
     #[arg(long, short)]
     bandwidth: Option<u64>,
+    commands: Vec<String>,
 }
 
 fn main() {
@@ -144,7 +145,11 @@ fn main() {
         println!("try to iperf with no bandwidth limit");
         left_ns.enter().unwrap();
         sleep(Duration::from_secs(1));
-        let mut client_handle = std::process::Command::new("/bin/bash")
+        let mut client_handle = std::process::Command::new("/bin/bash");
+        if !opts.commands.is_empty() {
+            client_handle.arg("-c").args(opts.commands);
+        }
+        let mut client_handle = client_handle
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
