@@ -60,10 +60,11 @@ fn run_iperf(left_ns: &Arc<NetNs>, right_ns: &Arc<NetNs>) {
     let handle = {
         std::thread::spawn(move || {
             right_ns.enter().unwrap();
-            std::process::Command::new("iperf3")
+            let mut iperf_server = std::process::Command::new("iperf3")
                 .args(["-s", "-p", "9000", "-1"])
                 .spawn()
                 .unwrap();
+            iperf_server.wait().unwrap();
         })
     };
 

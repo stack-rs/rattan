@@ -99,11 +99,12 @@ fn test_http() {
         let handle = {
             let _right_ns_guard = NetNsGuard::new(right_ns.clone()).unwrap();
             std::thread::spawn(|| {
-                std::process::Command::new("iperf3")
+                let mut iperf_server = std::process::Command::new("iperf3")
                     .args(["-s", "-p", "9000", "-1"])
                     .stdout(std::process::Stdio::null())
                     .spawn()
                     .unwrap();
+                iperf_server.wait().unwrap();
             })
         };
         let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
@@ -206,11 +207,12 @@ fn test_http() {
         let handle = {
             let _right_ns_guard = NetNsGuard::new(right_ns.clone()).unwrap();
             std::thread::spawn(|| {
-                std::process::Command::new("iperf3")
+                let mut iperf_server = std::process::Command::new("iperf3")
                     .args(["-s", "-p", "9001", "-1"])
                     .stdout(std::process::Stdio::piped())
                     .spawn()
                     .unwrap();
+                iperf_server.wait().unwrap();
             })
         };
         let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
