@@ -140,9 +140,7 @@ fn main() {
         });
     });
 
-    // Before set the BwDevice, the bandwidth should be around 1Gbps
     {
-        println!("try to iperf with no bandwidth limit");
         left_ns.enter().unwrap();
         sleep(Duration::from_secs(1));
         let mut client_handle = std::process::Command::new("/bin/bash");
