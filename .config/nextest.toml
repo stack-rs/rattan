@@ -1,0 +1,5 @@
+[profile.ci]
+retries = { backoff = "fixed", count = 2, delay = "1s" }
+fail-fast = false
+failure-output = "immediate-final"
+leak-timeout = "1s"
