@@ -1,17 +1,20 @@
 use crate::error::{Error, MacParseError, VethError};
 use crate::metal::netns::{NetNs, NetNsGuard};
 use nix::net::if_::if_nametoindex;
+use rtnetlink::{new_connection, Handle};
 use std::net::IpAddr;
+use std::os::fd::AsRawFd;
 use std::process::Command;
 use std::sync::{Arc, Mutex, Weak};
+use tokio::runtime::Runtime;
 
-pub struct VethPair {
-    pub left: Arc<Mutex<VethDevice>>,
-    pub right: Arc<Mutex<VethDevice>>,
+pub struct IpVethPair {
+    pub left: Arc<Mutex<IpVethDevice>>,
+    pub right: Arc<Mutex<IpVethDevice>>,
 }
 
-impl VethPair {
-    pub fn new<S: AsRef<str>>(name: S, peer_name: S) -> Result<VethPair, VethError> {
+impl IpVethPair {
+    pub fn new<S: AsRef<str>>(name: S, peer_name: S) -> Result<IpVethPair, VethError> {
         let handle = Command::new("ip")
             .arg("link")
             .arg("add")
@@ -28,8 +31,8 @@ impl VethPair {
                 String::from_utf8(output.stderr).unwrap(),
             ))
         } else {
-            let pair = VethPair {
-                left: Arc::new(Mutex::new(VethDevice {
+            let pair = IpVethPair {
+                left: Arc::new(Mutex::new(IpVethDevice {
                     name: name.as_ref().to_string(),
                     index: if_nametoindex(name.as_ref())?,
                     mac_addr: None,
@@ -37,7 +40,7 @@ impl VethPair {
                     peer: None,
                     namespace: NetNs::current()?,
                 })),
-                right: Arc::new(Mutex::new(VethDevice {
+                right: Arc::new(Mutex::new(IpVethDevice {
                     name: peer_name.as_ref().to_string(),
                     index: if_nametoindex(peer_name.as_ref())?,
                     mac_addr: None,
@@ -63,7 +66,7 @@ impl VethPair {
     }
 }
 
-impl Drop for VethPair {
+impl Drop for IpVethPair {
     fn drop(&mut self) {
         let ns_guard = NetNsGuard::new(self.left.lock().unwrap().namespace.clone());
         if let Err(e) = ns_guard {
@@ -88,17 +91,17 @@ impl Drop for VethPair {
     }
 }
 
-pub struct VethDevice {
+pub struct IpVethDevice {
     pub name: String,
     pub index: u32,
     pub mac_addr: Option<MacAddr>,
     pub ip_addr: Option<(IpAddr, u8)>,
-    pub peer: Option<Weak<Mutex<VethDevice>>>,
+    pub peer: Option<Weak<Mutex<IpVethDevice>>>,
     namespace: std::sync::Arc<NetNs>,
 }
 
-impl VethDevice {
-    pub fn peer(&self) -> Arc<Mutex<VethDevice>> {
+impl IpVethDevice {
+    pub fn peer(&self) -> Arc<Mutex<IpVethDevice>> {
         self.peer.as_ref().unwrap().upgrade().unwrap()
     }
 
@@ -213,6 +216,200 @@ impl VethDevice {
         } else {
             self.ip_addr = Some((ip_addr, prefix));
             Ok(self)
+        }
+    }
+
+    pub fn disable_checksum_offload(&mut self) -> Result<&mut Self, Error> {
+        let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
+        let output = Command::new("ethtool")
+            .args(["-K", &self.name, "tx", "off", "rx", "off"])
+            .output()?;
+        if !output.status.success() {
+            Err(VethError::SetError(String::from_utf8(output.stderr).unwrap()).into())
+        } else {
+            Ok(self)
+        }
+    }
+}
+
+/// Generate a runtime and a rtnetlink handle for one time use.
+fn rtnetlink_once() -> (Runtime, Handle) {
+    let rt: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let _guard = rt.enter();
+    let (conn, rtnl_handle, _) = new_connection().unwrap();
+    rt.spawn(conn);
+    (rt, rtnl_handle)
+}
+
+/// Used to asynchronously delete a veth pair.
+fn delete_veth(left: Arc<Mutex<VethDevice>>) {
+    let ns_guard = NetNsGuard::new(left.lock().unwrap().namespace.clone());
+    if let Err(e) = ns_guard {
+        eprintln!("Failed to enter netns: {}", e);
+        return;
+    }
+
+    let (rt, rtnl_handle) = rtnetlink_once();
+    match rt.block_on(rtnl_handle.link().del(left.lock().unwrap().index).execute()) {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &left.lock().unwrap().name);
+        }
+    }
+}
+
+pub struct VethPair {
+    pub left: Arc<Mutex<VethDevice>>,
+    pub right: Arc<Mutex<VethDevice>>,
+}
+
+impl VethPair {
+    pub fn new<S: AsRef<str>>(name: S, peer_name: S) -> Result<VethPair, VethError> {
+        let (rt, rtnl_handle) = rtnetlink_once();
+        match rt.block_on(
+            rtnl_handle
+                .link()
+                .add()
+                .veth(
+                    String::from(name.as_ref()),
+                    String::from(peer_name.as_ref()),
+                )
+                .execute(),
+        ) {
+            Ok(_) => {
+                let pair = VethPair {
+                    left: Arc::new(Mutex::new(VethDevice {
+                        name: name.as_ref().to_string(),
+                        index: if_nametoindex(name.as_ref())?,
+                        mac_addr: None,
+                        ip_addr: None,
+                        peer: None,
+                        namespace: NetNs::current()?,
+                    })),
+                    right: Arc::new(Mutex::new(VethDevice {
+                        name: peer_name.as_ref().to_string(),
+                        index: if_nametoindex(peer_name.as_ref())?,
+                        mac_addr: None,
+                        ip_addr: None,
+                        peer: None,
+                        namespace: NetNs::current()?,
+                    })),
+                };
+
+                pair.left
+                    .lock()
+                    .unwrap()
+                    .peer
+                    .replace(Arc::downgrade(&pair.right));
+                pair.right
+                    .lock()
+                    .unwrap()
+                    .peer
+                    .replace(Arc::downgrade(&pair.left));
+
+                Ok(pair)
+            }
+            Err(e) => Err(VethError::CreateVethPairError(e.to_string())),
+        }
+    }
+}
+
+impl Drop for VethPair {
+    // FIXME: This is a hack to work because we can't use tokio block_on here.
+    fn drop(&mut self) {
+        let left = self.left.clone();
+        let handle = std::thread::spawn(move || {
+            delete_veth(left);
+        });
+        handle.join().unwrap();
+    }
+}
+
+pub struct VethDevice {
+    pub name: String,
+    pub index: u32,
+    pub mac_addr: Option<MacAddr>,
+    pub ip_addr: Option<(IpAddr, u8)>,
+    pub peer: Option<Weak<Mutex<VethDevice>>>,
+    namespace: std::sync::Arc<NetNs>,
+}
+
+impl VethDevice {
+    pub fn peer(&self) -> Arc<Mutex<VethDevice>> {
+        self.peer.as_ref().unwrap().upgrade().unwrap()
+    }
+
+    pub fn up(&mut self) -> Result<&mut Self, Error> {
+        let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
+        let (rt, rtnl_handle) = rtnetlink_once();
+        match rt.block_on(rtnl_handle.link().set(self.index).up().execute()) {
+            Ok(_) => Ok(self),
+            Err(e) => Err(VethError::SetError(e.to_string()).into()),
+        }
+    }
+
+    pub fn down(&mut self) -> Result<&mut Self, Error> {
+        let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
+        let (rt, rtnl_handle) = rtnetlink_once();
+        match rt.block_on(rtnl_handle.link().set(self.index).down().execute()) {
+            Ok(_) => Ok(self),
+            Err(e) => Err(VethError::SetError(e.to_string()).into()),
+        }
+    }
+
+    pub fn set_ns(&mut self, netns: std::sync::Arc<NetNs>) -> Result<&mut Self, VethError> {
+        let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
+        let (rt, rtnl_handle) = rtnetlink_once();
+        match rt.block_on(
+            rtnl_handle
+                .link()
+                .set(self.index)
+                .setns_by_fd(netns.as_raw_fd())
+                .execute(),
+        ) {
+            Ok(_) => {
+                self.namespace = netns;
+                Ok(self)
+            }
+            Err(e) => Err(VethError::SetError(e.to_string())),
+        }
+    }
+
+    pub fn set_l2_addr(&mut self, mac_addr: MacAddr) -> Result<&mut Self, Error> {
+        let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
+        let (rt, rtnl_handle) = rtnetlink_once();
+        match rt.block_on(
+            rtnl_handle
+                .link()
+                .set(self.index)
+                .address(Vec::from(mac_addr.bytes))
+                .execute(),
+        ) {
+            Ok(_) => {
+                self.mac_addr = Some(mac_addr);
+                Ok(self)
+            }
+            Err(e) => Err(VethError::SetError(e.to_string()).into()),
+        }
+    }
+
+    pub fn set_l3_addr(&mut self, ip_addr: IpAddr, prefix: u8) -> Result<&mut Self, Error> {
+        let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
+        let (rt, rtnl_handle) = rtnetlink_once();
+        match rt.block_on(
+            rtnl_handle
+                .address()
+                .add(self.index, ip_addr, prefix)
+                .execute(),
+        ) {
+            Ok(_) => {
+                self.ip_addr = Some((ip_addr, prefix));
+                Ok(self)
+            }
+            Err(e) => Err(VethError::SetError(e.to_string()).into()),
         }
     }
 
