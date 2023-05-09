@@ -152,8 +152,8 @@ fn af_packet_test() -> anyhow::Result<()> {
         let netns = stdenv.rattan_ns;
         netns.enter().unwrap();
 
-        let left_sniffer = create_dev_socket(&stdenv.left_pair.right.lock().unwrap()).unwrap();
-        let right_sniffer = create_dev_socket(&stdenv.right_pair.left.lock().unwrap()).unwrap();
+        let left_sniffer = create_dev_socket(&stdenv.left_pair.right).unwrap();
+        let right_sniffer = create_dev_socket(&stdenv.right_pair.left).unwrap();
         println!(
             "left sniffer: {}, right sniffer: {}",
             left_sniffer, right_sniffer
@@ -227,13 +227,10 @@ fn af_packet_test() -> anyhow::Result<()> {
 
                 match fd {
                     x if x == left_sniffer => {
-                        assert_ne!(
-                            addr.sll_ifindex,
-                            stdenv.right_pair.left.lock().unwrap().index as i32
-                        );
+                        assert_ne!(addr.sll_ifindex, stdenv.right_pair.left.index as i32);
                         send_to_dev(
-                            stdenv.right_pair.left.lock().unwrap().index,
-                            &stdenv.right_pair.right.lock().unwrap().mac_addr.unwrap(),
+                            stdenv.right_pair.left.index,
+                            &stdenv.right_pair.right.mac_addr,
                             &addr,
                             send_sock,
                             &mut buf[0..read],
@@ -241,13 +238,10 @@ fn af_packet_test() -> anyhow::Result<()> {
                         // println!("forward packet (length: {}) from left to right, from index {}, target index {}", size, addr.sll_ifindex, stdenv.right_pair.left.index)
                     }
                     x if x == right_sniffer => {
-                        assert_ne!(
-                            addr.sll_ifindex,
-                            stdenv.left_pair.right.lock().unwrap().index as i32
-                        );
+                        assert_ne!(addr.sll_ifindex, stdenv.left_pair.right.index as i32);
                         send_to_dev(
-                            stdenv.left_pair.right.lock().unwrap().index,
-                            &stdenv.left_pair.left.lock().unwrap().mac_addr.unwrap(),
+                            stdenv.left_pair.right.index,
+                            &stdenv.left_pair.left.mac_addr,
                             &addr,
                             send_sock,
                             &mut buf[0..read],

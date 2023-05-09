@@ -42,7 +42,7 @@ where
     type Sender: InterfaceSender<P>;
     type Receiver: InterfaceReceiver<P>;
 
-    fn bind_device(device: Arc<Mutex<VethDevice>>) -> Result<Self, MetalError>
+    fn bind_device(device: Arc<VethDevice>) -> Result<Self, MetalError>
     where
         Self: Sized;
     fn raw_fd(&self) -> i32;
@@ -52,7 +52,7 @@ where
 
 pub struct AfPacketSender {
     raw_fd: Mutex<i32>,
-    device: Arc<Mutex<VethDevice>>,
+    device: Arc<VethDevice>,
 }
 
 impl<P> InterfaceSender<P> for AfPacketSender
@@ -60,21 +60,12 @@ where
     P: Packet,
 {
     fn send(&self, mut packet: P) -> std::io::Result<()> {
-        let peer_address = {
-            self.device
-                .lock()
-                .unwrap()
-                .peer()
-                .lock()
-                .unwrap()
-                .mac_addr
-                .unwrap()
-        };
+        let peer_address = { self.device.peer().mac_addr };
 
         let mut target_interface = libc::sockaddr_ll {
             sll_family: libc::AF_PACKET as u16,
             sll_protocol: packet.ether_hdr().unwrap().ether_type,
-            sll_ifindex: self.device.lock().unwrap().index as i32,
+            sll_ifindex: self.device.index as i32,
             sll_hatype: 0,
             sll_pkttype: 0,
             sll_halen: peer_address.bytes().len() as u8,
@@ -86,21 +77,10 @@ where
         // inplace update of packet. Maybe a home made packet parser and manipulation library is
         // necessary eventually.
         let mut ether = packet.ether_hdr().unwrap();
+        ether.source.copy_from_slice(&self.device.mac_addr.bytes());
         ether
-            .source
-            .copy_from_slice(&self.device.lock().unwrap().mac_addr.unwrap().bytes());
-        ether.destination.copy_from_slice(
-            &self
-                .device
-                .lock()
-                .unwrap()
-                .peer()
-                .lock()
-                .unwrap()
-                .mac_addr
-                .unwrap()
-                .bytes(),
-        );
+            .destination
+            .copy_from_slice(&self.device.peer().mac_addr.bytes());
 
         let buf = packet.as_raw_buffer();
         ether.write_to_slice(buf).unwrap();
@@ -184,7 +164,7 @@ pub struct AfPacketDriver {
     raw_fd: i32,
     sender: Arc<AfPacketSender>,
     receiver: AfPacketReceiver,
-    _device: Arc<Mutex<VethDevice>>,
+    _device: Arc<VethDevice>,
 }
 
 impl<P> InterfaceDriver<P> for AfPacketDriver
@@ -193,7 +173,7 @@ where
 {
     type Sender = AfPacketSender;
     type Receiver = AfPacketReceiver;
-    fn bind_device(device: Arc<Mutex<VethDevice>>) -> Result<Self, MetalError> {
+    fn bind_device(device: Arc<VethDevice>) -> Result<Self, MetalError> {
         println!("bind device to AF_PACKET driver");
         let raw_fd = unsafe {
             Errno::result(libc::socket(
@@ -203,7 +183,6 @@ where
             ))?
         };
         {
-            let device = device.lock().unwrap();
             // It should work after this fix (https://github.com/nix-rust/nix/pull/1925) is available
             // let raw_socket = socket(
             //     AddressFamily::Packet,
