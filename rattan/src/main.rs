@@ -17,6 +17,8 @@ fn main() -> anyhow::Result<()> {
 
     {
         let original_ns = _std_env.rattan_ns.enter().unwrap();
+        let _left_pair_guard = _std_env.left_pair.clone();
+        let _right_pair_guard = _std_env.right_pair.clone();
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_io()
