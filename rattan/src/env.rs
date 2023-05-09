@@ -33,11 +33,11 @@ impl Default for StdNetEnvConfig {
 }
 
 pub struct StdNetEnv {
-    pub left_ns: std::sync::Arc<NetNs>,
-    pub rattan_ns: std::sync::Arc<NetNs>,
-    pub right_ns: std::sync::Arc<NetNs>,
-    pub left_pair: VethPair,
-    pub right_pair: VethPair,
+    pub left_ns: Arc<NetNs>,
+    pub rattan_ns: Arc<NetNs>,
+    pub right_ns: Arc<NetNs>,
+    pub left_pair: Arc<VethPair>,
+    pub right_pair: Arc<VethPair>,
 }
 
 pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {

@@ -244,30 +244,13 @@ fn rtnetlink_once() -> (Runtime, Handle) {
     (rt, rtnl_handle)
 }
 
-/// Used to asynchronously delete a veth pair.
-fn delete_veth(left: Arc<Mutex<VethDevice>>) {
-    let ns_guard = NetNsGuard::new(left.lock().unwrap().namespace.clone());
-    if let Err(e) = ns_guard {
-        eprintln!("Failed to enter netns: {}", e);
-        return;
-    }
-
-    let (rt, rtnl_handle) = rtnetlink_once();
-    match rt.block_on(rtnl_handle.link().del(left.lock().unwrap().index).execute()) {
-        Ok(_) => {}
-        Err(e) => {
-            eprintln!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &left.lock().unwrap().name);
-        }
-    }
-}
-
 pub struct VethPair {
     pub left: Arc<Mutex<VethDevice>>,
     pub right: Arc<Mutex<VethDevice>>,
 }
 
 impl VethPair {
-    pub fn new<S: AsRef<str>>(name: S, peer_name: S) -> Result<VethPair, VethError> {
+    pub fn new<S: AsRef<str>>(name: S, peer_name: S) -> Result<Arc<Self>, VethError> {
         let (rt, rtnl_handle) = rtnetlink_once();
         match rt.block_on(
             rtnl_handle
@@ -310,7 +293,7 @@ impl VethPair {
                     .peer
                     .replace(Arc::downgrade(&pair.left));
 
-                Ok(pair)
+                Ok(Arc::new(pair))
             }
             Err(e) => Err(VethError::CreateVethPairError(e.to_string())),
         }
@@ -318,13 +301,32 @@ impl VethPair {
 }
 
 impl Drop for VethPair {
-    // FIXME: This is a hack to work because we can't use tokio block_on here.
     fn drop(&mut self) {
-        let left = self.left.clone();
-        let handle = std::thread::spawn(move || {
-            delete_veth(left);
-        });
-        handle.join().unwrap();
+        match tokio::runtime::Handle::try_current() {
+            Ok(_) => {
+                panic!("Deleting veth pair in tokio runtime is not supported.");
+            }
+            Err(_) => {
+                let ns_guard = NetNsGuard::new(self.left.lock().unwrap().namespace.clone());
+                if let Err(e) = ns_guard {
+                    eprintln!("Failed to enter netns: {}", e);
+                    return;
+                }
+
+                let (rt, rtnl_handle) = rtnetlink_once();
+                match rt.block_on(
+                    rtnl_handle
+                        .link()
+                        .del(self.left.lock().unwrap().index)
+                        .execute(),
+                ) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        eprintln!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &self.left.lock().unwrap().name);
+                    }
+                };
+            }
+        }
     }
 }
 
