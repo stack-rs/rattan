@@ -8,10 +8,7 @@ use crate::{
 };
 /// External devices are all devices not created by Rattan.
 /// Network interfaces, physical or virtual, are examples of external devices.
-use std::{
-    marker::PhantomData,
-    sync::{Arc, Mutex},
-};
+use std::{marker::PhantomData, sync::Arc};
 
 use async_trait::async_trait;
 #[cfg(feature = "serde")]
@@ -106,7 +103,7 @@ where
     D::Sender: Send + Sync,
     D::Receiver: Send,
 {
-    _device: Arc<Mutex<VethDevice>>,
+    _device: Arc<VethDevice>,
     ingress: Arc<VirtualEthernetIngress<P, D>>,
     egress: VirtualEthernetEgress<P, D>,
     control_interface: Arc<VirtualEthernetControlInterface>,
@@ -119,7 +116,7 @@ where
     D::Sender: Send + Sync,
     D::Receiver: Send,
 {
-    pub fn new(device: Arc<Mutex<VethDevice>>) -> Self {
+    pub fn new(device: Arc<VethDevice>) -> Self {
         println!("create virtual ethernet");
         let driver = D::bind_device(device.clone()).unwrap();
         let notify = AsyncFd::new(driver.raw_fd()).unwrap();

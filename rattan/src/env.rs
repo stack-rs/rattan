@@ -1,3 +1,4 @@
+use crate::metal::veth::VethPairBuilder;
 use crate::metal::{netns::NetNs, veth::VethPair};
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
@@ -58,54 +59,37 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
     };
     let rattan_netns = NetNs::new(&rattan_netns_name)?;
 
-    let veth_pair_client = VethPair::new(
-        format!("rc-left-{}", rand_string),
-        format!("rc-right-{}", rand_string),
-    )?;
+    let veth_pair_client = VethPairBuilder::new()
+        .name(
+            format!("rc-left-{}", rand_string),
+            format!("rc-right-{}", rand_string),
+        )
+        .namespace(Some(client_netns.clone()), Some(rattan_netns.clone()))
+        .mac_addr(
+            [0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2a].into(),
+            [0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2b].into(),
+        )
+        .ip_addr(
+            (IpAddr::V4(Ipv4Addr::new(192, 168, 11, 1)), 24),
+            (IpAddr::V4(Ipv4Addr::new(192, 168, 11, 2)), 24),
+        )
+        .build()?;
 
-    veth_pair_client
-        .left
-        .lock()
-        .unwrap()
-        .set_ns(client_netns.clone())?
-        .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2a].into())?
-        .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 11, 1)), 24)?
-        .disable_checksum_offload()?
-        .up()?;
-
-    veth_pair_client
-        .right
-        .lock()
-        .unwrap()
-        .set_ns(rattan_netns.clone())?
-        .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2b].into())?
-        .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 11, 2)), 24)?
-        .disable_checksum_offload()?
-        .up()?;
-
-    let veth_pair_server = VethPair::new(
-        format!("rs-left-{}", rand_string),
-        format!("rs-right-{}", rand_string),
-    )?;
-    veth_pair_server
-        .left
-        .lock()
-        .unwrap()
-        .set_ns(rattan_netns.clone())?
-        .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2c].into())?
-        .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 12, 2)), 24)?
-        .disable_checksum_offload()?
-        .up()?;
-
-    veth_pair_server
-        .right
-        .lock()
-        .unwrap()
-        .set_ns(server_netns.clone())?
-        .set_l2_addr([0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2d].into())?
-        .set_l3_addr(IpAddr::V4(Ipv4Addr::new(192, 168, 12, 1)), 24)?
-        .disable_checksum_offload()?
-        .up()?;
+    let veth_pair_server = VethPairBuilder::new()
+        .name(
+            format!("rs-left-{}", rand_string),
+            format!("rs-right-{}", rand_string),
+        )
+        .namespace(Some(rattan_netns.clone()), Some(server_netns.clone()))
+        .mac_addr(
+            [0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2c].into(),
+            [0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2d].into(),
+        )
+        .ip_addr(
+            (IpAddr::V4(Ipv4Addr::new(192, 168, 12, 2)), 24),
+            (IpAddr::V4(Ipv4Addr::new(192, 168, 12, 1)), 24),
+        )
+        .build()?;
 
     // Set the default route of left and right namespaces
     let mut client_exec_handle = std::process::Command::new("ip")
