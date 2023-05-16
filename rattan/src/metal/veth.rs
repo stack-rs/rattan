@@ -1,6 +1,7 @@
 use crate::error::{Error, MacParseError, VethError};
 use crate::metal::netns::{NetNs, NetNsGuard};
 use nix::net::if_::if_nametoindex;
+use once_cell::sync::OnceCell;
 use rtnetlink::{new_connection, Handle};
 use std::net::IpAddr;
 use std::os::fd::AsRawFd;
@@ -254,7 +255,7 @@ pub struct VethDevice {
     pub index: u32,
     pub mac_addr: MacAddr,
     pub ip_addr: (IpAddr, u8),
-    pub peer: Mutex<Weak<VethDevice>>,
+    pub peer: OnceCell<Weak<VethDevice>>,
     namespace: Arc<NetNs>,
 }
 
@@ -336,7 +337,7 @@ impl VethPairBuilder {
                 index: if_nametoindex(self.name.clone().unwrap().0.as_str())?,
                 mac_addr: self.mac_addr.unwrap().0,
                 ip_addr: self.ip_addr.unwrap().0,
-                peer: Mutex::new(Weak::new()),
+                peer: OnceCell::new(),
                 namespace: self.namespace.0.unwrap_or(NetNs::current()?),
             }),
             right: Arc::new(VethDevice {
@@ -344,12 +345,12 @@ impl VethPairBuilder {
                 index: if_nametoindex(self.name.clone().unwrap().1.as_str())?,
                 mac_addr: self.mac_addr.unwrap().1,
                 ip_addr: self.ip_addr.unwrap().1,
-                peer: Mutex::new(Weak::new()),
+                peer: OnceCell::new(),
                 namespace: self.namespace.1.unwrap_or(NetNs::current()?),
             }),
         };
-        *pair.left.peer.lock().unwrap() = Arc::downgrade(&pair.right);
-        *pair.right.peer.lock().unwrap() = Arc::downgrade(&pair.left);
+        pair.left.peer.set(Arc::downgrade(&pair.right)).unwrap();
+        pair.right.peer.set(Arc::downgrade(&pair.left)).unwrap();
 
         for device in [pair.left.clone(), pair.right.clone()] {
             // Set namespace
@@ -438,7 +439,7 @@ impl Drop for VethPair {
 
 impl VethDevice {
     pub fn peer(&self) -> Arc<VethDevice> {
-        self.peer.lock().unwrap().upgrade().unwrap()
+        self.peer.get().unwrap().upgrade().unwrap()
     }
 
     pub fn disable_checksum_offload(&self) -> Result<&Self, Error> {
