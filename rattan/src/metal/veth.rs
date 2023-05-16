@@ -301,7 +301,11 @@ impl VethPairBuilder {
         self
     }
 
-    pub fn build(self) -> Result<Arc<VethPair>, VethError> {
+    async fn build_impl(
+        self,
+        rt: &Runtime,
+        rtnl_handle: Handle,
+    ) -> Result<Arc<VethPair>, VethError> {
         if self.name.is_none() {
             return Err(VethError::CreateVethPairError(
                 "Veth pair name is not specified.".to_string(),
@@ -317,15 +321,14 @@ impl VethPairBuilder {
                 "Veth pair IP address is not specified.".to_string(),
             ));
         }
-        let (rt, rtnl_handle) = rtnetlink_once();
-        rt.block_on(
-            rtnl_handle
-                .link()
-                .add()
-                .veth(self.name.clone().unwrap().0, self.name.clone().unwrap().1)
-                .execute(),
-        )
-        .map_err(|e| VethError::CreateVethPairError(e.to_string()))?;
+
+        rtnl_handle
+            .link()
+            .add()
+            .veth(self.name.clone().unwrap().0, self.name.clone().unwrap().1)
+            .execute()
+            .await
+            .map_err(|e| VethError::CreateVethPairError(e.to_string()))?;
 
         let pair = VethPair {
             left: Arc::new(VethDevice {
@@ -350,40 +353,43 @@ impl VethPairBuilder {
 
         for device in [pair.left.clone(), pair.right.clone()] {
             // Set namespace
-            rt.block_on(
-                rtnl_handle
-                    .link()
-                    .set(device.index)
-                    .setns_by_fd(device.namespace.as_raw_fd())
-                    .execute(),
-            )
-            .map_err(|e| VethError::SetError(e.to_string()))?;
+            rtnl_handle
+                .link()
+                .set(device.index)
+                .setns_by_fd(device.namespace.as_raw_fd())
+                .execute()
+                .await
+                .map_err(|e| VethError::SetError(e.to_string()))?;
 
             // Enter namespace
             let _ns_guard = NetNsGuard::new(device.namespace.clone())?;
-            let (rt, rtnl_handle) = rtnetlink_once();
+            let (conn, rtnl_handle, _) = new_connection().unwrap();
+            rt.spawn(conn);
 
             // Set mac address
-            rt.block_on(
-                rtnl_handle
-                    .link()
-                    .set(device.index)
-                    .address(Vec::from(device.mac_addr.bytes))
-                    .execute(),
-            )
-            .map_err(|e| VethError::SetError(e.to_string()))?;
+            rtnl_handle
+                .link()
+                .set(device.index)
+                .address(Vec::from(device.mac_addr.bytes))
+                .execute()
+                .await
+                .map_err(|e| VethError::SetError(e.to_string()))?;
 
             // Set ip address
-            rt.block_on(
-                rtnl_handle
-                    .address()
-                    .add(device.index, device.ip_addr.0, device.ip_addr.1)
-                    .execute(),
-            )
-            .map_err(|e| VethError::SetError(e.to_string()))?;
+            rtnl_handle
+                .address()
+                .add(device.index, device.ip_addr.0, device.ip_addr.1)
+                .execute()
+                .await
+                .map_err(|e| VethError::SetError(e.to_string()))?;
 
             // Set up
-            rt.block_on(rtnl_handle.link().set(device.index).up().execute())
+            rtnl_handle
+                .link()
+                .set(device.index)
+                .up()
+                .execute()
+                .await
                 .map_err(|e| VethError::SetError(e.to_string()))?;
 
             // Disable checksum offload
@@ -393,6 +399,11 @@ impl VethPairBuilder {
         }
 
         Ok(Arc::new(pair))
+    }
+
+    pub fn build(self) -> Result<Arc<VethPair>, VethError> {
+        let (rt, rtnl_handle) = rtnetlink_once();
+        rt.block_on(self.build_impl(&rt, rtnl_handle))
     }
 }
 
