@@ -411,6 +411,10 @@ impl Drop for VethPair {
     fn drop(&mut self) {
         match tokio::runtime::Handle::try_current() {
             Ok(_) => {
+                eprintln!("Failed to delete veth pair. (you may need to delete it manually with 'sudo ip link del {}')", &self.left.name);
+                if std::thread::panicking() {
+                    return;
+                }
                 panic!("Deleting veth pair in tokio runtime is not supported.");
             }
             Err(_) => {
