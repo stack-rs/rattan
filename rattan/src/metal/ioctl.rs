@@ -1,4 +1,4 @@
-use libc::{__c_anonymous_ifr_ifru, c_uint, ifreq};
+use libc::{__c_anonymous_ifr_ifru, c_char, c_uint, ifreq};
 use nix::{
     errno::Errno,
     ioctl_readwrite_bad,
@@ -102,30 +102,24 @@ pub fn get_feature_flag(name: &str) -> Result<[u32; OFF_FLAG_DEF_SIZE], VethErro
         std::slice::from_raw_parts(name.as_ptr() as *const i8, name.len())
     });
 
-    println!("--- get feature flag for {}", name);
     let mut flags = [0; OFF_FLAG_DEF_SIZE];
     for (i, off_flag_def) in OFF_FLAG_DEF.iter().enumerate() {
         let mut eval = EthtoolValue { cmd: 0, data: 0 };
         eval.cmd = off_flag_def.get_cmd;
         eval.data = 0;
-        ifr.ifr_ifru.ifru_data = &mut eval as *mut _ as *mut _;
+        ifr.ifr_ifru.ifru_data = &mut eval as *mut EthtoolValue as *mut c_char;
 
         let res = unsafe { ethtool_ioctl(fd, &mut ifr) };
         match res {
             Ok(_) => {
-                println!("{}: {}", off_flag_def.name, eval.data);
                 flags[i] = eval.data;
             }
-            Err(Errno::EOPNOTSUPP) => {
-                println!("{} not supported", off_flag_def.name);
-            }
+            Err(Errno::EOPNOTSUPP) => {}
             Err(e) => {
-                println!("{} get error: {:?}", off_flag_def.name, e.desc());
                 return Err(VethError::SetError(e.desc().to_string()));
             }
         }
     }
-    println!("---");
     Ok(flags)
 }
 
@@ -153,17 +147,76 @@ pub fn disable_checksum_offload(name: &str) -> Result<(), VethError> {
         let mut eval = EthtoolValue { cmd: 0, data: 0 };
         eval.cmd = off_flag_def.set_cmd;
         eval.data = 0;
-        ifr.ifr_ifru.ifru_data = &mut eval as *mut _ as *mut _;
+        ifr.ifr_ifru.ifru_data = &mut eval as *mut EthtoolValue as *mut c_char;
 
         let res = unsafe { ethtool_ioctl(fd, &mut ifr) };
         match res {
             Ok(_) => {}
             Err(Errno::EOPNOTSUPP) => {}
             Err(e) => {
-                println!("{} set error: {:?}", off_flag_def.name, e.desc());
                 return Err(VethError::SetError(e.desc().to_string()));
             }
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    use super::{disable_checksum_offload, get_feature_flag, OFF_FLAG_DEF_SIZE};
+
+    struct VethTest();
+    impl VethTest {
+        fn new() -> Self {
+            let output = Command::new("ip")
+                .arg("link")
+                .arg("add")
+                .arg("veth0-test")
+                .arg("type")
+                .arg("veth")
+                .arg("peer")
+                .arg("name")
+                .arg("veth1-test")
+                .output()
+                .unwrap();
+            if output.status.success() {
+                println!("veth0-test and veth1-test created");
+            } else {
+                panic!(
+                    "veth0-test and veth1-test creation failed: {}",
+                    String::from_utf8(output.stderr).unwrap()
+                );
+            }
+            VethTest()
+        }
+    }
+
+    impl Drop for VethTest {
+        fn drop(&mut self) {
+            let output = Command::new("ip")
+                .arg("link")
+                .arg("del")
+                .arg("veth0-test")
+                .output()
+                .unwrap();
+            if output.status.success() {
+                println!("veth0-test and veth1-test deleted");
+            } else {
+                panic!(
+                    "veth0-test and veth1-test deletion failed: {}",
+                    String::from_utf8(output.stderr).unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_ioctl() {
+        let _veth = VethTest::new();
+        disable_checksum_offload("veth0-test").unwrap();
+        let flags = get_feature_flag("veth0-test").unwrap();
+        assert_eq!(flags, [0; OFF_FLAG_DEF_SIZE]);
+    }
 }
