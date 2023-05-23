@@ -9,6 +9,8 @@ use std::process::Command;
 use std::sync::{Arc, Mutex, Weak};
 use tokio::runtime::Runtime;
 
+use super::ioctl::disable_checksum_offload;
+
 pub struct IpVethPair {
     pub left: Arc<Mutex<IpVethDevice>>,
     pub right: Arc<Mutex<IpVethDevice>>,
@@ -394,9 +396,7 @@ impl VethPairBuilder {
                 .map_err(|e| VethError::SetError(e.to_string()))?;
 
             // Disable checksum offload
-            device
-                .disable_checksum_offload()
-                .map_err(|e| VethError::SetError(e.to_string()))?;
+            disable_checksum_offload(device.name.as_str())?;
         }
 
         Ok(Arc::new(pair))
@@ -440,18 +440,6 @@ impl Drop for VethPair {
 impl VethDevice {
     pub fn peer(&self) -> Arc<VethDevice> {
         self.peer.get().unwrap().upgrade().unwrap()
-    }
-
-    pub fn disable_checksum_offload(&self) -> Result<&Self, Error> {
-        let _ns_guard = NetNsGuard::new(self.namespace.clone())?;
-        let output = Command::new("ethtool")
-            .args(["-K", &self.name, "tx", "off", "rx", "off"])
-            .output()?;
-        if !output.status.success() {
-            Err(VethError::SetError(String::from_utf8(output.stderr).unwrap()).into())
-        } else {
-            Ok(self)
-        }
     }
 }
 
