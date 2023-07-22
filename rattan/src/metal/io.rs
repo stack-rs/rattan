@@ -147,11 +147,19 @@ where
         if addr_ll.sll_pkttype == PacketType::PacketOutgoing as u8
             || addr_ll.sll_pkttype == PacketType::PacketHost as u8
         {
+            trace!(
+                header = ?buf[0..std::cmp::min(56, ret)],
+                "Ignore a packet from AF_PACKET {} (protocol: {:<04X}, pkttype: {}, source index: {}, hardware_addr: {:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X})",
+                self.raw_fd,
+                addr_ll.sll_protocol,
+                addr_ll.sll_pkttype, addr_ll.sll_ifindex,
+                addr_ll.sll_addr[0], addr_ll.sll_addr[1], addr_ll.sll_addr[2], addr_ll.sll_addr[3], addr_ll.sll_addr[4], addr_ll.sll_addr[5]
+            );
             Ok(None)
         } else {
             trace!(
                 header = ?buf[0..std::cmp::min(56, ret)],
-                "receive a packet from AF_PACKET {} (protocol: {:<04X}, pkttype: {}, source index: {}, hardware_addr: {:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X})",
+                "Receive a packet from AF_PACKET {} (protocol: {:<04X}, pkttype: {}, source index: {}, hardware_addr: {:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X})",
                 self.raw_fd,
                 addr_ll.sll_protocol,
                 addr_ll.sll_pkttype, addr_ll.sll_ifindex,

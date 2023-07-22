@@ -13,3 +13,7 @@ Cargo.lock
 # Added by cargo
 /target
 target/
+
+# Ignore packet dump files
+*.pcap
+*.pcapng
