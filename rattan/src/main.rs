@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
         let _left_pair_guard = _std_env.left_pair.clone();
         let _right_pair_guard = _std_env.right_pair.clone();
 
-        let runtime = tokio::runtime::Builder::new_multi_thread()
+        let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()
             .build()

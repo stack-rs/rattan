@@ -19,7 +19,7 @@ fn prepare_env() -> (JoinHandle<()>, CancellationToken, Arc<NetNs>, Arc<NetNs>) 
 
     let rattan_thread = std::thread::spawn(move || {
         let original_ns = _std_env.rattan_ns.enter().unwrap();
-        let runtime = tokio::runtime::Builder::new_multi_thread()
+        let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()
             .build()
