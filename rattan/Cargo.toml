@@ -23,7 +23,7 @@ once_cell = "1.17.1"
 parking_lot = "0.12.1"
 rand = "0.8.5"
 regex = "1.7.3"
-rtnetlink = "0.12.0"
+rtnetlink = "0.13.0"
 serde = { version = "1.0.160", optional = true, features = ["derive"] }
 serde_json = { version = "1.0.96", optional = true }
 thiserror = "1.0.40"
