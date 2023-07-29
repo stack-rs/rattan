@@ -7,6 +7,7 @@ use std::thread::{self, JoinHandle};
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{setns, unshare, CloneFlags};
 use nix::unistd::gettid;
+use tracing::{error, info, trace};
 
 use crate::error::NsError;
 
@@ -165,6 +166,7 @@ impl Env for DefaultEnv {
         let file =
             File::open(&full_path).map_err(|e| NsError::OpenNsError(full_path.clone(), e))?;
 
+        info!("create namespace: {}", full_path.to_string_lossy());
         Ok(std::sync::Arc::new(NetNs {
             file,
             path: full_path,
@@ -175,7 +177,7 @@ impl Env for DefaultEnv {
     fn remove(self: &std::sync::Arc<Self>, netns: &mut NetNs) -> Result<(), NsError> {
         let path = &netns.path;
         if path.starts_with(self.persist_dir()) {
-            println!("drop namespace: {}", netns.path().to_string_lossy());
+            info!("drop namespace: {}", netns.path().to_string_lossy());
             Self::umount_ns(path)?
         }
         Ok(())
@@ -273,6 +275,11 @@ impl<E: Env> NetNs<E> {
     /// Requires elevated privileges.
     pub fn enter(&self) -> Result<std::sync::Arc<NetNs<E>>, NsError> {
         let current_ns = self.env.clone().current()?;
+        trace!(
+            "Netns {} --> {}",
+            current_ns.path.to_string_lossy(),
+            self.path.to_string_lossy(),
+        );
         setns(self.as_raw_fd(), CloneFlags::CLONE_NEWNET).map_err(NsError::SetNsError)?;
         Ok(current_ns)
     }
@@ -297,10 +304,10 @@ impl<E: Env> Drop for NetNs<E> {
     fn drop(&mut self) {
         let fd = self.file.as_raw_fd();
         if let Err(e) = nix::unistd::close(fd).map_err(NsError::CloseNsError) {
-            eprintln!("Failed to close netns: {}", e);
+            error!("Failed to close netns: {}", e);
         }
         if let Err(e) = self.env.clone().remove(self) {
-            eprintln!("Failed to remove netns: {}", e);
+            error!("Failed to remove netns: {}", e);
         }
     }
 }
@@ -325,7 +332,7 @@ where
 {
     fn drop(&mut self) {
         if let Err(e) = self.old.enter() {
-            eprintln!("Failed to go back to old netns: {}", e);
+            error!("Failed to go back to old netns: {}", e);
         }
     }
 }

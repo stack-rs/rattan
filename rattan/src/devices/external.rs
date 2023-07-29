@@ -14,6 +14,7 @@ use async_trait::async_trait;
 #[cfg(feature = "serde")]
 use serde::Deserialize;
 use tokio::io::unix::AsyncFd;
+use tracing::{debug, error, instrument};
 
 use super::{ControlInterface, Egress, Ingress};
 
@@ -73,7 +74,7 @@ where
             match _guard.try_io(|_fd| self.driver.receiver().receive()) {
                 Ok(packet) => match packet {
                     Ok(p) => return p,
-                    Err(e) => eprintln!("recv error: {}", e),
+                    Err(e) => error!("recv error: {}", e),
                 },
                 Err(_would_block) => continue,
             }
@@ -116,8 +117,9 @@ where
     D::Sender: Send + Sync,
     D::Receiver: Send,
 {
+    #[instrument(skip_all, name="VirtualEthernet", fields(name = device.name))]
     pub fn new(device: Arc<VethDevice>) -> Self {
-        println!("create virtual ethernet");
+        debug!("New VirtualEthernet");
         let driver = D::bind_device(device.clone()).unwrap();
         let notify = AsyncFd::new(driver.raw_fd()).unwrap();
         let sender_end = driver.sender();

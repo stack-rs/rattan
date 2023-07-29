@@ -10,6 +10,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
+use tracing::{debug, info};
 
 use super::{ControlInterface, Egress, Ingress};
 
@@ -86,6 +87,7 @@ where
         let packet = self.egress.recv().await.unwrap();
         if let Some(bandwidth) = self.bandwidth.swap_null() {
             self.inner_bandwidth = bandwidth;
+            debug!(?self.inner_bandwidth, "Set inner bandwidth:");
         }
         let now = Instant::now();
         if packet.ingress_time >= self.next_available {
@@ -134,6 +136,7 @@ impl ControlInterface for BwDeviceControlInterface {
                 "Bandwidth should be less than 2^64 bps".to_string(),
             ));
         }
+        info!("Setting bandwidth to: {:?}", config.bandwidth);
         self.bandwidth.store(Box::new(config.bandwidth));
         Ok(())
     }
@@ -175,6 +178,7 @@ where
     P: Packet,
 {
     pub fn new() -> BwDevice<P> {
+        debug!("New BwDevice");
         let (rx, tx) = mpsc::unbounded_channel();
         let bandwidth = Arc::new(AtomicRawCell::new(Box::new(Bandwidth::from_bps(u64::MAX))));
         BwDevice {

@@ -35,6 +35,7 @@ jobs:
       - run: sudo apt-get install -y iproute2 ethtool iputils-ping iperf3
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - run: CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo nextest run --profile ci --all-features
+      - run: cargo nextest run --profile ci --all-features
         env:
+          RUST_LOG: 'info'
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: 'sudo -E'

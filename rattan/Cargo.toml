@@ -38,6 +38,7 @@ tokio = { version = "1.26.0", features = [
 ] }
 tokio-timerfd = "0.2.0"
 tokio-util = "0.7.7"
+tracing = "0.1.37"
 
 [dev-dependencies]
 criterion = "0.4"
@@ -46,6 +47,8 @@ reqwest = { version = "0.11.16", default-features = false, features = [
     "json",
     "blocking",
 ] }
+test-log = { version = "0.2.12", default-features = false, features = ["trace"] }
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
 [[bench]]
 name = "bandwidth"
@@ -55,9 +58,4 @@ harness = false
 control = []
 default = []
 http = ["control", "serde", "dep:axum", "dep:axum-macros"]
-serde = [
-    "dep:humantime-serde",
-    "dep:serde",
-    "dep:serde_json",
-    "bandwidth/serde",
-]
+serde = ["dep:humantime-serde", "dep:serde", "dep:serde_json", "bandwidth/serde"]

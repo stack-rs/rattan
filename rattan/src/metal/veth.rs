@@ -8,6 +8,7 @@ use std::os::fd::AsRawFd;
 use std::process::Command;
 use std::sync::{Arc, Mutex, Weak};
 use tokio::runtime::Runtime;
+use tracing::{error, info, instrument, trace, Level};
 
 use super::ioctl::disable_checksum_offload;
 
@@ -73,7 +74,7 @@ impl Drop for IpVethPair {
     fn drop(&mut self) {
         let ns_guard = NetNsGuard::new(self.left.lock().unwrap().namespace.clone());
         if let Err(e) = ns_guard {
-            eprintln!("Failed to enter netns: {}", e);
+            error!("Failed to enter netns: {}", e);
             return;
         }
 
@@ -84,11 +85,11 @@ impl Drop for IpVethPair {
             .output();
 
         if let Err(e) = output {
-            eprintln!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &self.left.lock().unwrap().name);
+            error!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &self.left.lock().unwrap().name);
         } else {
             let output = output.unwrap();
             if !output.status.success() {
-                eprintln!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", String::from_utf8_lossy(&output.stderr), &self.left.lock().unwrap().name);
+                error!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", String::from_utf8_lossy(&output.stderr), &self.left.lock().unwrap().name);
             }
         }
     }
@@ -247,11 +248,13 @@ fn rtnetlink_once() -> (Runtime, Handle) {
     (rt, rtnl_handle)
 }
 
+#[derive(Debug)]
 pub struct VethPair {
     pub left: Arc<VethDevice>,
     pub right: Arc<VethDevice>,
 }
 
+#[derive(Debug)]
 pub struct VethDevice {
     pub name: String,
     pub index: u32,
@@ -261,6 +264,7 @@ pub struct VethDevice {
     namespace: Arc<NetNs>,
 }
 
+#[derive(Debug)]
 pub struct VethPairBuilder {
     name: Option<(String, String)>,
     mac_addr: Option<(MacAddr, MacAddr)>,
@@ -399,10 +403,20 @@ impl VethPairBuilder {
             disable_checksum_offload(device.name.as_str())?;
         }
 
+        info!(
+            "Veth pair created: {:>15} <--> {:<15}",
+            &pair.left.name, &pair.right.name
+        );
+        info!(
+            "                   {:>15} <--> {:<15}",
+            &pair.left.ip_addr.0, &pair.right.ip_addr.0
+        );
         Ok(Arc::new(pair))
     }
 
+    #[instrument(name = "VethPairBuilder", skip_all, ret(level = Level::TRACE), err)]
     pub fn build(self) -> Result<Arc<VethPair>, VethError> {
+        trace!(?self, "Building veth pair...");
         let (rt, rtnl_handle) = rtnetlink_once();
         rt.block_on(self.build_impl(&rt, rtnl_handle))
     }
@@ -412,7 +426,7 @@ impl Drop for VethPair {
     fn drop(&mut self) {
         match tokio::runtime::Handle::try_current() {
             Ok(_) => {
-                eprintln!("Failed to delete veth pair. (you may need to delete it manually with 'sudo ip link del {}')", &self.left.name);
+                error!("Failed to delete veth pair. (you may need to delete it manually with 'sudo ip link del {}')", &self.left.name);
                 if std::thread::panicking() {
                     return;
                 }
@@ -421,15 +435,20 @@ impl Drop for VethPair {
             Err(_) => {
                 let ns_guard = NetNsGuard::new(self.left.namespace.clone());
                 if let Err(e) = ns_guard {
-                    eprintln!("Failed to enter netns: {}", e);
+                    error!("Failed to enter netns: {}", e);
                     return;
                 }
 
                 let (rt, rtnl_handle) = rtnetlink_once();
                 match rt.block_on(rtnl_handle.link().del(self.left.index).execute()) {
-                    Ok(_) => {}
+                    Ok(_) => {
+                        info!(
+                            "Veth pair deleted: {:>15} <--> {:<15}",
+                            &self.left.name, &self.right.name
+                        );
+                    }
                     Err(e) => {
-                        eprintln!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &self.left.name);
+                        error!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &self.left.name);
                     }
                 };
             }
