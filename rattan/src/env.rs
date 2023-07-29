@@ -4,6 +4,7 @@ use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
+use tracing::{info, instrument, span, trace, Level};
 
 //   ns-client                          ns-rattan                         ns-server
 // +-----------+    veth pair    +--------------------+    veth pair    +-----------+
@@ -15,12 +16,14 @@ lazy_static::lazy_static! {
     static ref STD_ENV_LOCK: Arc<parking_lot::Mutex<()>> = Arc::new(parking_lot::Mutex::new(()));
 }
 
+#[derive(Debug)]
 pub enum StdNetEnvMode {
     Compatible,
     Isolated,
     Container,
 }
 
+#[derive(Debug)]
 pub struct StdNetEnvConfig {
     pub mode: StdNetEnvMode,
 }
@@ -41,7 +44,9 @@ pub struct StdNetEnv {
     pub right_pair: Arc<VethPair>,
 }
 
+#[instrument(skip_all, level = "debug")]
 pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
+    trace!(?config);
     let _guard = STD_ENV_LOCK.lock();
     let rand_string: String = thread_rng()
         .sample_iter(&Alphanumeric)
@@ -52,12 +57,15 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
     let server_netns_name = format!("ns-server-{}", rand_string);
     let rattan_netns_name = format!("ns-rattan-{}", rand_string);
     let client_netns = NetNs::new(&client_netns_name)?;
+    trace!(?client_netns, "Client netns {} created", client_netns_name);
     let server_netns = match config.mode {
         StdNetEnvMode::Compatible => NetNs::current()?,
         StdNetEnvMode::Isolated => NetNs::new(&server_netns_name)?,
         StdNetEnvMode::Container => NetNs::new(&server_netns_name)?,
     };
+    trace!(?server_netns, "Server netns {} created", server_netns_name);
     let rattan_netns = NetNs::new(&rattan_netns_name)?;
+    trace!(?rattan_netns, "Rattan netns {} created", rattan_netns_name);
 
     let veth_pair_client = VethPairBuilder::new()
         .name(
@@ -92,6 +100,7 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
         .build()?;
 
     // Set the default route of left and right namespaces
+    info!("Set default route");
     let mut client_exec_handle = std::process::Command::new("ip")
         .args([
             "netns",
@@ -135,12 +144,13 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
     client_exec_handle.wait()?;
 
     if std::env::var("TEST_STD_NS").is_ok() {
+        let _span = span!(Level::INFO, "TEST_STD_NS").entered();
         let output = std::process::Command::new("ip")
             .arg("netns")
             .arg("list")
             .output()
             .unwrap();
-        println!(
+        info!(
             "ip netns list:\n{}",
             String::from_utf8_lossy(&output.stdout)
         );
@@ -151,7 +161,7 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
                 .output()
                 .unwrap();
 
-            println!(
+            info!(
                 "ip netns exec {} ip link list:\n{}",
                 ns,
                 String::from_utf8_lossy(&output.stdout)
@@ -162,7 +172,7 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
                 .output()
                 .unwrap();
 
-            println!(
+            info!(
                 "ip netns exec {} ip -4 route show:\n{}",
                 ns,
                 String::from_utf8_lossy(&output.stdout)
@@ -182,7 +192,7 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
             .output()
             .unwrap();
 
-        println!(
+        info!(
             "ip netns exec {} ping -c 3 192.168.11.1:\n{}",
             &rattan_netns_name,
             String::from_utf8_lossy(&output.stdout)
@@ -201,7 +211,7 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
             .output()
             .unwrap();
 
-        println!(
+        info!(
             "ip netns exec {} ping -c 3 192.168.12.1:\n{}",
             &rattan_netns_name,
             String::from_utf8_lossy(&output.stdout)

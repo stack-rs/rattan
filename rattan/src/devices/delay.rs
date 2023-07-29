@@ -9,6 +9,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Instant};
+use tracing::{debug, info};
 
 use super::{ControlInterface, Egress, Ingress};
 
@@ -73,6 +74,7 @@ where
         let packet = self.egress.recv().await.unwrap();
         if let Some(delay) = self.delay.swap_null() {
             self.inner_delay = delay;
+            debug!(?self.inner_delay, "Set inner delay:");
         }
         let queuing_delay = Instant::now() - packet.ingress_time;
         if queuing_delay < *self.inner_delay {
@@ -104,7 +106,7 @@ impl ControlInterface for DelayDeviceControlInterface {
     type Config = DelayDeviceConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
-        println!("Setting delay to {:?}", config.delay);
+        info!("Setting delay to {:?}", config.delay);
         self.delay.store(Box::new(config.delay));
         Ok(())
     }
@@ -146,6 +148,7 @@ where
     P: Packet,
 {
     pub fn new() -> DelayDevice<P> {
+        debug!("New DelayDevice");
         let (rx, tx) = mpsc::unbounded_channel();
         let delay = Arc::new(AtomicRawCell::new(Box::default()));
         DelayDevice {

@@ -10,6 +10,7 @@ use axum::{
 };
 use axum_macros::debug_handler;
 use serde_json::{json, Value};
+use tracing::info;
 
 use super::ControlEndpoint;
 
@@ -56,7 +57,7 @@ async fn control_device(
     State(state): State<ControlState>,
     Json(config): Json<serde_json::Value>,
 ) -> (StatusCode, Json<Value>) {
-    println!("config device: {} {:?}", id, config);
+    info!("config device: {} {:?}", id, config);
     match state.control_interfaces.get(&id) {
         Some(control_interface) => control_interface.as_ref().config_device(config),
         None => (StatusCode::NOT_FOUND, Json(json!({"status": "fail"}))),

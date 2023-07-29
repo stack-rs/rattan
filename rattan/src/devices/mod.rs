@@ -15,6 +15,7 @@ pub trait Packet: Debug + 'static + Send {
     fn empty(maximum: usize) -> Self;
     fn from_raw_buffer(buf: &[u8]) -> Self;
     fn length(&self) -> usize;
+    fn as_slice(&self) -> &[u8];
     fn as_raw_buffer(&mut self) -> &mut [u8];
     fn ether_hdr(&self) -> Option<Ethernet2Header>;
     fn ip_hdr(&self) -> Option<Ipv4Header>;
@@ -38,6 +39,10 @@ impl Packet for StdPacket {
 
     fn length(&self) -> usize {
         self.buf.len()
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        self.buf.as_slice()
     }
 
     fn as_raw_buffer(&mut self) -> &mut [u8] {

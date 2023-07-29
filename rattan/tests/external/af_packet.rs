@@ -10,6 +10,7 @@ use rattan::metal::veth::{MacAddr, VethDevice};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{mem, ptr};
+use tracing::debug;
 
 fn create_dev_socket(veth: &VethDevice) -> anyhow::Result<i32> {
     let raw_socket = unsafe {
@@ -28,7 +29,7 @@ fn create_dev_socket(veth: &VethDevice) -> anyhow::Result<i32> {
     //     SockProtocol::EthAll
     // ).unwrap();
 
-    println!(
+    debug!(
         "create AF_PACKET socket {} on interface ({}:{})",
         raw_socket, veth.name, veth.index
     );

@@ -8,6 +8,7 @@ use nix::{
     errno::Errno,
     sys::socket::{AddressFamily, SockFlag, SockType},
 };
+use tracing::{debug, trace};
 
 use crate::devices::Packet;
 
@@ -148,13 +149,14 @@ where
         {
             Ok(None)
         } else {
-            // println!(
-            //     "receive a packet from AF_PACKET {} (protocol: {:<04X}, pkttype: {}, source index: {}, hardware_addr: {:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X})",
-            //     self.raw_fd,
-            //     addr_ll.sll_protocol,
-            //     addr_ll.sll_pkttype, addr_ll.sll_ifindex,
-            //     addr_ll.sll_addr[0], addr_ll.sll_addr[1], addr_ll.sll_addr[2], addr_ll.sll_addr[3], addr_ll.sll_addr[4], addr_ll.sll_addr[5]
-            // );
+            trace!(
+                header = ?buf[0..std::cmp::min(56, ret)],
+                "receive a packet from AF_PACKET {} (protocol: {:<04X}, pkttype: {}, source index: {}, hardware_addr: {:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X})",
+                self.raw_fd,
+                addr_ll.sll_protocol,
+                addr_ll.sll_pkttype, addr_ll.sll_ifindex,
+                addr_ll.sll_addr[0], addr_ll.sll_addr[1], addr_ll.sll_addr[2], addr_ll.sll_addr[3], addr_ll.sll_addr[4], addr_ll.sll_addr[5]
+            );
             Ok(Some(P::from_raw_buffer(&buf[0..ret])))
         }
     }
@@ -174,7 +176,7 @@ where
     type Sender = AfPacketSender;
     type Receiver = AfPacketReceiver;
     fn bind_device(device: Arc<VethDevice>) -> Result<Self, MetalError> {
-        println!("bind device to AF_PACKET driver");
+        debug!("bind device to AF_PACKET driver");
         let raw_fd = unsafe {
             Errno::result(libc::socket(
                 AddressFamily::Packet as libc::c_int,
@@ -191,7 +193,7 @@ where
             //     SockProtocol::EthAll
             // ).unwrap();
 
-            println!(
+            debug!(
                 "create AF_PACKET socket {} on interface ({}:{})",
                 raw_fd, device.name, device.index
             );

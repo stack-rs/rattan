@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use tokio_util::sync::CancellationToken;
+use tracing::{error, info, span, trace, Instrument, Level};
 
 use crate::{
     devices::{Device, Egress, Ingress, Packet},
@@ -10,6 +11,7 @@ use crate::{
 #[cfg(feature = "http")]
 use crate::control::{http::HttpControlEndpoint, ControlEndpoint};
 
+#[derive(Debug)]
 pub struct RattanMachineConfig {
     pub original_ns: Arc<NetNs>,
     pub port: u16,
@@ -41,6 +43,7 @@ where
     P: Packet + 'static,
 {
     pub fn new() -> Self {
+        info!("New RattanMachine");
         Self {
             token: CancellationToken::new(),
             sender: HashMap::new(),
@@ -69,6 +72,7 @@ where
     }
 
     pub fn link_device(&mut self, rx_id: usize, tx_id: usize) {
+        info!(rx_id, tx_id, "Link device:");
         self.router.insert(rx_id, tx_id);
     }
 
@@ -76,17 +80,20 @@ where
         self.token.clone()
     }
 
-    pub async fn core_loop(&mut self, _config: RattanMachineConfig) {
+    pub async fn core_loop(&mut self, config: RattanMachineConfig) {
         let mut handles = Vec::new();
         #[cfg(feature = "control")]
         let router_clone = self.config_endpoint.router();
         #[cfg(feature = "control")]
         let token_dup = self.token.clone();
+        #[cfg(feature = "control")]
+        let control_thread_span = span!(Level::DEBUG, "control_thread").or_current();
 
         #[cfg(feature = "control")]
         let control_thread = std::thread::spawn(move || {
-            _config.original_ns.enter().unwrap();
-            println!("control thread started");
+            let _entered = control_thread_span.entered();
+            config.original_ns.enter().unwrap();
+            info!("control thread started");
 
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -95,7 +102,7 @@ where
             rt.block_on(async move {
                 #[cfg(feature = "http")]
                 let server =
-                    axum::Server::bind(&format!("127.0.0.1:{}", _config.port).parse().unwrap())
+                    axum::Server::bind(&format!("127.0.0.1:{}", config.port).parse().unwrap())
                         .serve(router_clone.into_make_service())
                         .with_graceful_shutdown(async {
                             token_dup.cancelled().await;
@@ -104,7 +111,7 @@ where
                 match server.await {
                     Ok(_) => {}
                     Err(e) => {
-                        println!("server error: {}", e);
+                        error!("server error: {}", e);
                     }
                 }
             })
@@ -114,22 +121,30 @@ where
             let mut rx = self.receiver.remove(&rx_id).unwrap();
             let tx = self.sender.get(&tx_id).unwrap().clone();
             let token_dup = self.token.clone();
-            handles.push(tokio::spawn(async move {
-                loop {
-                    tokio::select! {
-                        packet = rx.dequeue() => {
-                            if let Some(p) = packet {
-                                // println!("forward a packet from {} to {}", rx_id, tx_id);
-                                tx.enqueue(p).unwrap();
+            handles.push(tokio::spawn(
+                async move {
+                    loop {
+                        tokio::select! {
+                            packet = rx.dequeue() => {
+                                if let Some(p) = packet {
+                                    trace!(
+                                        header = ?p.as_slice()[0..std::cmp::min(56, p.length())],
+                                        "forward from {} to {}",
+                                        rx_id,
+                                        tx_id,
+                                    );
+                                    tx.enqueue(p).unwrap();
+                                }
+                            }
+                            _ = token_dup.cancelled() => {
+                                return
                             }
                         }
-                        _ = token_dup.cancelled() => {
-                            return
-                        }
+                        tokio::task::yield_now().await;
                     }
-                    tokio::task::yield_now().await;
                 }
-            }));
+                .instrument(span!(Level::DEBUG, "router")),
+            ));
         }
 
         for handle in handles {

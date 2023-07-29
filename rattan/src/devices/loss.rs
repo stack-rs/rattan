@@ -10,6 +10,7 @@ use std::fmt::Debug;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tracing::{debug, info};
 
 use super::{ControlInterface, Egress, Ingress};
 
@@ -73,6 +74,7 @@ where
         let packet = self.egress.recv().await.unwrap();
         if let Some(pattern) = self.pattern.swap_null() {
             self.inner_pattern = pattern;
+            debug!(?self.inner_pattern, "Set inner pattern:");
         }
         // out-of-range loss rate is treated as 0
         if self.inner_pattern.len() <= self.prev_loss {
@@ -115,6 +117,7 @@ impl ControlInterface for LossDeviceControlInterface {
     type Config = LossDeviceConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
+        info!("Set loss pattern to: {:?}", config.pattern);
         self.pattern.store(Box::new(config.pattern));
         Ok(())
     }
@@ -158,6 +161,7 @@ where
     R: Rng,
 {
     pub fn new(rng: R) -> LossDevice<P, R> {
+        debug!("New LossDevice");
         let (rx, tx) = mpsc::unbounded_channel();
         let pattern = Arc::new(AtomicRawCell::new(Box::default()));
         LossDevice {
@@ -224,6 +228,7 @@ impl ControlInterface for IIDLossDeviceControlInterface {
     type Config = IIDLossDeviceConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
+        info!("Set loss rate to: {}", config.loss);
         self.loss.store(config.loss, Ordering::Relaxed);
         Ok(())
     }
