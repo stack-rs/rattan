@@ -27,10 +27,10 @@ impl Timer {
             Expiration::OneShot(TimeSpec::from_duration(duration)),
             TimerSetTimeFlags::empty(),
         )?;
-        let mut guard = self.timer.readable().await?;
-        let mut buf = [0; 16];
 
+        let mut buf = [0; 16];
         loop {
+            let mut guard = self.timer.readable().await?;
             match guard
                 .try_io(|timer| Ok(nix::unistd::read(timer.get_ref().as_raw_fd(), &mut buf)?))
             {
