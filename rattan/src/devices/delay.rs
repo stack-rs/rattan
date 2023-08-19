@@ -1,5 +1,6 @@
 use crate::devices::{Device, Packet};
 use crate::error::Error;
+use crate::metal::timer::Timer;
 use crate::utils::sync::AtomicRawCell;
 use async_trait::async_trait;
 use netem_trace::Delay;
@@ -8,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Instant};
+use tokio::time::Instant;
 use tracing::{debug, info};
 
 use super::{ControlInterface, Egress, Ingress};
@@ -63,6 +64,7 @@ where
     egress: mpsc::UnboundedReceiver<DelayPacket<P>>,
     delay: Arc<AtomicRawCell<Delay>>,
     inner_delay: Box<Delay>,
+    timer: Timer,
 }
 
 #[async_trait]
@@ -78,7 +80,10 @@ where
         }
         let queuing_delay = Instant::now() - packet.ingress_time;
         if queuing_delay < *self.inner_delay {
-            sleep(*self.inner_delay - queuing_delay).await;
+            self.timer
+                .sleep(*self.inner_delay - queuing_delay)
+                .await
+                .unwrap();
         }
         Some(packet.packet)
     }
@@ -157,6 +162,7 @@ where
                 egress: tx,
                 delay: Arc::clone(&delay),
                 inner_delay: Box::default(),
+                timer: Timer::new().unwrap(),
             },
             control_interface: Arc::new(DelayDeviceControlInterface { delay }),
         }
