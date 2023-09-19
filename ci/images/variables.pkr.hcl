@@ -6,16 +6,16 @@ variable "github_access_key" {
 variable "base_images" {
   type = map(string)
   default = {
-    "focal" = "https://cloud-images.ubuntu.com/releases/focal/release-20230209/ubuntu-20.04-server-cloudimg-amd64-disk-kvm.img"
-    "jammy" = "https://cloud-images.ubuntu.com/releases/22.04/release-20230302/ubuntu-22.04-server-cloudimg-amd64-disk-kvm.img"
+    "focal" = "https://cloud-images.ubuntu.com/releases/focal/release-20230908/ubuntu-20.04-server-cloudimg-amd64-disk-kvm.img"
+    "jammy" = "https://cloud-images.ubuntu.com/releases/22.04/release-20230914/ubuntu-22.04-server-cloudimg-amd64-disk-kvm.img"
   }
 }
 
 variable "base_images_checksum" {
   type = map(string)
   default = {
-    "focal" = "3f2dcab9c361c9832f3a61696b7748c36efc0f4b6d548e56a65921e4f1d3d6c7"
-    "jammy" = "3b11d66d8211a8c48ed9a727b9a74180ac11cd8118d4f7f25fc7d1e4a148eddc"
+    "focal" = "9dfe9ba2f0c16fc7b6e0aa36dda6f201fdd2e64985980aad892115d902545c73"
+    "jammy" = "c5eed826009c9f671bc5f7c9d5d63861aa2afe91aeff1c0d3a4cb5b28b2e35d6"
   }
 }
 

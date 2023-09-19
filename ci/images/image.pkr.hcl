@@ -129,7 +129,7 @@ build {
   provisioner "shell" {
     inline = [
       "set -xo pipefail",
-      "[[ $(uname -r) == ${var.kernel_version}* ]] || sudo mainline --list | grep -E \"^[0-9]+\\.[0-9]+\\.[0-9]+\" | grep -E \"^${var.kernel_version}\" | head -n 1 | tr -d ' ' | xargs -I {} sudo mainline --install {} --yes"
+      "[[ $(uname -r) == ${var.kernel_version}* ]] || sudo mainline --list | grep -E \"^[0-9]+\\.[0-9]+\\.[0-9]+\" | grep -E \"^${var.kernel_version}\" | head -n 1 | tr -d ' ' | xargs -I {} sudo mainline install {}"
     ]
     inline_shebang = "/bin/bash -e"
     skip_clean = true
