@@ -275,11 +275,7 @@ impl<E: Env> NetNs<E> {
     /// Requires elevated privileges.
     pub fn enter(&self) -> Result<std::sync::Arc<NetNs<E>>, NsError> {
         let current_ns = self.env.clone().current()?;
-        trace!(
-            "Netns {} --> {}",
-            current_ns.path.to_string_lossy(),
-            self.path.to_string_lossy(),
-        );
+        trace!("entering netns: {}", self.path.to_string_lossy());
         setns(self.as_raw_fd(), CloneFlags::CLONE_NEWNET).map_err(NsError::SetNsError)?;
         Ok(current_ns)
     }

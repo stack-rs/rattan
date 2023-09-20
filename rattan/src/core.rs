@@ -163,7 +163,7 @@ where
                             packet = rx.dequeue() => {
                                 if let Some(p) = packet {
                                     trace!(
-                                        header = ?p.as_slice()[0..std::cmp::min(56, p.length())],
+                                        header = ?format!("{:X?}", &p.as_slice()[0..std::cmp::min(56, p.length())]),
                                         "forward from {} to {}",
                                         rx_id,
                                         tx_id,

@@ -77,6 +77,9 @@ fn test_loss_pattern() {
         );
     });
 
+    // Wait for AfPacketDriver to be ready
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
     let (left_control_interface, _) = control_rx.blocking_recv().unwrap();
 
     // Before set the LossDevice, the average loss rate should be 0%
@@ -196,6 +199,9 @@ fn test_iid_loss() {
             .in_current_span(),
         );
     });
+
+    // Wait for AfPacketDriver to be ready
+    std::thread::sleep(std::time::Duration::from_millis(100));
 
     let (left_control_interface, _) = control_rx.blocking_recv().unwrap();
 

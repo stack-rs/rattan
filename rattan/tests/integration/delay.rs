@@ -75,6 +75,9 @@ fn test_delay() {
         );
     });
 
+    // Wait for AfPacketDriver to be ready
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
     let (left_control_interface, right_control_interface) = control_rx.blocking_recv().unwrap();
 
     // Before set the DelayDevice, the average latency should be less than 0.1ms

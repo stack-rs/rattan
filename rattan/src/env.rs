@@ -1,10 +1,13 @@
-use crate::metal::veth::VethPairBuilder;
-use crate::metal::{netns::NetNs, veth::VethPair};
+use crate::metal::{
+    netns::NetNs,
+    route::{add_arp_entry_with_netns, add_gateway_with_netns, add_route_with_netns},
+    veth::{VethPair, VethPairBuilder},
+};
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
-use tracing::{info, instrument, span, trace, Level};
+use tracing::{debug, info, instrument, span, trace, Level};
 
 //   ns-client                          ns-rattan                         ns-server
 // +-----------+    veth pair    +--------------------+    veth pair    +-----------+
@@ -101,47 +104,43 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
 
     // Set the default route of left and right namespaces
     info!("Set default route");
-    let mut client_exec_handle = std::process::Command::new("ip")
-        .args([
-            "netns",
-            "exec",
-            &client_netns_name,
-            "ip",
-            "route",
-            "add",
-            "default",
-            "via",
-            "192.168.11.1",
-        ])
-        .spawn()
-        .unwrap();
+
+    debug!("Set default route for client namespace");
+    add_gateway_with_netns(veth_pair_client.left.ip_addr.0, client_netns.clone());
+
+    debug!("Set default route for server namespace");
     match config.mode {
         StdNetEnvMode::Compatible => {
-            let mut server_exec_handle = std::process::Command::new("ip")
-                .args(["route", "add", "192.168.11.0/24", "via", "192.168.12.1"])
-                .spawn()
-                .unwrap();
-            server_exec_handle.wait()?;
+            add_route_with_netns(
+                veth_pair_client.left.ip_addr.0,
+                veth_pair_client.left.ip_addr.1,
+                veth_pair_server.right.ip_addr.0,
+                server_netns.clone(),
+            );
         }
         _ => {
-            let mut server_exec_handle = std::process::Command::new("ip")
-                .args([
-                    "netns",
-                    "exec",
-                    &server_netns_name,
-                    "ip",
-                    "route",
-                    "add",
-                    "default",
-                    "via",
-                    "192.168.12.1",
-                ])
-                .spawn()
-                .unwrap();
-            server_exec_handle.wait()?;
+            add_gateway_with_netns(veth_pair_server.right.ip_addr.0, server_netns.clone());
         }
     }
-    client_exec_handle.wait()?;
+
+    // Set the default neighbours of left and right namespaces
+    info!("Set default neighbours");
+
+    debug!("Set default neighbours for client namespace");
+    add_arp_entry_with_netns(
+        veth_pair_server.right.ip_addr.0,
+        veth_pair_server.right.mac_addr,
+        veth_pair_client.left.index,
+        client_netns.clone(),
+    );
+
+    debug!("Set default neighbours for server namespace");
+    add_arp_entry_with_netns(
+        veth_pair_client.left.ip_addr.0,
+        veth_pair_client.left.mac_addr,
+        veth_pair_server.right.index,
+        server_netns.clone(),
+    );
 
     if std::env::var("TEST_STD_NS").is_ok() {
         let _span = span!(Level::INFO, "TEST_STD_NS").entered();
