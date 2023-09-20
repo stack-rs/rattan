@@ -8,7 +8,7 @@ use nix::{
     errno::Errno,
     sys::socket::{AddressFamily, SockFlag, SockType},
 };
-use tracing::{debug, trace};
+use tracing::{debug, error, trace, warn};
 
 use crate::devices::Packet;
 
@@ -148,7 +148,7 @@ where
             || addr_ll.sll_pkttype == PacketType::PacketHost as u8
         {
             trace!(
-                header = ?buf[0..std::cmp::min(56, ret)],
+                header = ?format!("{:X?}", &buf[0..std::cmp::min(56, ret)]),
                 "Ignore a packet from AF_PACKET {} (protocol: {:<04X}, pkttype: {}, source index: {}, hardware_addr: {:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X})",
                 self.raw_fd,
                 addr_ll.sll_protocol,
@@ -158,7 +158,7 @@ where
             Ok(None)
         } else {
             trace!(
-                header = ?buf[0..std::cmp::min(56, ret)],
+                header = ?format!("{:X?}", &buf[0..std::cmp::min(56, ret)]),
                 "Receive a packet from AF_PACKET {} (protocol: {:<04X}, pkttype: {}, source index: {}, hardware_addr: {:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X}:{:<02X})",
                 self.raw_fd,
                 addr_ll.sll_protocol,
@@ -184,45 +184,67 @@ where
     type Sender = AfPacketSender;
     type Receiver = AfPacketReceiver;
     fn bind_device(device: Arc<VethDevice>) -> Result<Self, MetalError> {
-        debug!("bind device to AF_PACKET driver");
-        let raw_fd = unsafe {
-            Errno::result(libc::socket(
-                AddressFamily::Packet as libc::c_int,
-                SockType::Raw as libc::c_int | SockFlag::SOCK_NONBLOCK.bits() as libc::c_int,
-                (libc::ETH_P_ALL as u16).to_be() as i32,
-            ))?
-        };
-        {
-            // It should work after this fix (https://github.com/nix-rust/nix/pull/1925) is available
-            // let raw_socket = socket(
-            //     AddressFamily::Packet,
-            //     SockType::Raw,
-            //     SockFlag::empty(),
-            //     SockProtocol::EthAll
-            // ).unwrap();
+        debug!(?device, "bind device to AF_PACKET driver");
+        let mut times = 3;
+        let mut raw_fd;
+        loop {
+            match {
+                raw_fd = unsafe {
+                    Errno::result(libc::socket(
+                        AddressFamily::Packet as libc::c_int,
+                        SockType::Raw as libc::c_int
+                            | SockFlag::SOCK_NONBLOCK.bits() as libc::c_int,
+                        (libc::ETH_P_ALL as u16).to_be() as i32,
+                    ))?
+                };
 
-            debug!(
-                "create AF_PACKET socket {} on interface ({}:{})",
-                raw_fd, device.name, device.index
-            );
+                // It should work after this fix (https://github.com/nix-rust/nix/pull/1925) is available
+                // let raw_socket = socket(
+                //     AddressFamily::Packet,
+                //     SockType::Raw,
+                //     SockFlag::empty(),
+                //     SockProtocol::EthAll
+                // ).unwrap();
 
-            let bind_interface = libc::sockaddr_ll {
-                sll_family: libc::AF_PACKET as u16,
-                sll_protocol: (libc::ETH_P_ALL as u16).to_be(),
-                sll_ifindex: device.index as i32,
-                sll_hatype: 0,
-                sll_pkttype: 0,
-                sll_halen: 0,
-                sll_addr: [0; 8],
-            };
+                debug!(
+                    "create AF_PACKET socket {} on interface ({}:{})",
+                    raw_fd, device.name, device.index
+                );
 
-            unsafe {
-                Errno::result(libc::bind(
-                    raw_fd,
-                    &bind_interface as *const sockaddr_ll as *const sockaddr,
-                    std::mem::size_of::<sockaddr_ll>() as u32,
-                ))?;
-            };
+                let bind_interface = libc::sockaddr_ll {
+                    sll_family: libc::AF_PACKET as u16,
+                    sll_protocol: (libc::ETH_P_ALL as u16).to_be(),
+                    sll_ifindex: device.index as i32,
+                    sll_hatype: 0,
+                    sll_pkttype: 0,
+                    sll_halen: 0,
+                    sll_addr: [0; 8],
+                };
+
+                unsafe {
+                    Errno::result(libc::bind(
+                        raw_fd,
+                        &bind_interface as *const sockaddr_ll as *const sockaddr,
+                        std::mem::size_of::<sockaddr_ll>() as u32,
+                    ))
+                }
+            } {
+                Ok(_) => break,
+                Err(e) => {
+                    times -= 1;
+                    if times <= 0 {
+                        error!("bind device failed: {}", e);
+                        panic!("bind device failed: {}", e)
+                    } else {
+                        warn!("bind device failed (Retrys Remain: {}): {}", times, e);
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        continue;
+                    }
+                }
+            }
+        }
+        if times < 3 {
+            warn!("bind device success after {} times", 3 - times);
         }
 
         Ok(Self {

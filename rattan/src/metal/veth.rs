@@ -2,13 +2,11 @@ use crate::error::{Error, MacParseError, VethError};
 use crate::metal::netns::{NetNs, NetNsGuard};
 use nix::net::if_::if_nametoindex;
 use once_cell::sync::OnceCell;
-use rtnetlink::{new_connection, Handle};
 use std::net::IpAddr;
 use std::os::fd::AsRawFd;
 use std::process::Command;
 use std::sync::{Arc, Mutex, Weak};
-use tokio::runtime::Runtime;
-use tracing::{error, info, instrument, trace, Level};
+use tracing::{debug, error, info, instrument, span, Level};
 
 use super::ioctl::disable_checksum_offload;
 
@@ -236,18 +234,6 @@ impl IpVethDevice {
     }
 }
 
-/// Generate a runtime and a rtnetlink handle for one time use.
-fn rtnetlink_once() -> (Runtime, Handle) {
-    let rt: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let _guard = rt.enter();
-    let (conn, rtnl_handle, _) = new_connection().unwrap();
-    rt.spawn(conn);
-    (rt, rtnl_handle)
-}
-
 #[derive(Debug)]
 pub struct VethPair {
     pub left: Arc<VethDevice>,
@@ -310,8 +296,7 @@ impl VethPairBuilder {
 
     async fn build_impl(
         self,
-        rt: &Runtime,
-        rtnl_handle: Handle,
+        tokio_handle: &tokio::runtime::Handle,
     ) -> Result<Arc<VethPair>, VethError> {
         if self.name.is_none() {
             return Err(VethError::CreateVethPairError(
@@ -329,6 +314,8 @@ impl VethPairBuilder {
             ));
         }
 
+        let (conn, rtnl_handle, _) = rtnetlink::new_connection().unwrap();
+        tokio_handle.spawn(conn);
         rtnl_handle
             .link()
             .add()
@@ -370,8 +357,8 @@ impl VethPairBuilder {
 
             // Enter namespace
             let _ns_guard = NetNsGuard::new(device.namespace.clone())?;
-            let (conn, rtnl_handle, _) = new_connection().unwrap();
-            rt.spawn(conn);
+            let (conn, rtnl_handle, _) = rtnetlink::new_connection().unwrap();
+            tokio_handle.spawn(conn);
 
             // Set mac address
             rtnl_handle
@@ -416,43 +403,52 @@ impl VethPairBuilder {
 
     #[instrument(name = "VethPairBuilder", skip_all, ret(level = Level::TRACE), err)]
     pub fn build(self) -> Result<Arc<VethPair>, VethError> {
-        trace!(?self, "Building veth pair...");
-        let (rt, rtnl_handle) = rtnetlink_once();
-        rt.block_on(self.build_impl(&rt, rtnl_handle))
+        debug!(?self, "Building veth pair...");
+        let build_thread_span = span!(Level::DEBUG, "build_thread").or_current();
+        let build_thread = std::thread::spawn(|| {
+            let _entered = build_thread_span.entered();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(self.build_impl(rt.handle()))
+        });
+        build_thread.join().unwrap()
     }
 }
 
 impl Drop for VethPair {
     fn drop(&mut self) {
-        match tokio::runtime::Handle::try_current() {
-            Ok(_) => {
-                error!("Failed to delete veth pair. (you may need to delete it manually with 'sudo ip link del {}')", &self.left.name);
-                if std::thread::panicking() {
-                    return;
-                }
-                panic!("Deleting veth pair in tokio runtime is not supported.");
+        let left = self.left.clone();
+        let right = self.right.clone();
+        let build_thread_span = span!(Level::DEBUG, "build_thread").or_current();
+        let build_thread = std::thread::spawn(move || {
+            let _entered = build_thread_span.entered();
+            let ns_guard = NetNsGuard::new(left.namespace.clone());
+            if let Err(e) = ns_guard {
+                error!("Failed to enter netns: {}", e);
+                return;
             }
-            Err(_) => {
-                let ns_guard = NetNsGuard::new(self.left.namespace.clone());
-                if let Err(e) = ns_guard {
-                    error!("Failed to enter netns: {}", e);
-                    return;
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let _guard = rt.enter();
+            let (conn, rtnl_handle, _) = rtnetlink::new_connection().unwrap();
+            rt.spawn(conn);
+            match rt.block_on(rtnl_handle.link().del(left.index).execute()) {
+                Ok(_) => {
+                    info!(
+                        "Veth pair deleted: {:>15} <--> {:<15}",
+                        &left.name, &right.name
+                    );
                 }
-
-                let (rt, rtnl_handle) = rtnetlink_once();
-                match rt.block_on(rtnl_handle.link().del(self.left.index).execute()) {
-                    Ok(_) => {
-                        info!(
-                            "Veth pair deleted: {:>15} <--> {:<15}",
-                            &self.left.name, &self.right.name
-                        );
-                    }
-                    Err(e) => {
-                        error!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &self.left.name);
-                    }
-                };
-            }
-        }
+                Err(e) => {
+                    error!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &left.name);
+                }
+            };
+        });
+        build_thread.join().unwrap();
     }
 }
 
