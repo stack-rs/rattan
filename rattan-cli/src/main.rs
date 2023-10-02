@@ -9,11 +9,12 @@ use rattan::devices::loss::{IIDLossDevice, IIDLossDeviceConfig};
 use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::{get_std_env, StdNetEnvConfig};
 use rattan::metal::io::AfPacketDriver;
+use rattan::metal::netns::NetNsGuard;
 use rattan::netem_trace::{Bandwidth, Delay};
 use std::process::Stdio;
 use std::thread::sleep;
 use std::time::Duration;
-use tracing::{info, span, Instrument, Level};
+use tracing::{error, info, span, Instrument, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, Parser)]
@@ -164,22 +165,41 @@ fn main() {
         );
     });
 
-    {
-        left_ns.enter().unwrap();
-        sleep(Duration::from_secs(1));
-        let mut client_handle = std::process::Command::new("/bin/bash");
-        if !opts.commands.is_empty() {
-            client_handle.arg("-c").args(opts.commands);
-        }
-        let mut client_handle = client_handle
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
+    // Test connectivity before starting
+    match {
+        let _span = span!(Level::INFO, "ping_test").entered();
+        info!("ping testing...");
+        let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
+        let handle = std::process::Command::new("ping")
+            .args(["192.168.12.1", "-c", "5", "-i", "0.2"])
+            .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
-        let output = client_handle.wait().unwrap();
-        info!("Exit {}", output.code().unwrap());
-    }
+        let output = handle.wait_with_output().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        stdout.contains("time=")
+    } {
+        true => {
+            info!("ping test passed");
+            left_ns.enter().unwrap();
+            sleep(Duration::from_secs(1));
+            let mut client_handle = std::process::Command::new("/bin/bash");
+            if !opts.commands.is_empty() {
+                client_handle.arg("-c").args(opts.commands);
+            }
+            let mut client_handle = client_handle
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            let output = client_handle.wait().unwrap();
+            info!("Exit {}", output.code().unwrap());
+        }
+        false => {
+            error!("ping test failed");
+        }
+    };
 
     cancel_token.cancel();
     rattan_thread.join().unwrap();
