@@ -11,7 +11,7 @@ RESULT_FILE=verify.html
 PING_COL=("mean" "pstdev" "min" "q1" "median" "q3" "max")
 PING_LOSS_COL=("Loss" "Accept")
 IPERF_COL=("mean" "pstdev" "min" "q1" "median" "q3" "max")
-IPERF_RETR_COL=("sum" "pstdev" "min" "q1" "median" "q3" "max")
+IPERF_RETR_COL=("sum")
 
 # Enter working dir
 original_dir=$(pwd)
@@ -125,7 +125,7 @@ calc_iperf_stats() {
 		esac
 	done
 
-	values=($(cat "rattan_$suffix.log" | grep "Mbits/sec" | awk '{print $9}' | head -n $IPERF_ITERS | datamash -s sum 1 pstdev 1 min 1 q1 1 median 1 q3 1 max 1))
+	values=($(cat "rattan_$suffix.log" | grep "sender" | awk '{print $9}'))
 	for ((i = 0; i < ${#values[@]}; i++)); do
 		echo "<td>${values[$i]}</td>" >>$RESULT_FILE
 	done
@@ -239,7 +239,7 @@ for loss in 0 0.01; do
 					echo "<td>bbr</td>" >>$RESULT_FILE
 					iperf_verify $delay $loss $bw_mul bbr
 				else
-					echo "Error: bbr not available"
+					echo "Warn: bbr not available"
 					echo "<td>cubic</td>" >>$RESULT_FILE
 					iperf_verify $delay $loss $bw_mul cubic
 				fi

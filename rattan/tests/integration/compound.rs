@@ -148,6 +148,7 @@ fn test_compound() {
                 "-t",
                 "10",
                 "-J",
+                "-R",
                 "-C",
                 "reno",
             ])
@@ -217,6 +218,7 @@ fn test_compound() {
                 "-t",
                 "10",
                 "-J",
+                "-R",
             ])
             .stdout(std::process::Stdio::piped())
             .spawn()
