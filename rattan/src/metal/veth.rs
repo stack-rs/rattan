@@ -240,14 +240,14 @@ pub struct VethPair {
     pub right: Arc<VethDevice>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VethDevice {
     pub name: String,
     pub index: u32,
     pub mac_addr: MacAddr,
     pub ip_addr: (IpAddr, u8),
     pub peer: OnceCell<Weak<VethDevice>>,
-    namespace: Arc<NetNs>,
+    pub namespace: Arc<NetNs>,
 }
 
 #[derive(Debug)]

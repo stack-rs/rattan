@@ -1,0 +1,78 @@
+version: "2.4"
+
+services:
+  rattan:
+    build: .
+    hostname: rattan
+    stdin_open: true
+    tty: true
+    privileged: true
+    cap_add:
+      - SYS_ADMIN # Needed for ip netns
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/netns:/var/run/netns
+      - ./tmp:/tmp
+    networks:
+      leftnet:
+        ipv4_address: 192.168.11.2
+        ipv6_address: fd11::2
+      rightnet:
+        ipv4_address: 192.168.12.2
+        ipv6_address: fd12::2
+
+  client:
+    image: jonlabelle/network-tools
+    hostname: client
+    stdin_open: true
+    tty: true
+    depends_on:
+      - rattan
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - RATTAN_HOST=192.168.11.2
+      - RATTAN_HOST6=fd11::2
+    networks:
+      leftnet:
+        ipv4_address: 192.168.11.3
+        ipv6_address: fd11::3
+
+  server:
+    image: jonlabelle/network-tools
+    hostname: server
+    stdin_open: true
+    tty: true
+    depends_on:
+      - rattan
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - RATTAN_HOST=192.168.12.2
+      - RATTAN_HOST6=fd12::2
+    networks:
+      rightnet:
+        ipv4_address: 192.168.12.3
+        ipv6_address: fd12::3
+
+networks:
+  leftnet:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: 'false'
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 192.168.11.0/24
+        - subnet: fd11::/64
+  rightnet:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: 'false'
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 192.168.12.0/24
+        - subnet: fd12::/64
