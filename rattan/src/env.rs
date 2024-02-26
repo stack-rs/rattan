@@ -1,12 +1,18 @@
 use crate::metal::{
     netns::NetNs,
     route::{add_arp_entry_with_netns, add_gateway_with_netns, add_route_with_netns},
-    veth::{VethPair, VethPairBuilder},
+    veth::{MacAddr, VethDevice, VethPair, VethPairBuilder},
 };
+use futures::TryStreamExt;
+use netlink_packet_route::{address::AddressAttribute, link::LinkAttribute};
+use once_cell::sync::OnceCell;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
-use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    str::FromStr,
+};
 use tracing::{debug, info, instrument, span, trace, Level};
 
 //   ns-client                          ns-rattan                         ns-server
@@ -223,5 +229,104 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
         right_ns: server_netns,
         left_pair: veth_pair_client,
         right_pair: veth_pair_server,
+    })
+}
+
+#[derive(Debug)]
+pub struct ContainerEnv {
+    pub veth_list: Vec<VethDevice>,
+    pub fake_peer: Arc<VethDevice>,
+}
+
+#[instrument(skip_all, level = "debug")]
+pub fn get_container_env() -> anyhow::Result<ContainerEnv> {
+    debug!("Getting all veth devices");
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let _guard = rt.enter();
+    let (conn, rtnl_handle, _) = rtnetlink::new_connection().unwrap();
+    rt.spawn(conn);
+
+    // Get all link device
+    let mut links = rtnl_handle.link().get().execute();
+    let mut veth_list = vec![];
+    rt.block_on(async {
+        while let Some(msg) = links.try_next().await.unwrap() {
+            let mut name: Option<String> = None;
+            let index = msg.header.index;
+            let mut mac_addr: Option<MacAddr> = None;
+            let mut ip_addr: Option<(IpAddr, u8)> = None;
+            let namespace: Arc<NetNs> = NetNs::current().unwrap();
+
+            // Get link attributes
+            for link_attr in msg.attributes {
+                match link_attr {
+                    LinkAttribute::IfName(n) => {
+                        name = Some(n);
+                    }
+                    LinkAttribute::Address(m) => {
+                        mac_addr = Some(MacAddr::new(m.try_into().unwrap()));
+                    }
+                    _ => {}
+                }
+            }
+
+            // Skip lo devices
+            if let (Some(name), Some(mac_addr)) = (name, mac_addr) {
+                if name.starts_with("lo") {
+                    continue;
+                }
+                // Get ip address attributes
+                if let Ok(Some(address_msg)) = rtnl_handle
+                    .address()
+                    .get()
+                    .set_link_index_filter(index)
+                    .execute()
+                    .try_next()
+                    .await
+                {
+                    for address_attr in address_msg.attributes {
+                        match address_attr {
+                            AddressAttribute::Address(address) => {
+                                ip_addr = Some((address, address_msg.header.prefix_len));
+                            }
+                            _ => {}
+                        }
+                    }
+                    if ip_addr.is_none() {
+                        continue;
+                    }
+
+                    let veth = VethDevice {
+                        name,
+                        index,
+                        mac_addr,
+                        ip_addr: ip_addr.unwrap(),
+                        peer: OnceCell::new(),
+                        namespace,
+                    };
+
+                    debug!(?veth, "Get veth device");
+                    veth_list.push(veth);
+                }
+            }
+        }
+    });
+
+    // FIXME: add arp for each veth
+    veth_list.sort_by(|a, b| a.index.cmp(&b.index));
+
+    // FIXME: fake a peer veth device to get mac address
+    let mut fake_peer = veth_list[0].clone();
+    fake_peer.mac_addr = MacAddr::from_str("ff:ff:ff:ff:ff:ff").unwrap();
+    let fake_peer = Arc::new(fake_peer);
+    for veth in &veth_list {
+        veth.peer.set(Arc::downgrade(&fake_peer)).unwrap();
+    }
+    Ok(ContainerEnv {
+        veth_list,
+        fake_peer,
     })
 }

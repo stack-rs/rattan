@@ -17,11 +17,16 @@ use std::time::Duration;
 use tracing::{error, info, span, Instrument, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod docker;
+
 #[derive(Debug, Parser)]
-struct CommandArgs {
+pub struct CommandArgs {
     /// Verbose debug output
     #[arg(short, long)]
     verbose: bool,
+    /// Run in docker mode
+    #[arg(long)]
+    docker: bool,
     #[arg(long, short)]
     loss: Option<f64>,
     #[arg(long, short, value_parser = humantime::parse_duration)]
@@ -39,6 +44,10 @@ fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
     let opts = CommandArgs::parse();
+    if opts.docker {
+        docker::docker_main(opts).unwrap();
+        return;
+    }
     let loss = opts.loss;
     let delay = opts.delay;
     let bandwidth = opts.bandwidth.map(Bandwidth::from_bps);

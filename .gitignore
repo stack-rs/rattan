@@ -17,3 +17,6 @@ target/
 # Ignore packet dump files
 *.pcap
 *.pcapng
+
+# Ignore container volume mount points
+tmp/

@@ -18,8 +18,8 @@ enum PacketType {
     PacketHost = 0,
     _PacketBroadcast = 1,
     _PacketMulticast = 2,
-    _PacketOtherhost = 3,
-    PacketOutgoing = 4,
+    PacketOtherhost = 3,
+    _PacketOutgoing = 4,
 }
 
 pub trait InterfaceSender<P>
@@ -143,9 +143,9 @@ where
             (ret, addr_ll)
         };
 
-        // ignore all outgoing and loopback packets
-        if addr_ll.sll_pkttype == PacketType::PacketOutgoing as u8
-            || addr_ll.sll_pkttype == PacketType::PacketHost as u8
+        // accept input unicast packets only, ignore all outgoing and loopback packets
+        if addr_ll.sll_pkttype != PacketType::PacketHost as u8
+            && addr_ll.sll_pkttype != PacketType::PacketOtherhost as u8
         {
             trace!(
                 header = ?format!("{:X?}", &buf[0..std::cmp::min(56, ret)]),
