@@ -1,0 +1,32 @@
+<domain type='kvm'>
+    <name>mantic-6.6</name>
+    <uuid>548a2c5f-0ac5-48dc-90c2-962a0c125c94</uuid>
+    <os>
+        <type>hvm</type>
+        <boot dev='hd'/>
+        <bios useserial='yes' rebootTimeout='0'/>
+        <bootmenu enable='yes' timeout='3000'/>
+    </os>
+    <vcpu>4</vcpu>
+    <memory unit='GiB'>16</memory>
+    <currentMemory unit='GiB'>16</currentMemory>
+    <cpu mode="host-passthrough" migratable="off">
+    </cpu>
+    <on_reboot>restart</on_reboot>
+    <on_crash>restart</on_crash>
+    <devices>
+        <disk type='volume' device='disk'>
+            <driver name='qemu' type='qcow2'/>
+            <source pool='default' volume='mantic-6.6'/>
+            <target dev='hda'/>
+        </disk>
+        <serial type='pty'>
+            <target port='0'/>
+        </serial>
+        <interface type='network'>
+            <source network='default'/>
+            <mac address='52:54:06:06:31:80'/>
+            <model type='virtio'/>
+        </interface>
+    </devices>
+</domain>

@@ -89,7 +89,9 @@ source "libvirt" "image" {
         }
 
         packages = [
-          "mainline"
+          "policykit-1",
+          "mainline",
+          "ca-certificates"
         ]
 
         package_update             = true
@@ -133,6 +135,13 @@ build {
     ]
     inline_shebang = "/bin/bash -e"
     skip_clean = true
+  }
+  provisioner "shell" {
+    inline = [
+      "([[ -f /usr/lib/python3.12/EXTERNALLY-MANAGED ]] && sudo rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED) || true",
+      "([[ -f /usr/lib/python3.11/EXTERNALLY-MANAGED ]] && sudo rm -f /usr/lib/python3.11/EXTERNALLY-MANAGED) || true"
+    ]
+    inline_shebang = "/bin/bash"
   }
   provisioner "breakpoint" {
     note = "You can examine the created domain with virt-manager, virsh or via SSH"

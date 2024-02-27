@@ -1,5 +1,5 @@
 ---
-- name: Install and Run Githuh Self-hosted Runner
+- name: Install and Run Github Self-hosted Runner
   hosts: all
   tasks:
   - name: install pip
@@ -10,7 +10,6 @@
     vars:
       pip_install_packages:
         - name: docker
-        - name: docker-compose
 
   - name: install docker and docker-compose
     ansible.builtin.include_role:
@@ -40,9 +39,9 @@
 
   - name: start the github-runner container
     become: true
-    community.docker.docker_compose:
+    community.docker.docker_compose_v2:
       project_src: /etc/runner
-      restarted: yes
+      state: present 
 
   - name: Tune TCP write buffer
     become: true
