@@ -20,3 +20,6 @@ target/
 
 # Ignore container volume mount points
 tmp/
+
+# Ignore VSCode configurations
+.vscode
