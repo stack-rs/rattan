@@ -9,7 +9,7 @@ use rand::{rngs::StdRng, SeedableRng};
 use rattan::{
     core::{RattanMachine, RattanMachineConfig},
     devices::{
-        bandwidth::{BwDevice, BwDeviceConfig},
+        bandwidth::{queue::InfiniteQueue, BwDevice, BwDeviceConfig, MAX_BANDWIDTH},
         external::VirtualEthernet,
     },
     env::get_container_env,
@@ -169,15 +169,15 @@ pub fn docker_main(opts: CommandArgs) -> anyhow::Result<()> {
                 let mut left_fd = vec![left_device_rx];
                 let mut right_fd = vec![right_device_rx];
                 if let Some(bandwidth) = bandwidth {
-                    let left_bw_device = BwDevice::<StdPacket>::new();
-                    let right_bw_device = BwDevice::<StdPacket>::new();
+                    let left_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
+                    let right_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
                     let left_bw_ctl = left_bw_device.control_interface();
                     let right_bw_ctl = right_bw_device.control_interface();
                     left_bw_ctl
-                        .set_config(BwDeviceConfig::new(bandwidth))
+                        .set_config(BwDeviceConfig::new(bandwidth, None))
                         .unwrap();
                     right_bw_ctl
-                        .set_config(BwDeviceConfig::new(bandwidth))
+                        .set_config(BwDeviceConfig::new(bandwidth, None))
                         .unwrap();
                     let (left_bw_rx, left_bw_tx) = machine.add_device(left_bw_device);
                     info!(left_bw_rx, left_bw_tx);

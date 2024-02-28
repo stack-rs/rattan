@@ -25,6 +25,13 @@ impl<T> AtomicRawCell<T> {
         }
     }
 
+    pub fn new_null() -> AtomicRawCell<T> {
+        AtomicRawCell {
+            ptr: AtomicPtr::new(std::ptr::null_mut()),
+            phantom: PhantomData,
+        }
+    }
+
     fn swap_raw(&self, ptr: *mut T, order: Ordering) -> *mut T {
         self.ptr.swap(ptr, order)
     }

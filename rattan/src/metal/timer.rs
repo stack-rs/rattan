@@ -8,6 +8,7 @@ use tokio::io::unix::AsyncFd;
 
 use crate::metal::error::MetalError;
 
+// High-resolution timer
 pub struct Timer {
     timer: AsyncFd<TimerFd>,
 }
@@ -23,6 +24,10 @@ impl Timer {
     }
 
     pub async fn sleep(&mut self, duration: std::time::Duration) -> Result<(), MetalError> {
+        // Set TimerFd to 0 will disable it. We need to handle this case.
+        if duration.as_nanos() == 0 {
+            return Ok(());
+        }
         self.timer.get_mut().set(
             Expiration::OneShot(TimeSpec::from_duration(duration)),
             TimerSetTimeFlags::empty(),

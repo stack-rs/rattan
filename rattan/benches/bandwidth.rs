@@ -3,7 +3,11 @@ use std::{sync::Arc, thread::JoinHandle};
 use criterion::{criterion_group, criterion_main, Criterion};
 use rattan::{
     core::{RattanMachine, RattanMachineConfig},
-    devices::{bandwidth::BwDevice, external::VirtualEthernet, StdPacket},
+    devices::{
+        bandwidth::{queue::InfiniteQueue, BwDevice, MAX_BANDWIDTH},
+        external::VirtualEthernet,
+        StdPacket,
+    },
     env::{get_std_env, StdNetEnvConfig},
     metal::{io::AfPacketDriver, netns::NetNs},
 };
@@ -26,8 +30,8 @@ fn prepare_env() -> (JoinHandle<()>, CancellationToken, Arc<NetNs>, Arc<NetNs>) 
             .unwrap();
 
         runtime.block_on(async move {
-            let left_bw_device = BwDevice::<StdPacket>::new();
-            let right_bw_device = BwDevice::<StdPacket>::new();
+            let left_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
+            let right_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
             let left_device =
                 VirtualEthernet::<StdPacket, AfPacketDriver>::new(_std_env.left_pair.right.clone());
             let right_device =

@@ -1,7 +1,6 @@
 use crate::devices::{Device, Packet};
 use crate::error::Error;
 use crate::metal::timer::Timer;
-use crate::utils::sync::AtomicRawCell;
 use async_trait::async_trait;
 use netem_trace::Delay;
 #[cfg(feature = "serde")]
@@ -62,9 +61,23 @@ where
     P: Packet,
 {
     egress: mpsc::UnboundedReceiver<DelayPacket<P>>,
-    delay: Arc<AtomicRawCell<Delay>>,
-    inner_delay: Box<Delay>,
+    delay: Delay,
+    config_rx: mpsc::UnboundedReceiver<DelayDeviceConfig>,
     timer: Timer,
+}
+
+impl<P> DelayDeviceEgress<P>
+where
+    P: Packet + Send + Sync,
+{
+    fn set_config(&mut self, config: DelayDeviceConfig) {
+        debug!(
+            before = ?self.delay,
+            after = ?config.delay,
+            "Set inner delay:"
+        );
+        self.delay = config.delay;
+    }
 }
 
 #[async_trait]
@@ -74,16 +87,16 @@ where
 {
     async fn dequeue(&mut self) -> Option<P> {
         let packet = self.egress.recv().await.unwrap();
-        if let Some(delay) = self.delay.swap_null() {
-            self.inner_delay = delay;
-            debug!(?self.inner_delay, "Set inner delay:");
-        }
-        let queuing_delay = Instant::now() - packet.ingress_time;
-        if queuing_delay < *self.inner_delay {
-            self.timer
-                .sleep(*self.inner_delay - queuing_delay)
-                .await
-                .unwrap();
+        loop {
+            tokio::select! {
+                biased;
+                Some(config) = self.config_rx.recv() => {
+                    self.set_config(config);
+                }
+                _ = self.timer.sleep(packet.ingress_time + self.delay - Instant::now()) => {
+                    break;
+                }
+            }
         }
         Some(packet.packet)
     }
@@ -104,7 +117,7 @@ impl DelayDeviceConfig {
 }
 
 pub struct DelayDeviceControlInterface {
-    delay: Arc<AtomicRawCell<Delay>>,
+    config_tx: mpsc::UnboundedSender<DelayDeviceConfig>,
 }
 
 impl ControlInterface for DelayDeviceControlInterface {
@@ -112,7 +125,9 @@ impl ControlInterface for DelayDeviceControlInterface {
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         info!("Setting delay to {:?}", config.delay);
-        self.delay.store(Box::new(config.delay));
+        self.config_tx
+            .send(config)
+            .map_err(|_| Error::ConfigError("Control channel is closed.".to_string()))?;
         Ok(())
     }
 }
@@ -155,16 +170,16 @@ where
     pub fn new() -> DelayDevice<P> {
         debug!("New DelayDevice");
         let (rx, tx) = mpsc::unbounded_channel();
-        let delay = Arc::new(AtomicRawCell::new(Box::default()));
+        let (config_tx, config_rx) = mpsc::unbounded_channel();
         DelayDevice {
             ingress: Arc::new(DelayDeviceIngress { ingress: rx }),
             egress: DelayDeviceEgress {
                 egress: tx,
-                delay: Arc::clone(&delay),
-                inner_delay: Box::default(),
+                delay: Delay::default(),
+                config_rx,
                 timer: Timer::new().unwrap(),
             },
-            control_interface: Arc::new(DelayDeviceControlInterface { delay }),
+            control_interface: Arc::new(DelayDeviceControlInterface { config_tx }),
         }
     }
 }

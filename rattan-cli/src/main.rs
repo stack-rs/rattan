@@ -2,7 +2,7 @@ use clap::Parser;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rattan::core::{RattanMachine, RattanMachineConfig};
-use rattan::devices::bandwidth::{BwDevice, BwDeviceConfig};
+use rattan::devices::bandwidth::{queue::InfiniteQueue, BwDevice, BwDeviceConfig, MAX_BANDWIDTH};
 use rattan::devices::delay::{DelayDevice, DelayDeviceConfig};
 use rattan::devices::external::VirtualEthernet;
 use rattan::devices::loss::{IIDLossDevice, IIDLossDeviceConfig};
@@ -93,15 +93,15 @@ fn main() {
                 let mut left_fd = vec![left_device_rx];
                 let mut right_fd = vec![right_device_rx];
                 if let Some(bandwidth) = bandwidth {
-                    let left_bw_device = BwDevice::<StdPacket>::new();
-                    let right_bw_device = BwDevice::<StdPacket>::new();
+                    let left_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
+                    let right_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
                     let left_bw_ctl = left_bw_device.control_interface();
                     let right_bw_ctl = right_bw_device.control_interface();
                     left_bw_ctl
-                        .set_config(BwDeviceConfig::new(bandwidth))
+                        .set_config(BwDeviceConfig::new(bandwidth, None))
                         .unwrap();
                     right_bw_ctl
-                        .set_config(BwDeviceConfig::new(bandwidth))
+                        .set_config(BwDeviceConfig::new(bandwidth, None))
                         .unwrap();
                     let (left_bw_rx, left_bw_tx) = machine.add_device(left_bw_device);
                     info!(left_bw_rx, left_bw_tx);
@@ -187,7 +187,8 @@ fn main() {
         let output = handle.wait_with_output().unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
         stdout.contains("time=")
-    }; match res {
+    };
+    match res {
         true => {
             info!("ping test passed");
             left_ns.enter().unwrap();

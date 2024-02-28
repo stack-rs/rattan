@@ -4,7 +4,7 @@ use netem_trace::Bandwidth;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rattan::core::{RattanMachine, RattanMachineConfig};
-use rattan::devices::bandwidth::{BwDevice, BwDeviceConfig};
+use rattan::devices::bandwidth::{queue::InfiniteQueue, BwDevice, BwDeviceConfig, MAX_BANDWIDTH};
 use rattan::devices::delay::{DelayDevice, DelayDeviceConfig};
 use rattan::devices::loss::{LossDevice, LossDeviceConfig};
 
@@ -48,8 +48,8 @@ fn test_http() {
         runtime.block_on(
             async move {
                 let rng = StdRng::seed_from_u64(42);
-                let left_bw_device = BwDevice::<StdPacket>::new();
-                let right_bw_device = BwDevice::<StdPacket>::new();
+                let left_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
+                let right_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
                 let left_delay_device = DelayDevice::<StdPacket>::new();
                 let right_delay_device = DelayDevice::<StdPacket>::new();
                 let left_loss_device = LossDevice::<StdPacket, StdRng>::new(rng.clone());
@@ -73,7 +73,10 @@ fn test_http() {
                 info!(left_delay_rx, left_delay_tx);
                 let (right_delay_rx, right_delay_tx) = machine.add_device(right_delay_device);
                 info!(right_delay_rx, right_delay_tx);
-                if delay_control_tx.send((left_delay_tx, right_delay_tx)).is_err() {
+                if delay_control_tx
+                    .send((left_delay_tx, right_delay_tx))
+                    .is_err()
+                {
                     error!("send control interface failed");
                 }
                 let (left_loss_rx, left_loss_tx) = machine.add_device(left_loss_device);
@@ -172,7 +175,10 @@ fn test_http() {
         // Test wrong http config
         let resp = client
             .post(format!("http://127.0.0.1:8087/control/{}", left_loss_ctl))
-            .json(&BwDeviceConfig::new(Bandwidth::from_mbps(100)))
+            .json(&BwDeviceConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
+                Bandwidth::from_mbps(100),
+                None,
+            ))
             .send()
             .unwrap();
         assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
@@ -197,13 +203,19 @@ fn test_http() {
         // Test right http config
         let resp = client
             .post(format!("http://127.0.0.1:8087/control/{}", left_bw_ctl))
-            .json(&BwDeviceConfig::new(Bandwidth::from_mbps(100)))
+            .json(&BwDeviceConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
+                Bandwidth::from_mbps(100),
+                None,
+            ))
             .send()
             .unwrap();
         assert!(resp.status().is_success());
         let resp = client
             .post(format!("http://127.0.0.1:8087/control/{}", right_bw_ctl))
-            .json(&BwDeviceConfig::new(Bandwidth::from_mbps(100)))
+            .json(&BwDeviceConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
+                Bandwidth::from_mbps(100),
+                None,
+            ))
             .send()
             .unwrap();
         assert!(resp.status().is_success());
