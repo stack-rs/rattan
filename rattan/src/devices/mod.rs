@@ -3,6 +3,7 @@ use etherparse::{Ethernet2Header, Ipv4Header};
 #[cfg(feature = "serde")]
 use serde::Deserialize;
 use std::{fmt::Debug, sync::Arc};
+use tokio::time::Instant;
 
 use crate::error::Error;
 
@@ -19,22 +20,30 @@ pub trait Packet: Debug + 'static + Send {
     fn as_raw_buffer(&mut self) -> &mut [u8];
     fn ether_hdr(&self) -> Option<Ethernet2Header>;
     fn ip_hdr(&self) -> Option<Ipv4Header>;
+
+    fn get_timestamp(&self) -> Instant;
+    fn set_timestamp(&mut self, timestamp: Instant);
 }
 
 #[derive(Debug)]
 pub struct StdPacket {
     buf: Vec<u8>,
+    timestamp: Instant,
 }
 
 impl Packet for StdPacket {
     fn empty(maximum: usize) -> Self {
         Self {
             buf: Vec::with_capacity(maximum),
+            timestamp: Instant::now(),
         }
     }
 
     fn from_raw_buffer(buf: &[u8]) -> Self {
-        Self { buf: buf.to_vec() }
+        Self {
+            buf: buf.to_vec(),
+            timestamp: Instant::now(),
+        }
     }
 
     fn length(&self) -> usize {
@@ -60,6 +69,14 @@ impl Packet for StdPacket {
 
     fn ether_hdr(&self) -> Option<Ethernet2Header> {
         etherparse::Ethernet2Header::from_slice(self.buf.as_slice()).map_or(None, |x| Some(x.0))
+    }
+
+    fn get_timestamp(&self) -> Instant {
+        self.timestamp
+    }
+
+    fn set_timestamp(&mut self, timestamp: Instant) {
+        self.timestamp = timestamp;
     }
 }
 

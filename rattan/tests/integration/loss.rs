@@ -166,7 +166,10 @@ fn test_iid_loss() {
                 let right_loss_device = IIDLossDevice::<StdPacket, StdRng>::new(rng);
                 let left_control_interface = left_loss_device.control_interface();
                 let right_control_interface = right_loss_device.control_interface();
-                if control_tx.send((left_control_interface, right_control_interface)).is_err() {
+                if control_tx
+                    .send((left_control_interface, right_control_interface))
+                    .is_err()
+                {
                     error!("send control interface failed");
                 }
                 let left_device = VirtualEthernet::<StdPacket, AfPacketDriver>::new(

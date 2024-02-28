@@ -228,7 +228,8 @@ where
                         std::mem::size_of::<sockaddr_ll>() as u32,
                     ))
                 }
-            }; match res {
+            };
+            match res {
                 Ok(_) => break,
                 Err(e) => {
                     times -= 1;

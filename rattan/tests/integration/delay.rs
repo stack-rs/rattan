@@ -98,6 +98,7 @@ fn test_delay() {
             .captures_iter(&stdout)
             .flat_map(|cap| cap[1].parse::<f64>())
             .collect::<Vec<_>>();
+        info!(?latency);
 
         assert_eq!(latency.len(), 10);
         latency.drain(0..5);
@@ -130,6 +131,7 @@ fn test_delay() {
             .captures_iter(&stdout)
             .flat_map(|cap| cap[1].parse::<u64>())
             .collect::<Vec<_>>();
+        info!(?latency);
 
         assert_eq!(latency.len(), 10);
         latency.drain(0..5);

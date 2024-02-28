@@ -289,7 +289,7 @@ pub fn get_container_env() -> anyhow::Result<ContainerEnv> {
                 {
                     for address_attr in address_msg.attributes {
                         if let AddressAttribute::Address(address) = address_attr {
-                                ip_addr = Some((address, address_msg.header.prefix_len));
+                            ip_addr = Some((address, address_msg.header.prefix_len));
                         }
                     }
                     if ip_addr.is_none() {
