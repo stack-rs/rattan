@@ -66,21 +66,21 @@ fn test_http() {
                 info!(left_bw_rx, left_bw_tx);
                 let (right_bw_rx, right_bw_tx) = machine.add_device(right_bw_device);
                 info!(right_bw_rx, right_bw_tx);
-                if let Err(_) = bw_control_tx.send((left_bw_tx, right_bw_tx)) {
+                if bw_control_tx.send((left_bw_tx, right_bw_tx)).is_err() {
                     error!("send control interface failed");
                 }
                 let (left_delay_rx, left_delay_tx) = machine.add_device(left_delay_device);
                 info!(left_delay_rx, left_delay_tx);
                 let (right_delay_rx, right_delay_tx) = machine.add_device(right_delay_device);
                 info!(right_delay_rx, right_delay_tx);
-                if let Err(_) = delay_control_tx.send((left_delay_tx, right_delay_tx)) {
+                if delay_control_tx.send((left_delay_tx, right_delay_tx)).is_err() {
                     error!("send control interface failed");
                 }
                 let (left_loss_rx, left_loss_tx) = machine.add_device(left_loss_device);
                 info!(left_loss_rx, left_loss_tx);
                 let (right_loss_rx, right_loss_tx) = machine.add_device(right_loss_device);
                 info!(right_loss_rx, right_loss_tx);
-                if let Err(_) = loss_control_tx.send((left_loss_tx, right_loss_tx)) {
+                if loss_control_tx.send((left_loss_tx, right_loss_tx)).is_err() {
                     error!("send control interface failed");
                 }
                 let (left_device_rx, left_device_tx) = machine.add_device(left_device);
@@ -150,19 +150,18 @@ fn test_http() {
         let stdout = String::from_utf8(output.stdout).unwrap();
         let stderr = String::from_utf8(output.stderr).unwrap();
         handle.join().unwrap();
-        if stderr.len() > 0 {
+        if !stderr.is_empty() {
             warn!("{}", stderr);
         }
         let re = Regex::new(r#""bits_per_second":\s*(\d+)"#).unwrap();
         let bandwidth = re
             .captures_iter(&stdout)
-            .map(|cap| cap[1].parse::<u64>())
-            .flatten()
+            .flat_map(|cap| cap[1].parse::<u64>())
             .step_by(2)
             .take(10)
             .collect::<Vec<_>>();
         info!("bandwidth: {:?}", bandwidth);
-        assert!(bandwidth.len() > 0);
+        assert!(!bandwidth.is_empty());
     }
     // info!("====================================================");
     // After set the BwDevice, the bandwidth should be between 90-100Mbps
@@ -259,7 +258,7 @@ fn test_http() {
         let output = client_handle.wait_with_output().unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
         let stderr = String::from_utf8(output.stderr).unwrap();
-        if stderr.len() > 0 {
+        if !stderr.is_empty() {
             warn!("{}", stderr);
         }
         handle.join().unwrap();
@@ -267,8 +266,7 @@ fn test_http() {
         let re = Regex::new(r#""bits_per_second":\s*(\d+)"#).unwrap();
         let mut bandwidth = re
             .captures_iter(&stdout)
-            .map(|cap| cap[1].parse::<u64>())
-            .flatten()
+            .flat_map(|cap| cap[1].parse::<u64>())
             .step_by(2)
             .take(10)
             .collect::<Vec<_>>();

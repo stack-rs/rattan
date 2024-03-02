@@ -96,8 +96,7 @@ fn test_delay() {
         let re = Regex::new(r"time=(\d+)").unwrap();
         let mut latency = re
             .captures_iter(&stdout)
-            .map(|cap| cap[1].parse::<f64>())
-            .flatten()
+            .flat_map(|cap| cap[1].parse::<f64>())
             .collect::<Vec<_>>();
 
         assert_eq!(latency.len(), 10);
@@ -129,8 +128,7 @@ fn test_delay() {
         let re = Regex::new(r"time=(\d+)").unwrap();
         let mut latency = re
             .captures_iter(&stdout)
-            .map(|cap| cap[1].parse::<u64>())
-            .flatten()
+            .flat_map(|cap| cap[1].parse::<u64>())
             .collect::<Vec<_>>();
 
         assert_eq!(latency.len(), 10);

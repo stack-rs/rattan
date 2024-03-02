@@ -33,7 +33,7 @@ async fn docker_exec(docker: &Docker, id: &str, cmd: Vec<&str>) -> anyhow::Resul
     let exec = loop {
         match docker
             .create_exec(
-                &id,
+                id,
                 CreateExecOptions {
                     cmd: Some(cmd.clone()),
                     attach_stdout: Some(true),

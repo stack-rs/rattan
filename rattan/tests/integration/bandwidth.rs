@@ -119,19 +119,18 @@ fn test_bandwidth() {
         let stdout = String::from_utf8(output.stdout).unwrap();
         let stderr = String::from_utf8(output.stderr).unwrap();
         handle.join().unwrap();
-        if stderr.len() > 0 {
+        if !stderr.is_empty() {
             warn!("{}", stderr);
         }
         let re = Regex::new(r#""bits_per_second":\s*(\d+)"#).unwrap();
         let bandwidth = re
             .captures_iter(&stdout)
-            .map(|cap| cap[1].parse::<u64>())
-            .flatten()
+            .flat_map(|cap| cap[1].parse::<u64>())
             .step_by(2)
             .take(10)
             .collect::<Vec<_>>();
         info!("bandwidth: {:?}", bandwidth);
-        assert!(bandwidth.len() > 0);
+        assert!(!bandwidth.is_empty());
     }
     // info!("====================================================");
     // After set the BwDevice, the bandwidth should be between 90-100Mbps
@@ -177,7 +176,7 @@ fn test_bandwidth() {
         let output = client_handle.wait_with_output().unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
         let stderr = String::from_utf8(output.stderr).unwrap();
-        if stderr.len() > 0 {
+        if !stderr.is_empty() {
             warn!("{}", stderr);
         }
         handle.join().unwrap();
@@ -185,8 +184,7 @@ fn test_bandwidth() {
         let re = Regex::new(r#""bits_per_second":\s*(\d+)"#).unwrap();
         let mut bandwidth = re
             .captures_iter(&stdout)
-            .map(|cap| cap[1].parse::<u64>())
-            .flatten()
+            .flat_map(|cap| cap[1].parse::<u64>())
             .step_by(2)
             .take(10)
             .collect::<Vec<_>>();

@@ -288,11 +288,8 @@ pub fn get_container_env() -> anyhow::Result<ContainerEnv> {
                     .await
                 {
                     for address_attr in address_msg.attributes {
-                        match address_attr {
-                            AddressAttribute::Address(address) => {
+                        if let AddressAttribute::Address(address) = address_attr {
                                 ip_addr = Some((address, address_msg.header.prefix_len));
-                            }
-                            _ => {}
                         }
                     }
                     if ip_addr.is_none() {

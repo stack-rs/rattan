@@ -188,7 +188,7 @@ where
         let mut times = 3;
         let mut raw_fd;
         loop {
-            match {
+            let res = {
                 raw_fd = unsafe {
                     Errno::result(libc::socket(
                         AddressFamily::Packet as libc::c_int,
@@ -228,7 +228,7 @@ where
                         std::mem::size_of::<sockaddr_ll>() as u32,
                     ))
                 }
-            } {
+            }; match res {
                 Ok(_) => break,
                 Err(e) => {
                     times -= 1;

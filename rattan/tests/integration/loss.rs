@@ -128,7 +128,7 @@ fn test_loss_pattern() {
             .unwrap()
             .unwrap();
         info!("loss_percentage: {}", loss_percentage);
-        assert!(loss_percentage >= 40 && loss_percentage <= 60);
+        assert!((40..=60).contains(&loss_percentage));
     }
 
     cancel_token.cancel();
@@ -166,7 +166,7 @@ fn test_iid_loss() {
                 let right_loss_device = IIDLossDevice::<StdPacket, StdRng>::new(rng);
                 let left_control_interface = left_loss_device.control_interface();
                 let right_control_interface = right_loss_device.control_interface();
-                if let Err(_) = control_tx.send((left_control_interface, right_control_interface)) {
+                if control_tx.send((left_control_interface, right_control_interface)).is_err() {
                     error!("send control interface failed");
                 }
                 let left_device = VirtualEthernet::<StdPacket, AfPacketDriver>::new(
@@ -251,7 +251,7 @@ fn test_iid_loss() {
             .unwrap()
             .unwrap();
         info!("loss_percentage: {}", loss_percentage);
-        assert!(loss_percentage >= 40 && loss_percentage <= 60);
+        assert!((40..=60).contains(&loss_percentage));
     }
 
     cancel_token.cancel();

@@ -175,7 +175,7 @@ fn main() {
     });
 
     // Test connectivity before starting
-    match {
+    let res = {
         let _span = span!(Level::INFO, "ping_test").entered();
         info!("ping testing...");
         let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
@@ -187,7 +187,7 @@ fn main() {
         let output = handle.wait_with_output().unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
         stdout.contains("time=")
-    } {
+    }; match res {
         true => {
             info!("ping test passed");
             left_ns.enter().unwrap();
