@@ -10,7 +10,7 @@ jobs:
     name: cargo build with all features
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --all-features
 
@@ -18,7 +18,7 @@ jobs:
     name: cargo clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo clippy --all-features
 
@@ -26,7 +26,7 @@ jobs:
     name: Run cargo audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: actions-rust-lang/audit@v1
 
   test-all-features:
@@ -37,7 +37,7 @@ jobs:
         kernel: [ 5.4, 5.15, 6.1, 6.6 ]
     runs-on: ${{ matrix.kernel }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get install -y iproute2 ethtool iputils-ping iperf3 datamash bc
       - name: Install nextest
