@@ -1,2 +1,3 @@
 [workspace]
 members = ['rattan', 'rattan-cli']
+resolver = "2"
