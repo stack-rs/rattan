@@ -18,7 +18,7 @@ use rattan::{
 use rattan::{
     devices::{
         delay::{DelayDevice, DelayDeviceConfig},
-        loss::{IIDLossDevice, IIDLossDeviceConfig},
+        loss::{LossDevice, LossDeviceConfig},
         ControlInterface, Device, StdPacket,
     },
     netem_trace::Bandwidth,
@@ -209,11 +209,11 @@ pub fn docker_main(opts: CommandArgs) -> anyhow::Result<()> {
                     right_fd.push(right_delay_rx);
                 }
                 if let Some(loss) = loss {
-                    let left_loss_device = IIDLossDevice::<StdPacket, StdRng>::new(rng.clone());
-                    let right_loss_device = IIDLossDevice::<StdPacket, StdRng>::new(rng);
+                    let left_loss_device = LossDevice::<StdPacket, StdRng>::new(rng.clone());
+                    let right_loss_device = LossDevice::<StdPacket, StdRng>::new(rng);
                     let right_loss_ctl = right_loss_device.control_interface();
                     right_loss_ctl
-                        .set_config(IIDLossDeviceConfig::new(loss))
+                        .set_config(LossDeviceConfig::new([loss]))
                         .unwrap();
                     let (left_loss_rx, left_loss_tx) = machine.add_device(left_loss_device);
                     info!(left_loss_rx, left_loss_tx);
