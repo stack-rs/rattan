@@ -4,7 +4,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rattan::core::{RattanMachine, RattanMachineConfig};
 use rattan::devices::external::VirtualEthernet;
-use rattan::devices::loss::{IIDLossDevice, IIDLossDeviceConfig, LossDevice, LossDeviceConfig};
+use rattan::devices::loss::{LossDevice, LossDeviceConfig};
 use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::{get_std_env, StdNetEnvConfig};
 use rattan::metal::io::AfPacketDriver;
@@ -162,8 +162,8 @@ fn test_iid_loss() {
         runtime.block_on(
             async move {
                 let rng = StdRng::seed_from_u64(42);
-                let left_loss_device = IIDLossDevice::<StdPacket, StdRng>::new(rng.clone());
-                let right_loss_device = IIDLossDevice::<StdPacket, StdRng>::new(rng);
+                let left_loss_device = LossDevice::<StdPacket, StdRng>::new(rng.clone());
+                let right_loss_device = LossDevice::<StdPacket, StdRng>::new(rng);
                 let left_control_interface = left_loss_device.control_interface();
                 let right_control_interface = right_loss_device.control_interface();
                 if control_tx
@@ -236,7 +236,7 @@ fn test_iid_loss() {
         let _span = span!(Level::INFO, "ping_with_loss").entered();
         info!("try to ping with loss set to 0.5");
         left_control_interface
-            .set_config(IIDLossDeviceConfig::new(0.5))
+            .set_config(LossDeviceConfig::new([0.5]))
             .unwrap();
         let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
         let handle = std::process::Command::new("ping")

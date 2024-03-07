@@ -5,7 +5,7 @@ use rattan::core::{RattanMachine, RattanMachineConfig};
 use rattan::devices::bandwidth::{queue::InfiniteQueue, BwDevice, BwDeviceConfig, MAX_BANDWIDTH};
 use rattan::devices::delay::{DelayDevice, DelayDeviceConfig};
 use rattan::devices::external::VirtualEthernet;
-use rattan::devices::loss::{IIDLossDevice, IIDLossDeviceConfig};
+use rattan::devices::loss::{LossDevice, LossDeviceConfig};
 use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::{get_std_env, StdNetEnvConfig};
 use rattan::metal::io::AfPacketDriver;
@@ -133,11 +133,11 @@ fn main() {
                     right_fd.push(right_delay_rx);
                 }
                 if let Some(loss) = loss {
-                    let left_loss_device = IIDLossDevice::<StdPacket, StdRng>::new(rng.clone());
-                    let right_loss_device = IIDLossDevice::<StdPacket, StdRng>::new(rng);
+                    let left_loss_device = LossDevice::<StdPacket, StdRng>::new(rng.clone());
+                    let right_loss_device = LossDevice::<StdPacket, StdRng>::new(rng);
                     let right_loss_ctl = right_loss_device.control_interface();
                     right_loss_ctl
-                        .set_config(IIDLossDeviceConfig::new(loss))
+                        .set_config(LossDeviceConfig::new([loss]))
                         .unwrap();
                     let (left_loss_rx, left_loss_tx) = machine.add_device(left_loss_device);
                     info!(left_loss_rx, left_loss_tx);
