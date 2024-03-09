@@ -2,4 +2,4 @@
 
 [![CI](https://github.com/stack-rs/rattan/actions/workflows/ci.yml/badge.svg)](https://github.com/stack-rs/rattan/actions/workflows/ci.yml)
 
-Rusted pruned version of mahimahi with extended funcionality
+High Performance Modular Transport Channel Emulator Ready for Post-Gigabit Era.
