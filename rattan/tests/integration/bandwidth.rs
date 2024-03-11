@@ -4,7 +4,7 @@ use netem_trace::Bandwidth;
 use rattan::core::{RattanMachine, RattanMachineConfig};
 use rattan::devices::bandwidth::{
     queue::{
-        CODELQueue, CODELQueueConfig, DropHeadQueue, DropHeadQueueConfig, DropTailQueue,
+        CoDelQueue, CoDelQueueConfig, DropHeadQueue, DropHeadQueueConfig, DropTailQueue,
         DropTailQueueConfig, InfiniteQueue,
     },
     BwDevice, BwDeviceConfig, MAX_BANDWIDTH,
@@ -574,7 +574,7 @@ fn test_codel_queue() {
             async move {
                 let left_bw_device = BwDevice::new(
                     MAX_BANDWIDTH,
-                    CODELQueue::new(CODELQueueConfig::new(
+                    CoDelQueue::new(CoDelQueueConfig::new(
                         60,
                         None,
                         Duration::from_millis(104),
@@ -623,7 +623,7 @@ fn test_codel_queue() {
 
     {
         let _span = span!(Level::INFO, "run_test").entered();
-        info!("Test CODELQueue");
+        info!("Test CoDelQueue");
 
         let (msg_tx, msg_rx) = mpsc::channel();
 
@@ -660,7 +660,7 @@ fn test_codel_queue() {
         let client_socket = std::net::UdpSocket::bind("0.0.0.0:54321").unwrap();
         client_socket.connect("192.168.12.1:54321").unwrap();
 
-        info!("Test CODELQueue (60 packets limit, target 50ms, interval 104ms, mtu 1500)");
+        info!("Test CoDelQueue (60 packets limit, target 50ms, interval 104ms, mtu 1500)");
         info!("Set bandwidth to 800kbps (1000B per 10ms)");
         left_control_interface
             .set_config(BwDeviceConfig::new(Bandwidth::from_kbps(800), None))
@@ -697,13 +697,13 @@ fn test_codel_queue() {
             );
         }
 
-        info!("Test CODELQueue (500 Bytes limit, target 50ms, interval 104ms, mtu 80)");
+        info!("Test CoDelQueue (500 Bytes limit, target 50ms, interval 104ms, mtu 80)");
         info!("Use last cycle as a good starting point");
         info!("Set bandwidth to 40kbps (50B per 10ms)");
         left_control_interface
             .set_config(BwDeviceConfig::new(
                 Bandwidth::from_kbps(40),
-                CODELQueueConfig::new(
+                CoDelQueueConfig::new(
                     None,
                     3000,
                     Duration::from_millis(104),

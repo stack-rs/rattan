@@ -1,8 +1,13 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+use paste::paste;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rattan::core::{RattanMachine, RattanMachineConfig};
-use rattan::devices::bandwidth::{queue::InfiniteQueue, BwDevice, BwDeviceConfig, MAX_BANDWIDTH};
+use rattan::devices::bandwidth::queue::{
+    CoDelQueue, CoDelQueueConfig, DropHeadQueue, DropHeadQueueConfig, DropTailQueue,
+    DropTailQueueConfig,
+};
+use rattan::devices::bandwidth::{queue::InfiniteQueue, BwDevice};
 use rattan::devices::delay::{DelayDevice, DelayDeviceConfig};
 use rattan::devices::external::VirtualEthernet;
 use rattan::devices::loss::{LossDevice, LossDeviceConfig};
@@ -17,23 +22,102 @@ use std::time::Duration;
 use tracing::{error, info, span, Instrument, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod docker;
+// mod docker;
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
 pub struct CommandArgs {
     /// Verbose debug output
-    #[arg(short, long)]
-    verbose: bool,
+    // #[arg(short, long)]
+    // verbose: bool,
+
     /// Run in docker mode
     #[arg(long)]
     docker: bool,
-    #[arg(long, short)]
-    loss: Option<f64>,
-    #[arg(long, short, value_parser = humantime::parse_duration)]
-    delay: Option<Delay>,
-    #[arg(long, short)]
-    bandwidth: Option<u64>,
+
+    /// Uplink packet loss
+    #[arg(long, value_name = "Loss")]
+    uplink_loss: Option<f64>,
+    /// Downlink packet loss
+    #[arg(long, value_name = "Loss")]
+    downlink_loss: Option<f64>,
+
+    /// Uplink delay
+    #[arg(long, value_name = "Delay", value_parser = humantime::parse_duration)]
+    uplink_delay: Option<Delay>,
+    /// Downlink delay
+    #[arg(long, value_name = "Delay", value_parser = humantime::parse_duration)]
+    downlink_delay: Option<Delay>,
+
+    /// Uplink bandwidth
+    #[arg(long, value_name = "Bandwidth", group = "uplink-bw")]
+    uplink_bandwidth: Option<u64>,
+    /// Uplink trace file
+    #[arg(long, value_name = "Trace File", group = "uplink-bw")]
+    uplink_trace: Option<String>,
+    /// Uplink queue type
+    #[arg(
+        long,
+        value_name = "Queue Type",
+        group = "uplink-queue",
+        requires = "uplink-bw"
+    )]
+    uplink_queue: Option<QueueType>,
+    /// Uplink queue arguments
+    #[arg(long, value_name = "JSON", requires = "uplink-queue")]
+    uplink_queue_args: Option<String>,
+
+    /// Downlink bandwidth
+    #[arg(long, value_name = "Bandwidth", group = "downlink-bw")]
+    downlink_bandwidth: Option<u64>,
+    /// Downlink trace file
+    #[arg(long, value_name = "Trace File", group = "downlink-bw")]
+    downlink_trace: Option<String>,
+    /// Downlink queue type
+    #[arg(
+        long,
+        value_name = "Queue Type",
+        group = "downlink-queue",
+        requires = "downlink-bw"
+    )]
+    downlink_queue: Option<QueueType>,
+    /// Downlink queue arguments
+    #[arg(long, value_name = "JSON", requires = "downlink-queue")]
+    downlink_queue_args: Option<String>,
+
+    /// Commands to run
     commands: Vec<String>,
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+#[value(rename_all = "lower")]
+enum QueueType {
+    Infinite,
+    DropTail,
+    DropHead,
+    CoDel,
+}
+
+// Deserialize queue args, create queue, create BwDevice and add to machine
+// $type: queue type (key in `QueueType`)
+// $args: queue args
+// $machine: RattanMachine
+// $bandwidth: bandwidth for BwDevice
+macro_rules! q_args_into_machine {
+    ($type:ident, $args:expr, $machine:expr, $bandwidth:expr) => {
+        paste!(
+            match serde_json::from_str::<[<$type QueueConfig>]> (&$args.unwrap_or("{}".to_string())) {
+                Ok(config) => {
+                    let packet_queue: [<$type Queue>]<StdPacket> = config.into();
+                    let bw_device = BwDevice::new($bandwidth, packet_queue);
+                    $machine.add_device(bw_device)
+                }
+                Err(e) => {
+                    error!("Failed to parse uplink-queue-args: {}", e);
+                    return;
+                }
+            }
+        )
+    };
 }
 
 fn main() {
@@ -44,13 +128,10 @@ fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
     let opts = CommandArgs::parse();
-    if opts.docker {
-        docker::docker_main(opts).unwrap();
-        return;
-    }
-    let loss = opts.loss;
-    let delay = opts.delay;
-    let bandwidth = opts.bandwidth.map(Bandwidth::from_bps);
+    // if opts.docker {
+    //     docker::docker_main(opts).unwrap();
+    //     return;
+    // }
     info!("{:?}", opts);
 
     let _std_env = get_std_env(StdNetEnvConfig {
@@ -63,6 +144,7 @@ fn main() {
     let mut machine = RattanMachine::<StdPacket>::new();
     let cancel_token = machine.cancel_token();
 
+    let rattan_opts = opts.clone();
     let rattan_thread_span = span!(Level::DEBUG, "rattan_thread").or_current();
     let rattan_thread = std::thread::spawn(move || {
         let _entered = rattan_thread_span.entered();
@@ -87,66 +169,126 @@ fn main() {
                 );
 
                 let (left_device_rx, left_device_tx) = machine.add_device(left_device);
-                info!(left_device_rx, left_device_tx);
+                info!(left_device_rx, left_device_tx, "Left device");
                 let (right_device_rx, right_device_tx) = machine.add_device(right_device);
-                info!(right_device_rx, right_device_tx);
+                info!(right_device_rx, right_device_tx, "Right device");
                 let mut left_fd = vec![left_device_rx];
                 let mut right_fd = vec![right_device_rx];
-                if let Some(bandwidth) = bandwidth {
-                    let left_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
-                    let right_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
-                    let left_bw_ctl = left_bw_device.control_interface();
-                    let right_bw_ctl = right_bw_device.control_interface();
-                    left_bw_ctl
-                        .set_config(BwDeviceConfig::new(bandwidth, None))
-                        .unwrap();
-                    right_bw_ctl
-                        .set_config(BwDeviceConfig::new(bandwidth, None))
-                        .unwrap();
-                    let (left_bw_rx, left_bw_tx) = machine.add_device(left_bw_device);
-                    info!(left_bw_rx, left_bw_tx);
-                    let (right_bw_rx, right_bw_tx) = machine.add_device(right_bw_device);
-                    info!(right_bw_rx, right_bw_tx);
-                    left_fd.push(left_bw_tx);
-                    left_fd.push(left_bw_rx);
-                    right_fd.push(right_bw_tx);
-                    right_fd.push(right_bw_rx);
+
+                if let Some(bandwidth) = rattan_opts.uplink_bandwidth {
+                    let bandwidth = Bandwidth::from_bps(bandwidth);
+                    let (bw_rx, bw_tx) = match rattan_opts.uplink_queue {
+                        Some(QueueType::Infinite) | None => {
+                            let packet_queue = InfiniteQueue::new();
+                            let bw_device = BwDevice::new(bandwidth, packet_queue);
+                            machine.add_device(bw_device)
+                        }
+                        Some(QueueType::DropTail) => {
+                            q_args_into_machine!(
+                                DropTail,
+                                rattan_opts.uplink_queue_args,
+                                machine,
+                                bandwidth
+                            )
+                        }
+                        Some(QueueType::DropHead) => {
+                            q_args_into_machine!(
+                                DropHead,
+                                rattan_opts.uplink_queue_args,
+                                machine,
+                                bandwidth
+                            )
+                        }
+                        Some(QueueType::CoDel) => {
+                            q_args_into_machine!(
+                                CoDel,
+                                rattan_opts.uplink_queue_args,
+                                machine,
+                                bandwidth
+                            )
+                        }
+                    };
+                    info!(bw_rx, bw_tx, "Uplink bandwidth");
+                    left_fd.push(bw_tx);
+                    left_fd.push(bw_rx);
                 }
-                if let Some(delay) = delay {
-                    let left_delay_device = DelayDevice::<StdPacket>::new();
-                    let right_delay_device = DelayDevice::<StdPacket>::new();
-                    let left_delay_ctl = left_delay_device.control_interface();
-                    let right_delay_ctl = right_delay_device.control_interface();
-                    left_delay_ctl
-                        .set_config(DelayDeviceConfig::new(delay))
-                        .unwrap();
-                    right_delay_ctl
-                        .set_config(DelayDeviceConfig::new(delay))
-                        .unwrap();
-                    let (left_delay_rx, left_delay_tx) = machine.add_device(left_delay_device);
-                    info!(left_delay_rx, left_delay_tx);
-                    let (right_delay_rx, right_delay_tx) = machine.add_device(right_delay_device);
-                    info!(right_delay_rx, right_delay_tx);
-                    left_fd.push(left_delay_tx);
-                    left_fd.push(left_delay_rx);
-                    right_fd.push(right_delay_tx);
-                    right_fd.push(right_delay_rx);
+
+                if let Some(bandwidth) = rattan_opts.downlink_bandwidth {
+                    let bandwidth = Bandwidth::from_bps(bandwidth);
+                    let (bw_rx, bw_tx) = match rattan_opts.downlink_queue {
+                        Some(QueueType::Infinite) | None => {
+                            let packet_queue = InfiniteQueue::new();
+                            let bw_device = BwDevice::new(bandwidth, packet_queue);
+                            machine.add_device(bw_device)
+                        }
+                        Some(QueueType::DropTail) => {
+                            q_args_into_machine!(
+                                DropTail,
+                                rattan_opts.downlink_queue_args,
+                                machine,
+                                bandwidth
+                            )
+                        }
+                        Some(QueueType::DropHead) => {
+                            q_args_into_machine!(
+                                DropHead,
+                                rattan_opts.downlink_queue_args,
+                                machine,
+                                bandwidth
+                            )
+                        }
+                        Some(QueueType::CoDel) => {
+                            q_args_into_machine!(
+                                CoDel,
+                                rattan_opts.downlink_queue_args,
+                                machine,
+                                bandwidth
+                            )
+                        }
+                    };
+                    info!(bw_rx, bw_tx, "Downlink bandwidth");
+                    right_fd.push(bw_tx);
+                    right_fd.push(bw_rx);
                 }
-                if let Some(loss) = loss {
-                    let left_loss_device = LossDevice::<StdPacket, StdRng>::new(rng.clone());
-                    let right_loss_device = LossDevice::<StdPacket, StdRng>::new(rng);
-                    let right_loss_ctl = right_loss_device.control_interface();
-                    right_loss_ctl
-                        .set_config(LossDeviceConfig::new([loss]))
-                        .unwrap();
-                    let (left_loss_rx, left_loss_tx) = machine.add_device(left_loss_device);
-                    info!(left_loss_rx, left_loss_tx);
-                    let (right_loss_rx, right_loss_tx) = machine.add_device(right_loss_device);
-                    info!(right_loss_rx, right_loss_tx);
-                    left_fd.push(left_loss_tx);
-                    left_fd.push(left_loss_rx);
-                    right_fd.push(right_loss_tx);
-                    right_fd.push(right_loss_rx);
+
+                if let Some(delay) = rattan_opts.uplink_delay {
+                    let delay_device = DelayDevice::<StdPacket>::new();
+                    let delay_ctl = delay_device.control_interface();
+                    delay_ctl.set_config(DelayDeviceConfig::new(delay)).unwrap();
+                    let (delay_rx, delay_tx) = machine.add_device(delay_device);
+                    info!(delay_rx, delay_tx, "Uplink delay");
+                    left_fd.push(delay_tx);
+                    left_fd.push(delay_rx);
+                }
+
+                if let Some(delay) = rattan_opts.downlink_delay {
+                    let delay_device = DelayDevice::<StdPacket>::new();
+                    let delay_ctl = delay_device.control_interface();
+                    delay_ctl.set_config(DelayDeviceConfig::new(delay)).unwrap();
+                    let (delay_rx, delay_tx) = machine.add_device(delay_device);
+                    info!(delay_rx, delay_tx, "Downlink delay");
+                    right_fd.push(delay_tx);
+                    right_fd.push(delay_rx);
+                }
+
+                if let Some(loss) = rattan_opts.uplink_loss {
+                    let loss_device = LossDevice::<StdPacket, StdRng>::new(rng.clone());
+                    let loss_ctl = loss_device.control_interface();
+                    loss_ctl.set_config(LossDeviceConfig::new([loss])).unwrap();
+                    let (loss_rx, loss_tx) = machine.add_device(loss_device);
+                    info!(loss_rx, loss_tx, "Uplink loss");
+                    left_fd.push(loss_tx);
+                    left_fd.push(loss_rx);
+                }
+
+                if let Some(loss) = rattan_opts.downlink_loss {
+                    let loss_device = LossDevice::<StdPacket, StdRng>::new(rng);
+                    let loss_ctl = loss_device.control_interface();
+                    loss_ctl.set_config(LossDeviceConfig::new([loss])).unwrap();
+                    let (loss_rx, loss_tx) = machine.add_device(loss_device);
+                    info!(loss_rx, loss_tx, "Downlink loss");
+                    right_fd.push(loss_tx);
+                    right_fd.push(loss_rx);
                 }
 
                 left_fd.push(right_device_tx);
