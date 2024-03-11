@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use tokio::time::{Duration, Instant};
-use tracing::trace;
+use tracing::{debug, trace};
 
 pub trait PacketQueue<P>: Send
 where
@@ -23,6 +23,22 @@ where
     fn dequeue(&mut self) -> Option<P>;
 }
 
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[derive(Debug)]
+pub struct InfiniteQueueConfig {}
+
+impl InfiniteQueueConfig {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl<P> Into<InfiniteQueue<P>> for InfiniteQueueConfig {
+    fn into(self) -> InfiniteQueue<P> {
+        InfiniteQueue::new()
+    }
+}
+
 #[derive(Debug)]
 pub struct InfiniteQueue<P> {
     queue: VecDeque<P>,
@@ -30,6 +46,7 @@ pub struct InfiniteQueue<P> {
 
 impl<P> InfiniteQueue<P> {
     pub fn new() -> Self {
+        debug!("New InfiniteQueue");
         Self {
             queue: VecDeque::new(),
         }
@@ -78,6 +95,12 @@ impl DropTailQueueConfig {
     }
 }
 
+impl<P> Into<DropTailQueue<P>> for DropTailQueueConfig {
+    fn into(self) -> DropTailQueue<P> {
+        DropTailQueue::new(self.packet_limit, self.byte_limit)
+    }
+}
+
 #[derive(Debug)]
 pub struct DropTailQueue<P> {
     queue: VecDeque<P>,
@@ -91,10 +114,13 @@ impl<P> DropTailQueue<P> {
         packet_limit: A,
         byte_limit: B,
     ) -> Self {
+        let packet_limit = packet_limit.into();
+        let byte_limit = byte_limit.into();
+        debug!(packet_limit, byte_limit, "New DropTailQueue");
         Self {
             queue: VecDeque::new(),
-            packet_limit: packet_limit.into(),
-            byte_limit: byte_limit.into(),
+            packet_limit: packet_limit,
+            byte_limit: byte_limit,
             now_bytes: 0,
         }
     }
@@ -161,6 +187,12 @@ impl DropHeadQueueConfig {
     }
 }
 
+impl<P> Into<DropHeadQueue<P>> for DropHeadQueueConfig {
+    fn into(self) -> DropHeadQueue<P> {
+        DropHeadQueue::new(self.packet_limit, self.byte_limit)
+    }
+}
+
 #[derive(Debug)]
 pub struct DropHeadQueue<P> {
     queue: VecDeque<P>,
@@ -174,10 +206,13 @@ impl<P> DropHeadQueue<P> {
         packet_limit: A,
         byte_limit: B,
     ) -> Self {
+        let packet_limit = packet_limit.into();
+        let byte_limit = byte_limit.into();
+        debug!(packet_limit, byte_limit, "New DropHeadQueue");
         Self {
             queue: VecDeque::new(),
-            packet_limit: packet_limit.into(),
-            byte_limit: byte_limit.into(),
+            packet_limit,
+            byte_limit,
             now_bytes: 0,
         }
     }
@@ -225,21 +260,35 @@ where
     }
 }
 
-// CODEL Queue Implementation Reference:
+// CoDel Queue Implementation Reference:
 // https://github.com/torvalds/linux/blob/v6.6/include/net/codel.h
 // https://github.com/ravinet/mahimahi/blob/0bd12164388bc109bbbd8ffa03a09e94adcbec5a/src/packet/codel_packet_queue.cc
 
-#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(default))]
 #[derive(Debug)]
-pub struct CODELQueueConfig {
+pub struct CoDelQueueConfig {
     pub packet_limit: Option<usize>, // the maximum number of packets in the queue, or None for unlimited
     pub byte_limit: Option<usize>, // the maximum number of bytes in the queue, or None for unlimited
-    pub interval: Duration,        // width of moving time window
-    pub target: Duration,          // target queue delay
+    #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
+    pub interval: Duration, // width of moving time window
+    #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
+    pub target: Duration, // target queue delay
     pub mtu: u32,                  // device MTU, or minimal queue backlog in bytes
 }
 
-impl CODELQueueConfig {
+impl Default for CoDelQueueConfig {
+    fn default() -> Self {
+        Self {
+            packet_limit: None,
+            byte_limit: None,
+            interval: Duration::from_millis(100),
+            target: Duration::from_millis(5),
+            mtu: 1500,
+        }
+    }
+}
+
+impl CoDelQueueConfig {
     pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
         packet_limit: A,
         byte_limit: B,
@@ -256,10 +305,17 @@ impl CODELQueueConfig {
         }
     }
 }
+
+impl<P> Into<CoDelQueue<P>> for CoDelQueueConfig {
+    fn into(self) -> CoDelQueue<P> {
+        CoDelQueue::new(self)
+    }
+}
+
 #[derive(Debug)]
-pub struct CODELQueue<P> {
+pub struct CoDelQueue<P> {
     queue: VecDeque<P>,
-    config: CODELQueueConfig,
+    config: CoDelQueueConfig,
     now_bytes: usize, // the current number of bytes in the queue
 
     count: u32, // how many drops we've done since the last time we entered dropping state
@@ -270,8 +326,9 @@ pub struct CODELQueue<P> {
     ldelay: Duration,                  // sojourn time of last dequeued packet
 }
 
-impl<P> CODELQueue<P> {
-    pub fn new(config: CODELQueueConfig) -> Self {
+impl<P> CoDelQueue<P> {
+    pub fn new(config: CoDelQueueConfig) -> Self {
+        debug!(?config, "New CoDelQueue");
         Self {
             queue: VecDeque::new(),
             config,
@@ -286,7 +343,7 @@ impl<P> CODELQueue<P> {
     }
 }
 
-impl<P> CODELQueue<P>
+impl<P> CoDelQueue<P>
 where
     P: Packet,
 {
@@ -316,11 +373,11 @@ where
     }
 }
 
-impl<P> PacketQueue<P> for CODELQueue<P>
+impl<P> PacketQueue<P> for CoDelQueue<P>
 where
     P: Packet,
 {
-    type Config = CODELQueueConfig;
+    type Config = CoDelQueueConfig;
 
     fn configure(&mut self, config: Self::Config) {
         self.config = config;

@@ -99,7 +99,13 @@ ping_verify() {
 	suffix="delay${delay}_loss${loss}"
 
 	echo "Ping Test: Loss $loss; Delay $delay ms"
-	RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo run --release -q -p rattan-cli -- --delay ${delay}ms --loss $loss "$WORKDIR/ping.sh $PING_ITERS 192.168.12.1" >"rattan_${suffix}_ping.log" 2>&1
+	RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' \
+		cargo run --release -q -p rattan-cli -- \
+		--uplink-delay ${delay}ms \
+		--downlink-delay ${delay}ms \
+		--downlink-loss $loss \
+		"$WORKDIR/ping.sh $PING_ITERS 192.168.12.1" \
+		>"rattan_${suffix}_ping.log" 2>&1
 	calc_ping_stats $delay $loss $suffix
 }
 
@@ -141,7 +147,15 @@ iperf_verify() {
 
 	echo "iPerf Test: Loss $loss; Bandwidth $bandwidth Mbps; Delay $delay ms"
 	bandwidth=$(expr 12 \* $bw_mul \* 1000000)
-	RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo run --release -q -p rattan-cli -- --delay ${delay}ms --loss $loss --bandwidth $bandwidth "$WORKDIR/iperf3.sh $IPERF_ITERS 192.168.12.1 $cc" >"rattan_$suffix.log" 2>&1
+	RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' \
+		cargo run --release -q -p rattan-cli -- \
+		--uplink-delay ${delay}ms \
+		--downlink-delay ${delay}ms \
+		--downlink-loss $loss \
+		--uplink-bandwidth $bandwidth \
+		--downlink-bandwidth $bandwidth \
+		"$WORKDIR/iperf3.sh $IPERF_ITERS 192.168.12.1 $cc" \
+		>"rattan_$suffix.log" 2>&1
 	calc_iperf_stats $(expr 12 \* $bw_mul) $loss $suffix
 }
 
