@@ -87,7 +87,7 @@ impl HttpControlEndpoint {
     pub fn new() -> Self {
         Self {
             router: Some(Router::new().route(
-                "/healthy",
+                "/health",
                 get(|| async { (StatusCode::OK, Json(json!({"status": "ok"}))) }),
             )),
             state: ControlState::new(),
@@ -97,6 +97,10 @@ impl HttpControlEndpoint {
     pub fn update_router(&mut self) {
         self.router = Some(
             Router::new()
+                .route(
+                    "/health",
+                    get(|| async { (StatusCode::OK, Json(json!({"status": "ok"}))) }),
+                )
                 .route("/control/:id", post(control_device))
                 .with_state(self.state.clone()),
         );

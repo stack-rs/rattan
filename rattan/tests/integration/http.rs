@@ -168,10 +168,36 @@ fn test_http() {
     }
     // info!("====================================================");
     // After set the BwDevice, the bandwidth should be between 90-100Mbps
-    std::thread::sleep(std::time::Duration::from_secs(1));
     {
         info!("try to iperf with bandwidth limit set to 100Mbps");
         let client = reqwest::blocking::Client::new();
+        // Wait for server up
+        info!("wait for server up");
+        loop {
+            let mut err_count = 0;
+            match client.get("http://127.0.0.1:8087/health").send() {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        info!("server is up");
+                        break;
+                    } else {
+                        if err_count >= 10 {
+                            error!("Get health failed 10 times: {}", response.status());
+                        }
+                    }
+                }
+                Err(err) => {
+                    if err_count >= 10 {
+                        error!("Get health failed 10 times: {}", err);
+                    }
+                }
+            }
+            err_count += 1;
+            if err_count > 10 {
+                panic!("Get health failed");
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
         // Test wrong http config
         let resp = client
             .post(format!("http://127.0.0.1:8087/control/{}", left_loss_ctl))
