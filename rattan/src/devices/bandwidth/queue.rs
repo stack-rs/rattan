@@ -27,14 +27,20 @@ where
 #[derive(Debug)]
 pub struct InfiniteQueueConfig {}
 
+impl Default for InfiniteQueueConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InfiniteQueueConfig {
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl<P> Into<InfiniteQueue<P>> for InfiniteQueueConfig {
-    fn into(self) -> InfiniteQueue<P> {
+impl<P> From<InfiniteQueueConfig> for InfiniteQueue<P> {
+    fn from(_val: InfiniteQueueConfig) -> Self {
         InfiniteQueue::new()
     }
 }
@@ -95,9 +101,9 @@ impl DropTailQueueConfig {
     }
 }
 
-impl<P> Into<DropTailQueue<P>> for DropTailQueueConfig {
-    fn into(self) -> DropTailQueue<P> {
-        DropTailQueue::new(self.packet_limit, self.byte_limit)
+impl<P> From<DropTailQueueConfig> for DropTailQueue<P> {
+    fn from(val: DropTailQueueConfig) -> Self {
+        DropTailQueue::new(val.packet_limit, val.byte_limit)
     }
 }
 
@@ -119,8 +125,8 @@ impl<P> DropTailQueue<P> {
         debug!(packet_limit, byte_limit, "New DropTailQueue");
         Self {
             queue: VecDeque::new(),
-            packet_limit: packet_limit,
-            byte_limit: byte_limit,
+            packet_limit,
+            byte_limit,
             now_bytes: 0,
         }
     }
@@ -187,9 +193,9 @@ impl DropHeadQueueConfig {
     }
 }
 
-impl<P> Into<DropHeadQueue<P>> for DropHeadQueueConfig {
-    fn into(self) -> DropHeadQueue<P> {
-        DropHeadQueue::new(self.packet_limit, self.byte_limit)
+impl<P> From<DropHeadQueueConfig> for DropHeadQueue<P> {
+    fn from(val: DropHeadQueueConfig) -> Self {
+        DropHeadQueue::new(val.packet_limit, val.byte_limit)
     }
 }
 
@@ -306,9 +312,9 @@ impl CoDelQueueConfig {
     }
 }
 
-impl<P> Into<CoDelQueue<P>> for CoDelQueueConfig {
-    fn into(self) -> CoDelQueue<P> {
-        CoDelQueue::new(self)
+impl<P> From<CoDelQueueConfig> for CoDelQueue<P> {
+    fn from(val: CoDelQueueConfig) -> Self {
+        CoDelQueue::new(val)
     }
 }
 
