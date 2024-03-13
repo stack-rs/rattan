@@ -1,10 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, span, trace, Instrument, Level};
+use tracing::{debug, error, info, span, trace, Instrument, Level};
 
 use crate::{
     devices::{Device, Egress, Ingress, Packet},
+    error::Error,
     metal::netns::NetNs,
 };
 
@@ -179,10 +180,21 @@ where
                                         };
                                         pcap_writer.lock().unwrap().write_block(&pcap_file::pcapng::Block::EnhancedPacket(packet_block)).unwrap();
                                     }
-                                    tx.enqueue(p).unwrap();
+                                    match tx.enqueue(p) {
+                                        Ok(_) => {}
+                                        Err(Error::ChannelError(_)) => {
+                                            debug!(rx_id, tx_id, "Core router exited since the channel is closed");
+                                            return
+                                        }
+                                        Err(e) => {
+                                            error!(rx_id, tx_id, "Error forwarding packet: {:?}", e);
+                                            panic!("Error forwarding packet: {:?}", e);
+                                        }
+                                    }
                                 }
                             }
                             _ = token_dup.cancelled() => {
+                                debug!(rx_id, tx_id, "Core router cancelled");
                                 return
                             }
                         }

@@ -44,8 +44,9 @@ where
     P: Packet + Send,
 {
     fn enqueue(&self, packet: P) -> Result<(), Error> {
-        // XXX(minhuw): handle possible error here
-        self.ingress.send(LossPacket { packet }).unwrap();
+        self.ingress
+            .send(LossPacket { packet })
+            .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
         Ok(())
     }
 }

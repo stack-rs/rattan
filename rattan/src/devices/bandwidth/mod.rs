@@ -42,8 +42,9 @@ where
 {
     fn enqueue(&self, mut packet: P) -> Result<(), Error> {
         packet.set_timestamp(Instant::now());
-        // XXX(minhuw): handle possible error here
-        self.ingress.send(packet).unwrap();
+        self.ingress
+            .send(packet)
+            .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
         Ok(())
     }
 }

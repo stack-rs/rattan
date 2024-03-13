@@ -12,6 +12,8 @@ pub enum Error {
     MetalError(#[from] crate::metal::error::MetalError),
     #[error("Config error: {0}")]
     ConfigError(String),
+    #[error("Channel error: {0}")]
+    ChannelError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
