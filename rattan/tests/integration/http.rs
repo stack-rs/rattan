@@ -180,10 +180,8 @@ fn test_http() {
                     if response.status().is_success() {
                         info!("server is up");
                         break;
-                    } else {
-                        if err_count >= 10 {
-                            error!("Get health failed 10 times: {}", response.status());
-                        }
+                    } else if err_count >= 10 {
+                        error!("Get health failed 10 times: {}", response.status());
                     }
                 }
                 Err(err) => {
