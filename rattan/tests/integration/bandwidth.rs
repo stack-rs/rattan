@@ -819,7 +819,7 @@ fn test_replay() {
 
                 let config = RattanMachineConfig {
                     original_ns,
-                    port: 8090,
+                    port: 8094,
                 };
                 machine.core_loop(config).await
             }
