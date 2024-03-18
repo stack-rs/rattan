@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::time::Instant;
+use tokio::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 use super::{ControlInterface, Egress, Ingress};
@@ -17,13 +17,18 @@ use super::{ControlInterface, Egress, Ingress};
 pub mod queue;
 
 pub const MAX_BANDWIDTH: Bandwidth = Bandwidth::from_bps(u64::MAX);
+pub const LARGE_DURATION: Duration = Duration::from_secs(10 * 365 * 24 * 60 * 60);
 
 // Requires the bandwidth to be less than 2^64 bps
 fn transfer_time(length: usize, bandwidth: Bandwidth) -> Delay {
     let bits = length * 8;
     let capacity = bandwidth.as_bps() as u64;
-    let seconds = bits as f64 / capacity as f64;
-    Delay::from_secs_f64(seconds)
+    if capacity == 0 {
+        LARGE_DURATION
+    } else {
+        let seconds = bits as f64 / capacity as f64;
+        Delay::from_secs_f64(seconds)
+    }
 }
 
 pub struct BwDeviceIngress<P>
@@ -82,9 +87,12 @@ where
                 "Previous next_available distance: {:?}",
                 self.next_available - now
             );
-            self.next_available = now
-                + (self.next_available - now)
-                    .mul_f64(self.bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64);
+            self.next_available = if bandwidth == Bandwidth::from_bps(0) {
+                Instant::now() + LARGE_DURATION
+            } else {
+                now + (self.next_available - now)
+                    .mul_f64(self.bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64)
+            };
             debug!(
                 before = ?self.bandwidth,
                 after = ?bandwidth,
@@ -312,16 +320,21 @@ where
 {
     fn change_bandwidth(&mut self, bandwidth: Bandwidth, change_time: Instant) {
         debug!(
-            "Change bandwidth (should at {:?} ago)",
+            "Changing bandwidth to {:?} (should at {:?} ago)",
+            bandwidth,
             change_time.elapsed()
         );
         debug!(
             "Previous next_available distance: {:?}",
             self.next_available - change_time
         );
-        self.next_available = change_time
-            + (self.next_available - change_time)
-                .mul_f64(self.current_bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64);
+        self.next_available = if bandwidth == Bandwidth::from_bps(0) {
+            Instant::now() + LARGE_DURATION
+        } else {
+            change_time
+                + (self.next_available - change_time)
+                    .mul_f64(self.current_bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64)
+        };
         debug!(
             before = ?self.current_bandwidth,
             after = ?bandwidth,
@@ -368,7 +381,7 @@ where
             Some((bandwidth, duration)) => {
                 self.change_bandwidth(bandwidth, change_time);
                 debug!(
-                    "Bandwidth change to {:?}, next change after {:?}",
+                    "Bandwidth changed to {:?}, next change after {:?}",
                     bandwidth,
                     change_time + duration - Instant::now()
                 );
