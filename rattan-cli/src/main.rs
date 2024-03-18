@@ -1,4 +1,5 @@
 use clap::{Parser, ValueEnum};
+use netem_trace::BwTrace;
 use paste::paste;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -7,7 +8,7 @@ use rattan::devices::bandwidth::queue::{
     CoDelQueue, CoDelQueueConfig, DropHeadQueue, DropHeadQueueConfig, DropTailQueue,
     DropTailQueueConfig,
 };
-use rattan::devices::bandwidth::{queue::InfiniteQueue, BwDevice};
+use rattan::devices::bandwidth::{queue::InfiniteQueue, BwDevice, BwReplayDevice};
 use rattan::devices::delay::{DelayDevice, DelayDeviceConfig};
 use rattan::devices::external::VirtualEthernet;
 use rattan::devices::loss::{LossDevice, LossDeviceConfig};
@@ -16,6 +17,7 @@ use rattan::env::{get_std_env, StdNetEnvConfig};
 use rattan::metal::io::AfPacketDriver;
 use rattan::metal::netns::NetNsGuard;
 use rattan::netem_trace::{Bandwidth, Delay};
+use std::io::BufRead;
 use std::process::Stdio;
 use std::thread::sleep;
 use std::time::Duration;
@@ -102,7 +104,7 @@ enum QueueType {
 // $args: queue args
 // $machine: RattanMachine
 // $bandwidth: bandwidth for BwDevice
-macro_rules! q_args_into_machine {
+macro_rules! bw_q_args_into_machine {
     ($type:ident, $args:expr, $machine:expr, $bandwidth:expr) => {
         paste!(
             match serde_json::from_str::<[<$type QueueConfig>]> (&$args.unwrap_or("{}".to_string())) {
@@ -118,6 +120,56 @@ macro_rules! q_args_into_machine {
             }
         )
     };
+}
+
+// Deserialize queue args, create queue, create BwReplayDevice and add to machine
+// $type: queue type (key in `QueueType`)
+// $args: queue args
+// $machine: RattanMachine
+// $trace: trace for BwReplayDevice
+macro_rules! bwreplay_q_args_into_machine {
+    ($type:ident, $args:expr, $machine:expr, $trace:expr) => {
+        paste!(
+            match serde_json::from_str::<[<$type QueueConfig>]> (&$args.unwrap_or("{}".to_string())) {
+                Ok(config) => {
+                    let packet_queue: [<$type Queue>]<StdPacket> = config.into();
+                    let bw_device = BwReplayDevice::new($trace, packet_queue);
+                    $machine.add_device(bw_device)
+                }
+                Err(e) => {
+                    error!("Failed to parse uplink-queue-args: {}", e);
+                    return;
+                }
+            }
+        )
+    };
+}
+
+fn mahimahi_file_to_pattern(filename: &str) -> Vec<u64> {
+    let trace_file = std::fs::File::open(&filename).expect("Failed to open uplink trace file");
+    let trace_pattern = std::io::BufReader::new(trace_file)
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            let line = line
+                .map_err(|e| {
+                    error!("Failed to read line {} in {}: {}", i, &filename, e);
+                    e
+                })
+                .unwrap();
+            let line = line.trim();
+            let line = line
+                .parse::<u64>()
+                .map_err(|e| {
+                    error!("Failed to parse line {} in {}: {}", i, &filename, e);
+                    e
+                })
+                .unwrap();
+            line
+        })
+        .collect();
+    info!("Trace pattern: {:?}", trace_pattern);
+    trace_pattern
 }
 
 fn main() {
@@ -184,7 +236,7 @@ fn main() {
                             machine.add_device(bw_device)
                         }
                         Some(QueueType::DropTail) => {
-                            q_args_into_machine!(
+                            bw_q_args_into_machine!(
                                 DropTail,
                                 rattan_opts.uplink_queue_args,
                                 machine,
@@ -192,7 +244,7 @@ fn main() {
                             )
                         }
                         Some(QueueType::DropHead) => {
-                            q_args_into_machine!(
+                            bw_q_args_into_machine!(
                                 DropHead,
                                 rattan_opts.uplink_queue_args,
                                 machine,
@@ -200,7 +252,7 @@ fn main() {
                             )
                         }
                         Some(QueueType::CoDel) => {
-                            q_args_into_machine!(
+                            bw_q_args_into_machine!(
                                 CoDel,
                                 rattan_opts.uplink_queue_args,
                                 machine,
@@ -209,6 +261,49 @@ fn main() {
                         }
                     };
                     info!(bw_rx, bw_tx, "Uplink bandwidth");
+                    left_fd.push(bw_tx);
+                    left_fd.push(bw_rx);
+                } else if let Some(trace_file) = rattan_opts.uplink_trace {
+                    let trace_pattern = mahimahi_file_to_pattern(&trace_file);
+                    let trace = netem_trace::load_mahimahi_trace(trace_pattern, None)
+                        .map_err(|e| {
+                            error!("Failed to load uplink trace file {}: {}", &trace_file, e);
+                            e
+                        })
+                        .unwrap();
+                    let trace = Box::new(trace.build()) as Box<dyn BwTrace>;
+                    let (bw_rx, bw_tx) = match rattan_opts.uplink_queue {
+                        Some(QueueType::Infinite) | None => {
+                            let packet_queue = InfiniteQueue::new();
+                            let bw_device = BwReplayDevice::new(trace, packet_queue);
+                            machine.add_device(bw_device)
+                        }
+                        Some(QueueType::DropTail) => {
+                            bwreplay_q_args_into_machine!(
+                                DropTail,
+                                rattan_opts.uplink_queue_args,
+                                machine,
+                                trace
+                            )
+                        }
+                        Some(QueueType::DropHead) => {
+                            bwreplay_q_args_into_machine!(
+                                DropHead,
+                                rattan_opts.uplink_queue_args,
+                                machine,
+                                trace
+                            )
+                        }
+                        Some(QueueType::CoDel) => {
+                            bwreplay_q_args_into_machine!(
+                                CoDel,
+                                rattan_opts.uplink_queue_args,
+                                machine,
+                                trace
+                            )
+                        }
+                    };
+                    info!(bw_rx, bw_tx, "Uplink trace");
                     left_fd.push(bw_tx);
                     left_fd.push(bw_rx);
                 }
@@ -222,7 +317,7 @@ fn main() {
                             machine.add_device(bw_device)
                         }
                         Some(QueueType::DropTail) => {
-                            q_args_into_machine!(
+                            bw_q_args_into_machine!(
                                 DropTail,
                                 rattan_opts.downlink_queue_args,
                                 machine,
@@ -230,7 +325,7 @@ fn main() {
                             )
                         }
                         Some(QueueType::DropHead) => {
-                            q_args_into_machine!(
+                            bw_q_args_into_machine!(
                                 DropHead,
                                 rattan_opts.downlink_queue_args,
                                 machine,
@@ -238,7 +333,7 @@ fn main() {
                             )
                         }
                         Some(QueueType::CoDel) => {
-                            q_args_into_machine!(
+                            bw_q_args_into_machine!(
                                 CoDel,
                                 rattan_opts.downlink_queue_args,
                                 machine,
@@ -249,6 +344,49 @@ fn main() {
                     info!(bw_rx, bw_tx, "Downlink bandwidth");
                     right_fd.push(bw_tx);
                     right_fd.push(bw_rx);
+                } else if let Some(trace_file) = rattan_opts.downlink_trace {
+                    let trace_pattern = mahimahi_file_to_pattern(&trace_file);
+                    let trace = netem_trace::load_mahimahi_trace(trace_pattern, None)
+                        .map_err(|e| {
+                            error!("Failed to load downlink trace file {}: {}", &trace_file, e);
+                            e
+                        })
+                        .unwrap();
+                    let trace = Box::new(trace.build()) as Box<dyn BwTrace>;
+                    let (bw_rx, bw_tx) = match rattan_opts.downlink_queue {
+                        Some(QueueType::Infinite) | None => {
+                            let packet_queue = InfiniteQueue::new();
+                            let bw_device = BwReplayDevice::new(trace, packet_queue);
+                            machine.add_device(bw_device)
+                        }
+                        Some(QueueType::DropTail) => {
+                            bwreplay_q_args_into_machine!(
+                                DropTail,
+                                rattan_opts.downlink_queue_args,
+                                machine,
+                                trace
+                            )
+                        }
+                        Some(QueueType::DropHead) => {
+                            bwreplay_q_args_into_machine!(
+                                DropHead,
+                                rattan_opts.downlink_queue_args,
+                                machine,
+                                trace
+                            )
+                        }
+                        Some(QueueType::CoDel) => {
+                            bwreplay_q_args_into_machine!(
+                                CoDel,
+                                rattan_opts.downlink_queue_args,
+                                machine,
+                                trace
+                            )
+                        }
+                    };
+                    info!(bw_rx, bw_tx, "Downlink trace");
+                    left_fd.push(bw_tx);
+                    left_fd.push(bw_rx);
                 }
 
                 if let Some(delay) = rattan_opts.uplink_delay {
