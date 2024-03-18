@@ -183,7 +183,8 @@ where
                                     match tx.enqueue(p) {
                                         Ok(_) => {}
                                         Err(Error::ChannelError(_)) => {
-                                            debug!(rx_id, tx_id, "Core router exited since the channel is closed");
+                                            token_dup.cancel();
+                                            info!(rx_id, tx_id, "Core router exited since the channel is closed");
                                             return
                                         }
                                         Err(e) => {
