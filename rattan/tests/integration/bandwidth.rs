@@ -329,7 +329,7 @@ fn test_droptail_queue() {
         info!("Send 30 packets(1000B) with 1.05ms interval");
         let mut next_time = Instant::now();
         for i in 0..30 {
-            client_socket.send(&[i as u8; 1000 - 42]).unwrap();
+            client_socket.send(&[i as u8; 1000 - 28]).unwrap(); // 28 = 20(IPv4) + 8(UDP)
             next_time += Duration::from_micros(1050);
             sleep(next_time - Instant::now());
         }
@@ -357,7 +357,7 @@ fn test_droptail_queue() {
         info!("Send 30 packets(50B) with 1.05ms interval");
         let mut next_time = Instant::now();
         for i in 0..30 {
-            client_socket.send(&[i as u8; 50 - 42]).unwrap();
+            client_socket.send(&[i as u8; 50 - 28]).unwrap(); // 28 = 20(IPv4) + 8(UDP)
             next_time += Duration::from_micros(1050);
             sleep(next_time - Instant::now());
         }
@@ -494,7 +494,7 @@ fn test_drophead_queue() {
         info!("Send 30 packets(1000B) with 1.05ms interval");
         let mut next_time = Instant::now();
         for i in 0..30 {
-            client_socket.send(&[i as u8; 1000 - 42]).unwrap();
+            client_socket.send(&[i as u8; 1000 - 28]).unwrap(); // 28 = 20(IPv4) + 8(UDP)
             next_time += Duration::from_micros(1050);
             sleep(next_time - Instant::now());
         }
@@ -524,7 +524,7 @@ fn test_drophead_queue() {
         info!("Send 30 packets(50B) with 1.05ms interval");
         let mut next_time = Instant::now();
         for i in 0..30 {
-            client_socket.send(&[i as u8; 50 - 42]).unwrap();
+            client_socket.send(&[i as u8; 50 - 28]).unwrap(); // 28 = 20(IPv4) + 8(UDP)
             next_time += Duration::from_micros(1050);
             sleep(next_time - Instant::now());
         }
@@ -672,7 +672,7 @@ fn test_codel_queue() {
         info!("Send 80 packets(1000B) with 2.05ms interval");
         let mut next_time = Instant::now();
         for i in 0..80 {
-            client_socket.send(&[i as u8; 1000 - 42]).unwrap();
+            client_socket.send(&[i as u8; 1000 - 28]).unwrap(); // 28 = 20(IPv4) + 8(UDP)
             next_time += Duration::from_micros(2050);
             sleep(next_time - Instant::now());
         }
@@ -719,7 +719,7 @@ fn test_codel_queue() {
         info!("Send 80 packets(50B) with 2.05ms interval");
         let mut next_time = Instant::now();
         for i in 0..80 {
-            client_socket.send(&[i as u8; 50 - 42]).unwrap();
+            client_socket.send(&[i as u8; 50 - 28]).unwrap(); // 28 = 20(IPv4) + 8(UDP)
             next_time += Duration::from_micros(2050);
             sleep(next_time - Instant::now());
         }
