@@ -407,7 +407,7 @@ where
                     self.set_config(config);
                 }
                 _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
-                    match self.next_change(Instant::now()) {
+                    match self.next_change(self.next_change) {
                         Some(next_change) => {
                             self.next_change = next_change;
                         }
@@ -437,7 +437,7 @@ where
                     self.set_config(config);
                 }
                 _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
-                    match self.next_change(Instant::now()) {
+                    match self.next_change(self.next_change) {
                         Some(next_change) => {
                             self.next_change = next_change;
                         }
