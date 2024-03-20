@@ -19,6 +19,7 @@ pub mod queue;
 pub const MAX_BANDWIDTH: Bandwidth = Bandwidth::from_bps(u64::MAX);
 pub const LARGE_DURATION: Duration = Duration::from_secs(10 * 365 * 24 * 60 * 60);
 
+// Length should be the network layer length, not the link layer length
 // Requires the bandwidth to be less than 2^64 bps
 fn transfer_time(length: usize, bandwidth: Bandwidth) -> Delay {
     let bits = length * 8;
@@ -160,7 +161,7 @@ where
 
         // send the packet
         let packet = packet.unwrap();
-        let transfer_time = transfer_time(packet.length(), self.bandwidth);
+        let transfer_time = transfer_time(packet.length() - 14, self.bandwidth); // 14 is the length of Ethernet header
         if packet.get_timestamp() >= self.next_available {
             // the packet arrives after next_available
             self.next_available = packet.get_timestamp() + transfer_time;
@@ -465,7 +466,7 @@ where
 
         // send the packet
         let packet = packet.unwrap();
-        let transfer_time = transfer_time(packet.length(), self.current_bandwidth);
+        let transfer_time = transfer_time(packet.length() - 14, self.current_bandwidth); // 14 is the length of Ethernet header
         if packet.get_timestamp() >= self.next_available {
             // the packet arrives after next_available
             self.next_available = packet.get_timestamp() + transfer_time;
