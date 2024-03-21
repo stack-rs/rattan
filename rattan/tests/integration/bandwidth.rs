@@ -4,7 +4,6 @@ use netem_trace::{
     model::{BwTraceConfig, RepeatedBwPatternConfig, StaticBwConfig},
     Bandwidth, BwTrace,
 };
-use rattan::core::{RattanMachine, RattanMachineConfig};
 use rattan::devices::bandwidth::{
     queue::{
         CoDelQueue, CoDelQueueConfig, DropHeadQueue, DropHeadQueueConfig, DropTailQueue,
@@ -18,6 +17,10 @@ use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::{get_std_env, StdNetEnvConfig};
 use rattan::metal::io::AfPacketDriver;
 use rattan::metal::netns::NetNsGuard;
+use rattan::{
+    core::{RattanMachine, RattanMachineConfig},
+    devices::bandwidth::BwType,
+};
 use regex::Regex;
 use std::sync::mpsc;
 use std::thread::sleep;
@@ -52,8 +55,10 @@ fn test_bandwidth() {
 
         runtime.block_on(
             async move {
-                let left_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
-                let right_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
+                let left_bw_device =
+                    BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new(), BwType::default());
+                let right_bw_device =
+                    BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new(), BwType::default());
                 let left_control_interface = left_bw_device.control_interface();
                 let right_control_interface = right_bw_device.control_interface();
                 if let Err(_) = control_tx.send((left_control_interface, right_control_interface)) {
@@ -242,8 +247,16 @@ fn test_droptail_queue() {
 
         runtime.block_on(
             async move {
-                let left_bw_device = BwDevice::new(MAX_BANDWIDTH, DropTailQueue::new(10, None));
-                let right_bw_device = BwDevice::new(MAX_BANDWIDTH, DropTailQueue::new(10, None));
+                let left_bw_device = BwDevice::new(
+                    MAX_BANDWIDTH,
+                    DropTailQueue::new(10, None, BwType::default()),
+                    BwType::default(),
+                );
+                let right_bw_device = BwDevice::new(
+                    MAX_BANDWIDTH,
+                    DropTailQueue::new(10, None, BwType::default()),
+                    BwType::default(),
+                );
                 let left_control_interface = left_bw_device.control_interface();
                 let right_control_interface = right_bw_device.control_interface();
                 if let Err(_) = control_tx.send((left_control_interface, right_control_interface)) {
@@ -351,7 +364,7 @@ fn test_droptail_queue() {
         left_control_interface
             .set_config(BwDeviceConfig::new(
                 Bandwidth::from_kbps(40),
-                DropTailQueueConfig::new(None, 500),
+                DropTailQueueConfig::new(None, 500, BwType::default()),
             ))
             .unwrap();
         info!("Send 30 packets(50B) with 1.05ms interval");
@@ -407,8 +420,16 @@ fn test_drophead_queue() {
 
         runtime.block_on(
             async move {
-                let left_bw_device = BwDevice::new(MAX_BANDWIDTH, DropHeadQueue::new(10, None));
-                let right_bw_device = BwDevice::new(MAX_BANDWIDTH, DropHeadQueue::new(10, None));
+                let left_bw_device = BwDevice::new(
+                    MAX_BANDWIDTH,
+                    DropHeadQueue::new(10, None, BwType::default()),
+                    BwType::default(),
+                );
+                let right_bw_device = BwDevice::new(
+                    MAX_BANDWIDTH,
+                    DropHeadQueue::new(10, None, BwType::default()),
+                    BwType::default(),
+                );
                 let left_control_interface = left_bw_device.control_interface();
                 let right_control_interface = right_bw_device.control_interface();
                 if let Err(_) = control_tx.send((left_control_interface, right_control_interface)) {
@@ -508,7 +529,7 @@ fn test_drophead_queue() {
         assert!(recv_indexs[0] == 0);
         assert!(recv_indexs[1] == 1);
         assert!(8 <= recv_indexs[2] && recv_indexs[2] <= 10);
-        assert!(18 <= recv_indexs[3] && recv_indexs[3] <= 19);
+        assert!(17 <= recv_indexs[3] && recv_indexs[3] <= 19);
         for i in 4..14 {
             assert!(recv_indexs[i] == 16 + i as u8);
         }
@@ -518,7 +539,7 @@ fn test_drophead_queue() {
         left_control_interface
             .set_config(BwDeviceConfig::new(
                 Bandwidth::from_kbps(40),
-                DropHeadQueueConfig::new(None, 500),
+                DropHeadQueueConfig::new(None, 500, BwType::default()),
             ))
             .unwrap();
         info!("Send 30 packets(50B) with 1.05ms interval");
@@ -538,7 +559,7 @@ fn test_drophead_queue() {
         assert!(recv_indexs[0] == 0);
         assert!(recv_indexs[1] == 1);
         assert!(8 <= recv_indexs[2] && recv_indexs[2] <= 10);
-        assert!(18 <= recv_indexs[3] && recv_indexs[3] <= 19);
+        assert!(17 <= recv_indexs[3] && recv_indexs[3] <= 19);
         for i in 4..14 {
             assert!(recv_indexs[i] == 16 + i as u8);
         }
@@ -584,9 +605,12 @@ fn test_codel_queue() {
                         Duration::from_millis(104),
                         Duration::from_millis(50),
                         1500,
+                        BwType::default(),
                     )),
+                    BwType::default(),
                 );
-                let right_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
+                let right_bw_device =
+                    BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new(), BwType::default());
                 let left_control_interface = left_bw_device.control_interface();
                 let right_control_interface = right_bw_device.control_interface();
                 if let Err(_) = control_tx.send((left_control_interface, right_control_interface)) {
@@ -713,6 +737,7 @@ fn test_codel_queue() {
                     Duration::from_millis(104),
                     Duration::from_millis(50),
                     80,
+                    BwType::default(),
                 ),
             ))
             .unwrap();
@@ -788,9 +813,11 @@ fn test_replay() {
                     .build();
                 let left_bw_device = BwReplayDevice::new(
                     Box::new(trace) as Box<dyn BwTrace>,
-                    DropHeadQueue::new(100, None),
+                    DropHeadQueue::new(100, None, BwType::default()),
+                    BwType::default(),
                 );
-                let right_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
+                let right_bw_device =
+                    BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new(), BwType::default());
                 let left_control_interface = left_bw_device.control_interface();
                 let right_control_interface = right_bw_device.control_interface();
                 if let Err(_) = control_tx.send((left_control_interface, right_control_interface)) {

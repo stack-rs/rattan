@@ -8,6 +8,7 @@ use rattan::devices::bandwidth::queue::{
     CoDelQueue, CoDelQueueConfig, DropHeadQueue, DropHeadQueueConfig, DropTailQueue,
     DropTailQueueConfig,
 };
+use rattan::devices::bandwidth::BwType;
 use rattan::devices::bandwidth::{queue::InfiniteQueue, BwDevice, BwReplayDevice};
 use rattan::devices::delay::{DelayDevice, DelayDeviceConfig};
 use rattan::devices::external::VirtualEthernet;
@@ -110,7 +111,7 @@ macro_rules! bw_q_args_into_machine {
             match serde_json::from_str::<[<$type QueueConfig>]> (&$args.unwrap_or("{}".to_string())) {
                 Ok(config) => {
                     let packet_queue: [<$type Queue>]<StdPacket> = config.into();
-                    let bw_device = BwDevice::new($bandwidth, packet_queue);
+                    let bw_device = BwDevice::new($bandwidth, packet_queue, BwType::default());
                     $machine.add_device(bw_device)
                 }
                 Err(e) => {
@@ -133,7 +134,7 @@ macro_rules! bwreplay_q_args_into_machine {
             match serde_json::from_str::<[<$type QueueConfig>]> (&$args.unwrap_or("{}".to_string())) {
                 Ok(config) => {
                     let packet_queue: [<$type Queue>]<StdPacket> = config.into();
-                    let bw_device = BwReplayDevice::new($trace, packet_queue);
+                    let bw_device = BwReplayDevice::new($trace, packet_queue, BwType::default());
                     $machine.add_device(bw_device)
                 }
                 Err(e) => {
@@ -232,7 +233,8 @@ fn main() {
                     let (bw_rx, bw_tx) = match rattan_opts.uplink_queue {
                         Some(QueueType::Infinite) | None => {
                             let packet_queue = InfiniteQueue::new();
-                            let bw_device = BwDevice::new(bandwidth, packet_queue);
+                            let bw_device =
+                                BwDevice::new(bandwidth, packet_queue, BwType::default());
                             machine.add_device(bw_device)
                         }
                         Some(QueueType::DropTail) => {
@@ -275,7 +277,8 @@ fn main() {
                     let (bw_rx, bw_tx) = match rattan_opts.uplink_queue {
                         Some(QueueType::Infinite) | None => {
                             let packet_queue = InfiniteQueue::new();
-                            let bw_device = BwReplayDevice::new(trace, packet_queue);
+                            let bw_device =
+                                BwReplayDevice::new(trace, packet_queue, BwType::default());
                             machine.add_device(bw_device)
                         }
                         Some(QueueType::DropTail) => {
@@ -313,7 +316,8 @@ fn main() {
                     let (bw_rx, bw_tx) = match rattan_opts.downlink_queue {
                         Some(QueueType::Infinite) | None => {
                             let packet_queue = InfiniteQueue::new();
-                            let bw_device = BwDevice::new(bandwidth, packet_queue);
+                            let bw_device =
+                                BwDevice::new(bandwidth, packet_queue, BwType::default());
                             machine.add_device(bw_device)
                         }
                         Some(QueueType::DropTail) => {
@@ -356,7 +360,8 @@ fn main() {
                     let (bw_rx, bw_tx) = match rattan_opts.downlink_queue {
                         Some(QueueType::Infinite) | None => {
                             let packet_queue = InfiniteQueue::new();
-                            let bw_device = BwReplayDevice::new(trace, packet_queue);
+                            let bw_device =
+                                BwReplayDevice::new(trace, packet_queue, BwType::default());
                             machine.add_device(bw_device)
                         }
                         Some(QueueType::DropTail) => {

@@ -4,6 +4,7 @@ use netem_trace::Bandwidth;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rattan::core::{RattanMachine, RattanMachineConfig};
+use rattan::devices::bandwidth::BwType;
 use rattan::devices::bandwidth::{queue::InfiniteQueue, BwDevice, BwDeviceConfig, MAX_BANDWIDTH};
 use rattan::devices::delay::{DelayDevice, DelayDeviceConfig};
 use rattan::devices::loss::{LossDevice, LossDeviceConfig};
@@ -48,8 +49,10 @@ fn test_http() {
         runtime.block_on(
             async move {
                 let rng = StdRng::seed_from_u64(42);
-                let left_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
-                let right_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
+                let left_bw_device =
+                    BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new(), BwType::default());
+                let right_bw_device =
+                    BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new(), BwType::default());
                 let left_delay_device = DelayDevice::<StdPacket>::new();
                 let right_delay_device = DelayDevice::<StdPacket>::new();
                 let left_loss_device = LossDevice::<StdPacket, StdRng>::new(rng.clone());

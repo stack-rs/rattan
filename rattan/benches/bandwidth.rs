@@ -4,7 +4,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use rattan::{
     core::{RattanMachine, RattanMachineConfig},
     devices::{
-        bandwidth::{queue::InfiniteQueue, BwDevice, MAX_BANDWIDTH},
+        bandwidth::{queue::InfiniteQueue, BwDevice, BwType, MAX_BANDWIDTH},
         external::VirtualEthernet,
         StdPacket,
     },
@@ -30,8 +30,10 @@ fn prepare_env() -> (JoinHandle<()>, CancellationToken, Arc<NetNs>, Arc<NetNs>) 
             .unwrap();
 
         runtime.block_on(async move {
-            let left_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
-            let right_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
+            let left_bw_device =
+                BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new(), BwType::default());
+            let right_bw_device =
+                BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new(), BwType::default());
             let left_device =
                 VirtualEthernet::<StdPacket, AfPacketDriver>::new(_std_env.left_pair.right.clone());
             let right_device =

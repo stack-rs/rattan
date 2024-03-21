@@ -21,14 +21,37 @@ pub const LARGE_DURATION: Duration = Duration::from_secs(10 * 365 * 24 * 60 * 60
 
 // Length should be the network layer length, not the link layer length
 // Requires the bandwidth to be less than 2^64 bps
-fn transfer_time(length: usize, bandwidth: Bandwidth) -> Delay {
-    let bits = length * 8;
+fn transfer_time(length: usize, bandwidth: Bandwidth, bw_type: BwType) -> Delay {
+    let bits = (length + bw_type.extra_length()) * 8;
     let capacity = bandwidth.as_bps() as u64;
     if capacity == 0 {
         LARGE_DURATION
     } else {
         let seconds = bits as f64 / capacity as f64;
         Delay::from_secs_f64(seconds)
+    }
+}
+
+// Bandwidth calculation type, deciding the extra length of the packet
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[derive(Debug, Clone, Copy)]
+pub enum BwType {
+    LinkLayer, // + 38 = 8 (Preamble + SFD) + 14 (Ethernet header) + 4 (CRC) + 12 (Interframe gap)
+    NetworkLayer, // + 0
+}
+
+impl BwType {
+    pub fn extra_length(&self) -> usize {
+        match self {
+            BwType::LinkLayer => 38,
+            BwType::NetworkLayer => 0,
+        }
+    }
+}
+
+impl Default for BwType {
+    fn default() -> Self {
+        BwType::NetworkLayer
     }
 }
 
@@ -69,6 +92,7 @@ where
     Q: PacketQueue<P>,
 {
     egress: mpsc::UnboundedReceiver<P>,
+    bw_type: BwType,
     bandwidth: Bandwidth,
     packet_queue: Q,
     next_available: Instant,
@@ -161,7 +185,7 @@ where
 
         // send the packet
         let packet = packet.unwrap();
-        let transfer_time = transfer_time(packet.length() - 14, self.bandwidth); // 14 is the length of Ethernet header
+        let transfer_time = transfer_time(packet.l3_length(), self.bandwidth, self.bw_type);
         if packet.get_timestamp() >= self.next_available {
             // the packet arrives after next_available
             self.next_available = packet.get_timestamp() + transfer_time;
@@ -277,7 +301,7 @@ where
     P: Packet,
     Q: PacketQueue<P>,
 {
-    pub fn new(bandwidth: Bandwidth, packet_queue: Q) -> BwDevice<P, Q> {
+    pub fn new(bandwidth: Bandwidth, packet_queue: Q, bw_type: BwType) -> BwDevice<P, Q> {
         debug!("New BwDevice");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
@@ -285,6 +309,7 @@ where
             ingress: Arc::new(BwDeviceIngress { ingress: rx }),
             egress: BwDeviceEgress {
                 egress: tx,
+                bw_type,
                 bandwidth,
                 packet_queue,
                 next_available: Instant::now(),
@@ -304,6 +329,7 @@ where
     Q: PacketQueue<P>,
 {
     egress: mpsc::UnboundedReceiver<P>,
+    bw_type: BwType,
     trace: Box<dyn BwTrace>,
     packet_queue: Q,
     current_bandwidth: Bandwidth,
@@ -466,7 +492,7 @@ where
 
         // send the packet
         let packet = packet.unwrap();
-        let transfer_time = transfer_time(packet.length() - 14, self.current_bandwidth); // 14 is the length of Ethernet header
+        let transfer_time = transfer_time(packet.l3_length(), self.current_bandwidth, self.bw_type);
         if packet.get_timestamp() >= self.next_available {
             // the packet arrives after next_available
             self.next_available = packet.get_timestamp() + transfer_time;
@@ -582,7 +608,7 @@ where
     P: Packet,
     Q: PacketQueue<P>,
 {
-    pub fn new(trace: Box<dyn BwTrace>, packet_queue: Q) -> BwReplayDevice<P, Q> {
+    pub fn new(trace: Box<dyn BwTrace>, packet_queue: Q, bw_type: BwType) -> BwReplayDevice<P, Q> {
         debug!("New BwReplayDevice");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
@@ -590,6 +616,7 @@ where
             ingress: Arc::new(BwReplayDeviceIngress { ingress: rx }),
             egress: BwReplayDeviceEgress {
                 egress: tx,
+                bw_type,
                 trace,
                 packet_queue,
                 current_bandwidth: Bandwidth::from_bps(0),
