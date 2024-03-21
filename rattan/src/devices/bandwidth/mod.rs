@@ -399,18 +399,15 @@ where
     // Return the next change time or **None** if the trace goes to end
     fn next_change(&mut self, change_time: Instant) -> Option<Instant> {
         let next_bw = self.trace.next_bw();
-        match next_bw {
-            Some((bandwidth, duration)) => {
-                self.change_bandwidth(bandwidth, change_time);
-                debug!(
-                    "Bandwidth changed to {:?}, next change after {:?}",
-                    bandwidth,
-                    change_time + duration - Instant::now()
-                );
-                Some(change_time + duration)
-            }
-            None => None,
-        }
+        next_bw.map(|(bandwidth, duration)| {
+            self.change_bandwidth(bandwidth, change_time);
+            debug!(
+                "Bandwidth changed to {:?}, next change after {:?}",
+                bandwidth,
+                change_time + duration - Instant::now()
+            );
+            change_time + duration
+        })
     }
 }
 
