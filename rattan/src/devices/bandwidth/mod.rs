@@ -34,8 +34,7 @@ fn transfer_time(length: usize, bandwidth: Bandwidth, bw_type: BwType) -> Delay 
 
 // Bandwidth calculation type, deciding the extra length of the packet
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-#[derive(Debug, Clone, Copy)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum BwType {
     LinkLayer, // + 38 = 8 (Preamble + SFD) + 14 (Ethernet header) + 4 (CRC) + 12 (Interframe gap)
     #[default]
@@ -50,8 +49,6 @@ impl BwType {
         }
     }
 }
-
-
 
 pub struct BwDeviceIngress<P>
 where
@@ -111,7 +108,7 @@ where
                 self.next_available - now
             );
             self.next_available = if bandwidth == Bandwidth::from_bps(0) {
-                Instant::now() + LARGE_DURATION
+                now + LARGE_DURATION
             } else {
                 now + (self.next_available - now)
                     .mul_f64(self.bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64)
