@@ -35,8 +35,10 @@ fn transfer_time(length: usize, bandwidth: Bandwidth, bw_type: BwType) -> Delay 
 // Bandwidth calculation type, deciding the extra length of the packet
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Debug, Clone, Copy)]
+#[derive(Default)]
 pub enum BwType {
     LinkLayer, // + 38 = 8 (Preamble + SFD) + 14 (Ethernet header) + 4 (CRC) + 12 (Interframe gap)
+    #[default]
     NetworkLayer, // + 0
 }
 
@@ -49,11 +51,7 @@ impl BwType {
     }
 }
 
-impl Default for BwType {
-    fn default() -> Self {
-        BwType::NetworkLayer
-    }
-}
+
 
 pub struct BwDeviceIngress<P>
 where

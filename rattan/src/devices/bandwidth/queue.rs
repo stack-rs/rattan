@@ -200,7 +200,7 @@ impl DropHeadQueueConfig {
         Self {
             packet_limit: packet_limit.into(),
             byte_limit: byte_limit.into(),
-            bw_type: bw_type,
+            bw_type,
         }
     }
 }

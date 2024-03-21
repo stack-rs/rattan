@@ -147,7 +147,7 @@ macro_rules! bwreplay_q_args_into_machine {
 }
 
 fn mahimahi_file_to_pattern(filename: &str) -> Vec<u64> {
-    let trace_file = std::fs::File::open(&filename).expect("Failed to open uplink trace file");
+    let trace_file = std::fs::File::open(filename).expect("Failed to open uplink trace file");
     let trace_pattern = std::io::BufReader::new(trace_file)
         .lines()
         .enumerate()
@@ -159,14 +159,14 @@ fn mahimahi_file_to_pattern(filename: &str) -> Vec<u64> {
                 })
                 .unwrap();
             let line = line.trim();
-            let line = line
+            
+            line
                 .parse::<u64>()
                 .map_err(|e| {
                     error!("Failed to parse line {} in {}: {}", i, &filename, e);
                     e
                 })
-                .unwrap();
-            line
+                .unwrap()
         })
         .collect();
     info!("Trace pattern: {:?}", trace_pattern);
