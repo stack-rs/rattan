@@ -2,7 +2,7 @@ use crate::metal::{
     netns::NetNs,
     route::{
         add_arp_entry_with_netns, add_gateway_with_netns, add_route_with_netns,
-        set_link_up_with_netns,
+        set_loopback_up_with_netns,
     },
     veth::{MacAddr, VethDevice, VethPair, VethPairBuilder},
 };
@@ -227,9 +227,9 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
     }
 
     debug!("Set lo interface up");
-    set_link_up_with_netns(1, client_netns.clone());
-    set_link_up_with_netns(1, rattan_netns.clone());
-    set_link_up_with_netns(1, server_netns.clone());
+    set_loopback_up_with_netns(client_netns.clone());
+    set_loopback_up_with_netns(rattan_netns.clone());
+    set_loopback_up_with_netns(server_netns.clone());
 
     Ok(StdNetEnv {
         left_ns: client_netns,
