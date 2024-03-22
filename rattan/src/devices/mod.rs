@@ -15,7 +15,12 @@ pub mod loss;
 pub trait Packet: Debug + 'static + Send {
     fn empty(maximum: usize) -> Self;
     fn from_raw_buffer(buf: &[u8]) -> Self;
+    // Raw buffer length
     fn length(&self) -> usize;
+    // Link layer length, i.e. the length of the Ethernet frame (not including the preamble, SFD, FCS and IPG)
+    fn l2_length(&self) -> usize;
+    // Network layer length
+    fn l3_length(&self) -> usize;
     fn as_slice(&self) -> &[u8];
     fn as_raw_buffer(&mut self) -> &mut [u8];
     fn ether_hdr(&self) -> Option<Ethernet2Header>;
@@ -48,6 +53,15 @@ impl Packet for StdPacket {
 
     fn length(&self) -> usize {
         self.buf.len()
+    }
+
+    fn l2_length(&self) -> usize {
+        self.buf.len()
+    }
+
+    fn l3_length(&self) -> usize {
+        // 14 is the length of the Ethernet header
+        self.buf.len() - 14
     }
 
     fn as_slice(&self) -> &[u8] {

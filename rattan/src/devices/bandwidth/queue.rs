@@ -6,6 +6,8 @@ use std::fmt::Debug;
 use tokio::time::{Duration, Instant};
 use tracing::{debug, trace};
 
+use super::BwType;
+
 pub trait PacketQueue<P>: Send
 where
     P: Packet,
@@ -87,29 +89,33 @@ where
 pub struct DropTailQueueConfig {
     pub packet_limit: Option<usize>,
     pub byte_limit: Option<usize>,
+    pub bw_type: BwType,
 }
 
 impl DropTailQueueConfig {
     pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
         packet_limit: A,
         byte_limit: B,
+        bw_type: BwType,
     ) -> Self {
         Self {
             packet_limit: packet_limit.into(),
             byte_limit: byte_limit.into(),
+            bw_type,
         }
     }
 }
 
 impl<P> From<DropTailQueueConfig> for DropTailQueue<P> {
     fn from(val: DropTailQueueConfig) -> Self {
-        DropTailQueue::new(val.packet_limit, val.byte_limit)
+        DropTailQueue::new(val.packet_limit, val.byte_limit, val.bw_type)
     }
 }
 
 #[derive(Debug)]
 pub struct DropTailQueue<P> {
     queue: VecDeque<P>,
+    bw_type: BwType,
     packet_limit: Option<usize>,
     byte_limit: Option<usize>,
     now_bytes: usize,
@@ -119,12 +125,14 @@ impl<P> DropTailQueue<P> {
     pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
         packet_limit: A,
         byte_limit: B,
+        bw_type: BwType,
     ) -> Self {
         let packet_limit = packet_limit.into();
         let byte_limit = byte_limit.into();
         debug!(packet_limit, byte_limit, "New DropTailQueue");
         Self {
             queue: VecDeque::new(),
+            bw_type,
             packet_limit,
             byte_limit,
             now_bytes: 0,
@@ -141,24 +149,25 @@ where
     fn configure(&mut self, config: Self::Config) {
         self.packet_limit = config.packet_limit;
         self.byte_limit = config.byte_limit;
+        self.bw_type = config.bw_type;
     }
 
     fn enqueue(&mut self, packet: P) {
         if self
             .packet_limit
             .map_or(true, |limit| self.queue.len() < limit)
-            && self
-                .byte_limit
-                .map_or(true, |limit| self.now_bytes + packet.length() <= limit)
+            && self.byte_limit.map_or(true, |limit| {
+                self.now_bytes + packet.l3_length() + self.bw_type.extra_length() <= limit
+            })
         {
-            self.now_bytes += packet.length();
+            self.now_bytes += packet.l3_length() + self.bw_type.extra_length();
             self.queue.push_back(packet);
         } else {
             trace!(
                 queue_len = self.queue.len(),
                 now_bytes = self.now_bytes,
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                "Drop packet(len: {}) when enqueue", packet.length()
+                "Drop packet(l3_len: {}, extra_len: {}) when enqueue", packet.l3_length(), self.bw_type.extra_length()
             );
         }
     }
@@ -166,7 +175,7 @@ where
     fn dequeue(&mut self) -> Option<P> {
         match self.queue.pop_front() {
             Some(packet) => {
-                self.now_bytes -= packet.length();
+                self.now_bytes -= packet.l3_length() + self.bw_type.extra_length();
                 Some(packet)
             }
             None => None,
@@ -179,29 +188,33 @@ where
 pub struct DropHeadQueueConfig {
     pub packet_limit: Option<usize>,
     pub byte_limit: Option<usize>,
+    pub bw_type: BwType,
 }
 
 impl DropHeadQueueConfig {
     pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
         packet_limit: A,
         byte_limit: B,
+        bw_type: BwType,
     ) -> Self {
         Self {
             packet_limit: packet_limit.into(),
             byte_limit: byte_limit.into(),
+            bw_type,
         }
     }
 }
 
 impl<P> From<DropHeadQueueConfig> for DropHeadQueue<P> {
     fn from(val: DropHeadQueueConfig) -> Self {
-        DropHeadQueue::new(val.packet_limit, val.byte_limit)
+        DropHeadQueue::new(val.packet_limit, val.byte_limit, val.bw_type)
     }
 }
 
 #[derive(Debug)]
 pub struct DropHeadQueue<P> {
     queue: VecDeque<P>,
+    bw_type: BwType,
     packet_limit: Option<usize>,
     byte_limit: Option<usize>,
     now_bytes: usize,
@@ -211,12 +224,14 @@ impl<P> DropHeadQueue<P> {
     pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
         packet_limit: A,
         byte_limit: B,
+        bw_type: BwType,
     ) -> Self {
         let packet_limit = packet_limit.into();
         let byte_limit = byte_limit.into();
         debug!(packet_limit, byte_limit, "New DropHeadQueue");
         Self {
             queue: VecDeque::new(),
+            bw_type,
             packet_limit,
             byte_limit,
             now_bytes: 0,
@@ -236,7 +251,7 @@ where
     }
 
     fn enqueue(&mut self, packet: P) {
-        self.now_bytes += packet.length();
+        self.now_bytes += packet.l3_length() + self.bw_type.extra_length();
         self.queue.push_back(packet);
         while self
             .packet_limit
@@ -250,7 +265,7 @@ where
                 after_queue_len = self.queue.len(),
                 after_now_bytes = self.now_bytes,
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                "Drop packet(len: {}) when enqueue another packet", packet.length()
+                "Drop packet(l3_len: {}, extra_len: {}) when enqueue another packet", packet.l3_length(), self.bw_type.extra_length()
             )
         }
     }
@@ -258,7 +273,7 @@ where
     fn dequeue(&mut self) -> Option<P> {
         match self.queue.pop_front() {
             Some(packet) => {
-                self.now_bytes -= packet.length();
+                self.now_bytes -= packet.l3_length() + self.bw_type.extra_length();
                 Some(packet)
             }
             None => None,
@@ -280,6 +295,7 @@ pub struct CoDelQueueConfig {
     #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
     pub target: Duration, // target queue delay
     pub mtu: u32,                  // device MTU, or minimal queue backlog in bytes
+    pub bw_type: BwType,
 }
 
 impl Default for CoDelQueueConfig {
@@ -290,6 +306,7 @@ impl Default for CoDelQueueConfig {
             interval: Duration::from_millis(100),
             target: Duration::from_millis(5),
             mtu: 1500,
+            bw_type: BwType::default(),
         }
     }
 }
@@ -301,6 +318,7 @@ impl CoDelQueueConfig {
         interval: Duration,
         target: Duration,
         mtu: u32,
+        bw_type: BwType,
     ) -> Self {
         Self {
             packet_limit: packet_limit.into(),
@@ -308,6 +326,7 @@ impl CoDelQueueConfig {
             interval,
             target,
             mtu,
+            bw_type,
         }
     }
 }
@@ -394,19 +413,20 @@ where
             .config
             .packet_limit
             .map_or(true, |limit| self.queue.len() < limit)
-            && self
-                .config
-                .byte_limit
-                .map_or(true, |limit| self.now_bytes + packet.length() <= limit)
+            && self.config.byte_limit.map_or(true, |limit| {
+                self.now_bytes + packet.l3_length() + self.config.bw_type.extra_length() <= limit
+            })
         {
-            self.now_bytes += packet.length();
+            self.now_bytes += packet.l3_length() + self.config.bw_type.extra_length();
             self.queue.push_back(packet);
         } else {
             trace!(
                 queue_len = self.queue.len(),
                 now_bytes = self.now_bytes,
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                "Drop packet(len: {}) when enqueue", packet.length()
+                "Drop packet(l3_len: {}, extra_len: {}) when enqueue",
+                packet.l3_length(),
+                self.config.bw_type.extra_length()
             );
         }
     }
@@ -414,7 +434,7 @@ where
     fn dequeue(&mut self) -> Option<P> {
         match self.queue.pop_front() {
             Some(mut packet) => {
-                self.now_bytes -= packet.length();
+                self.now_bytes -= packet.l3_length() + self.config.bw_type.extra_length();
                 let now = Instant::now();
                 let drop = self.should_drop(&packet);
                 trace!(
@@ -442,7 +462,9 @@ where
                                 after_queue_len = self.queue.len(),
                                 after_now_bytes = self.now_bytes,
                                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                                "Drop packet(len: {}) since should drop and now >= self.drop_next", packet.length()
+                                "Drop packet(l3_len: {}, extra_len: {}) since should drop and now >= self.drop_next",
+                                packet.l3_length(),
+                                self.config.bw_type.extra_length()
                             );
                             let new_packet = self.queue.pop_front();
                             if new_packet.is_none() {
@@ -451,7 +473,8 @@ where
                                 return None;
                             }
                             packet = new_packet.unwrap();
-                            self.now_bytes -= packet.length();
+                            self.now_bytes -=
+                                packet.l3_length() + self.config.bw_type.extra_length();
 
                             if self.should_drop(&packet) {
                                 self.drop_next = self.control_law(self.drop_next);
@@ -468,7 +491,9 @@ where
                         after_queue_len = self.queue.len(),
                         after_now_bytes = self.now_bytes,
                         header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                        "Drop packet(len: {}) as the first", packet.length()
+                        "Drop packet(l3_len: {}, extra_len: {}) as the first",
+                        packet.l3_length(),
+                        self.config.bw_type.extra_length()
                     );
                     let new_packet = self.queue.pop_front();
                     if new_packet.is_none() {
@@ -477,7 +502,7 @@ where
                         return None;
                     }
                     packet = new_packet.unwrap();
-                    self.now_bytes -= packet.length();
+                    self.now_bytes -= packet.l3_length() + self.config.bw_type.extra_length();
 
                     self.dropping = true;
                     let delta = self.count - self.lastcount;

@@ -1,7 +1,9 @@
 /// This test need to be run as root (CAP_NET_ADMIN, CAP_SYS_ADMIN and CAP_SYS_RAW)
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test bandwidth --all-features -- --nocapture
-use netem_trace::Bandwidth;
-use rattan::core::{RattanMachine, RattanMachineConfig};
+use netem_trace::{
+    model::{BwTraceConfig, RepeatedBwPatternConfig, StaticBwConfig},
+    Bandwidth, BwTrace,
+};
 use rattan::devices::bandwidth::{
     queue::{
         CoDelQueue, CoDelQueueConfig, DropHeadQueue, DropHeadQueueConfig, DropTailQueue,
@@ -9,11 +11,16 @@ use rattan::devices::bandwidth::{
     },
     BwDevice, BwDeviceConfig, MAX_BANDWIDTH,
 };
+use rattan::devices::bandwidth::{BwReplayDevice, BwReplayDeviceConfig};
 use rattan::devices::external::VirtualEthernet;
 use rattan::devices::{ControlInterface, Device, StdPacket};
 use rattan::env::{get_std_env, StdNetEnvConfig};
 use rattan::metal::io::AfPacketDriver;
 use rattan::metal::netns::NetNsGuard;
+use rattan::{
+    core::{RattanMachine, RattanMachineConfig},
+    devices::bandwidth::BwType,
+};
 use regex::Regex;
 use std::sync::mpsc;
 use std::thread::sleep;
@@ -48,8 +55,10 @@ fn test_bandwidth() {
 
         runtime.block_on(
             async move {
-                let left_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
-                let right_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
+                let left_bw_device =
+                    BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new(), BwType::default());
+                let right_bw_device =
+                    BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new(), BwType::default());
                 let left_control_interface = left_bw_device.control_interface();
                 let right_control_interface = right_bw_device.control_interface();
                 if let Err(_) = control_tx.send((left_control_interface, right_control_interface)) {
@@ -238,8 +247,16 @@ fn test_droptail_queue() {
 
         runtime.block_on(
             async move {
-                let left_bw_device = BwDevice::new(MAX_BANDWIDTH, DropTailQueue::new(10, None));
-                let right_bw_device = BwDevice::new(MAX_BANDWIDTH, DropTailQueue::new(10, None));
+                let left_bw_device = BwDevice::new(
+                    MAX_BANDWIDTH,
+                    DropTailQueue::new(10, None, BwType::default()),
+                    BwType::default(),
+                );
+                let right_bw_device = BwDevice::new(
+                    MAX_BANDWIDTH,
+                    DropTailQueue::new(10, None, BwType::default()),
+                    BwType::default(),
+                );
                 let left_control_interface = left_bw_device.control_interface();
                 let right_control_interface = right_bw_device.control_interface();
                 if let Err(_) = control_tx.send((left_control_interface, right_control_interface)) {
@@ -325,7 +342,7 @@ fn test_droptail_queue() {
         info!("Send 30 packets(1000B) with 1.05ms interval");
         let mut next_time = Instant::now();
         for i in 0..30 {
-            client_socket.send(&[i as u8; 1000 - 42]).unwrap();
+            client_socket.send(&[i as u8; 1000 - 28]).unwrap(); // 28 = 20(IPv4) + 8(UDP)
             next_time += Duration::from_micros(1050);
             sleep(next_time - Instant::now());
         }
@@ -347,13 +364,13 @@ fn test_droptail_queue() {
         left_control_interface
             .set_config(BwDeviceConfig::new(
                 Bandwidth::from_kbps(40),
-                DropTailQueueConfig::new(None, 500),
+                DropTailQueueConfig::new(None, 500, BwType::default()),
             ))
             .unwrap();
         info!("Send 30 packets(50B) with 1.05ms interval");
         let mut next_time = Instant::now();
         for i in 0..30 {
-            client_socket.send(&[i as u8; 50 - 42]).unwrap();
+            client_socket.send(&[i as u8; 50 - 28]).unwrap(); // 28 = 20(IPv4) + 8(UDP)
             next_time += Duration::from_micros(1050);
             sleep(next_time - Instant::now());
         }
@@ -403,8 +420,16 @@ fn test_drophead_queue() {
 
         runtime.block_on(
             async move {
-                let left_bw_device = BwDevice::new(MAX_BANDWIDTH, DropHeadQueue::new(10, None));
-                let right_bw_device = BwDevice::new(MAX_BANDWIDTH, DropHeadQueue::new(10, None));
+                let left_bw_device = BwDevice::new(
+                    MAX_BANDWIDTH,
+                    DropHeadQueue::new(10, None, BwType::default()),
+                    BwType::default(),
+                );
+                let right_bw_device = BwDevice::new(
+                    MAX_BANDWIDTH,
+                    DropHeadQueue::new(10, None, BwType::default()),
+                    BwType::default(),
+                );
                 let left_control_interface = left_bw_device.control_interface();
                 let right_control_interface = right_bw_device.control_interface();
                 if let Err(_) = control_tx.send((left_control_interface, right_control_interface)) {
@@ -490,7 +515,7 @@ fn test_drophead_queue() {
         info!("Send 30 packets(1000B) with 1.05ms interval");
         let mut next_time = Instant::now();
         for i in 0..30 {
-            client_socket.send(&[i as u8; 1000 - 42]).unwrap();
+            client_socket.send(&[i as u8; 1000 - 28]).unwrap(); // 28 = 20(IPv4) + 8(UDP)
             next_time += Duration::from_micros(1050);
             sleep(next_time - Instant::now());
         }
@@ -504,7 +529,7 @@ fn test_drophead_queue() {
         assert!(recv_indexs[0] == 0);
         assert!(recv_indexs[1] == 1);
         assert!(8 <= recv_indexs[2] && recv_indexs[2] <= 10);
-        assert!(18 <= recv_indexs[3] && recv_indexs[3] <= 19);
+        assert!(17 <= recv_indexs[3] && recv_indexs[3] <= 19);
         for i in 4..14 {
             assert!(recv_indexs[i] == 16 + i as u8);
         }
@@ -514,13 +539,13 @@ fn test_drophead_queue() {
         left_control_interface
             .set_config(BwDeviceConfig::new(
                 Bandwidth::from_kbps(40),
-                DropHeadQueueConfig::new(None, 500),
+                DropHeadQueueConfig::new(None, 500, BwType::default()),
             ))
             .unwrap();
         info!("Send 30 packets(50B) with 1.05ms interval");
         let mut next_time = Instant::now();
         for i in 0..30 {
-            client_socket.send(&[i as u8; 50 - 42]).unwrap();
+            client_socket.send(&[i as u8; 50 - 28]).unwrap(); // 28 = 20(IPv4) + 8(UDP)
             next_time += Duration::from_micros(1050);
             sleep(next_time - Instant::now());
         }
@@ -534,7 +559,7 @@ fn test_drophead_queue() {
         assert!(recv_indexs[0] == 0);
         assert!(recv_indexs[1] == 1);
         assert!(8 <= recv_indexs[2] && recv_indexs[2] <= 10);
-        assert!(18 <= recv_indexs[3] && recv_indexs[3] <= 19);
+        assert!(17 <= recv_indexs[3] && recv_indexs[3] <= 19);
         for i in 4..14 {
             assert!(recv_indexs[i] == 16 + i as u8);
         }
@@ -580,9 +605,12 @@ fn test_codel_queue() {
                         Duration::from_millis(104),
                         Duration::from_millis(50),
                         1500,
+                        BwType::default(),
                     )),
+                    BwType::default(),
                 );
-                let right_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
+                let right_bw_device =
+                    BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new(), BwType::default());
                 let left_control_interface = left_bw_device.control_interface();
                 let right_control_interface = right_bw_device.control_interface();
                 if let Err(_) = control_tx.send((left_control_interface, right_control_interface)) {
@@ -668,7 +696,7 @@ fn test_codel_queue() {
         info!("Send 80 packets(1000B) with 2.05ms interval");
         let mut next_time = Instant::now();
         for i in 0..80 {
-            client_socket.send(&[i as u8; 1000 - 42]).unwrap();
+            client_socket.send(&[i as u8; 1000 - 28]).unwrap(); // 28 = 20(IPv4) + 8(UDP)
             next_time += Duration::from_micros(2050);
             sleep(next_time - Instant::now());
         }
@@ -709,13 +737,14 @@ fn test_codel_queue() {
                     Duration::from_millis(104),
                     Duration::from_millis(50),
                     80,
+                    BwType::default(),
                 ),
             ))
             .unwrap();
         info!("Send 80 packets(50B) with 2.05ms interval");
         let mut next_time = Instant::now();
         for i in 0..80 {
-            client_socket.send(&[i as u8; 50 - 42]).unwrap();
+            client_socket.send(&[i as u8; 50 - 28]).unwrap(); // 28 = 20(IPv4) + 8(UDP)
             next_time += Duration::from_micros(2050);
             sleep(next_time - Instant::now());
         }
@@ -744,6 +773,173 @@ fn test_codel_queue() {
         }
 
         server_cancel_token.cancel();
+    }
+
+    cancel_token.cancel();
+    rattan_thread.join().unwrap();
+}
+
+#[instrument]
+#[test_log::test]
+fn test_replay() {
+    let _std_env = get_std_env(StdNetEnvConfig::default()).unwrap();
+    let left_ns = _std_env.left_ns.clone();
+    let right_ns = _std_env.right_ns.clone();
+
+    let mut machine = RattanMachine::<StdPacket>::new();
+    let cancel_token = machine.cancel_token();
+
+    let (control_tx, control_rx) = oneshot::channel();
+
+    let rattan_thread_span = span!(Level::DEBUG, "rattan_thread").or_current();
+    let rattan_thread = std::thread::spawn(move || {
+        let _entered = rattan_thread_span.entered();
+        let original_ns = _std_env.rattan_ns.enter().unwrap();
+        let _left_pair_guard = _std_env.left_pair.clone();
+        let _right_pair_guard = _std_env.right_pair.clone();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .unwrap();
+
+        runtime.block_on(
+            async move {
+                let trace = RepeatedBwPatternConfig::new()
+                    .pattern(vec![Box::new(StaticBwConfig {
+                        bw: Some(Bandwidth::from_mbps(1)),
+                        duration: Some(Duration::from_secs(10)),
+                    }) as Box<dyn BwTraceConfig>])
+                    .build();
+                let left_bw_device = BwReplayDevice::new(
+                    Box::new(trace) as Box<dyn BwTrace>,
+                    DropHeadQueue::new(100, None, BwType::default()),
+                    BwType::default(),
+                );
+                let right_bw_device =
+                    BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new(), BwType::default());
+                let left_control_interface = left_bw_device.control_interface();
+                let right_control_interface = right_bw_device.control_interface();
+                if let Err(_) = control_tx.send((left_control_interface, right_control_interface)) {
+                    error!("send control interface failed");
+                }
+                let left_device = VirtualEthernet::<StdPacket, AfPacketDriver>::new(
+                    _std_env.left_pair.right.clone(),
+                );
+                let right_device = VirtualEthernet::<StdPacket, AfPacketDriver>::new(
+                    _std_env.right_pair.left.clone(),
+                );
+
+                let (left_bw_rx, left_bw_tx) = machine.add_device(left_bw_device);
+                info!(left_bw_rx, left_bw_tx);
+                let (right_bw_rx, right_bw_tx) = machine.add_device(right_bw_device);
+                info!(right_bw_rx, right_bw_tx);
+                let (left_device_rx, left_device_tx) = machine.add_device(left_device);
+                info!(left_device_rx, left_device_tx);
+                let (right_device_rx, right_device_tx) = machine.add_device(right_device);
+                info!(right_device_rx, right_device_tx);
+
+                machine.link_device(left_device_rx, left_bw_tx);
+                machine.link_device(left_bw_rx, right_device_tx);
+                machine.link_device(right_device_rx, right_bw_tx);
+                machine.link_device(right_bw_rx, left_device_tx);
+
+                let config = RattanMachineConfig {
+                    original_ns,
+                    port: 8094,
+                };
+                machine.core_loop(config).await
+            }
+            .in_current_span(),
+        );
+    });
+
+    let (left_control_interface, _right_control_interface) = control_rx.blocking_recv().unwrap();
+
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    {
+        let _span = span!(Level::INFO, "test_replay").entered();
+        let handle = {
+            let _right_ns_guard = NetNsGuard::new(right_ns.clone()).unwrap();
+            std::thread::spawn(|| {
+                let mut iperf_server = std::process::Command::new("iperf3")
+                    .args(["-s", "-p", "9001", "-1"])
+                    .stdout(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                iperf_server.wait().unwrap();
+            })
+        };
+        sleep(Duration::from_secs(1));
+        info!("try to iperf with bw limit 5s 100Mbps and 5s 20Mbps");
+        let trace_config = RepeatedBwPatternConfig::new().pattern(vec![
+            Box::new(StaticBwConfig {
+                bw: Some(Bandwidth::from_mbps(100)),
+                duration: Some(Duration::from_secs(5)),
+            }),
+            Box::new(StaticBwConfig {
+                bw: Some(Bandwidth::from_mbps(20)),
+                duration: Some(Duration::from_secs(5)),
+            }) as Box<dyn BwTraceConfig>,
+        ]);
+        left_control_interface
+            .set_config(BwReplayDeviceConfig::new(
+                Box::new(trace_config) as Box<dyn BwTraceConfig>,
+                None,
+            ))
+            .unwrap();
+        let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
+        let client_handle = std::process::Command::new("iperf3")
+            .args([
+                "-c",
+                "192.168.12.1",
+                "-p",
+                "9001",
+                "--cport",
+                "10001",
+                "-t",
+                "10",
+                "-J",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let output = client_handle.wait_with_output().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        if !stderr.is_empty() {
+            warn!("{}", stderr);
+        }
+        handle.join().unwrap();
+
+        let re = Regex::new(r#""bits_per_second":\s*(\d+)"#).unwrap();
+        let mut bandwidth = re
+            .captures_iter(&stdout)
+            .flat_map(|cap| cap[1].parse::<u64>())
+            .step_by(2)
+            .take(10)
+            .collect::<Vec<_>>();
+        let front_5s_bandwidth = bandwidth.drain(0..5).collect::<Vec<_>>();
+        let back_5s_bandwidth = bandwidth.drain(0..5).collect::<Vec<_>>();
+
+        let front_5s_bitrate =
+            front_5s_bandwidth.iter().sum::<u64>() / front_5s_bandwidth.len() as u64;
+        let back_5s_bitrate =
+            back_5s_bandwidth.iter().sum::<u64>() / back_5s_bandwidth.len() as u64;
+
+        info!(
+            "Front 5s bitrate: {:?}, bandwidth: {:?}",
+            Bandwidth::from_bps(front_5s_bitrate),
+            front_5s_bandwidth
+        );
+        info!(
+            "Back 5s bitrate: {:?}, bandwidth: {:?}",
+            Bandwidth::from_bps(back_5s_bitrate),
+            back_5s_bandwidth
+        );
+
+        assert!(front_5s_bitrate > 90000000 && front_5s_bitrate < 100000000);
+        assert!(back_5s_bitrate > 18000000 && back_5s_bitrate < 21000000);
     }
 
     cancel_token.cancel();
