@@ -1,6 +1,9 @@
 use crate::metal::{
     netns::NetNs,
-    route::{add_arp_entry_with_netns, add_gateway_with_netns, add_route_with_netns},
+    route::{
+        add_arp_entry_with_netns, add_gateway_with_netns, add_route_with_netns,
+        set_link_up_with_netns,
+    },
     veth::{MacAddr, VethDevice, VethPair, VethPairBuilder},
 };
 use futures::TryStreamExt;
@@ -222,6 +225,11 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
             String::from_utf8_lossy(&output.stdout)
         );
     }
+
+    debug!("Set lo interface up");
+    set_link_up_with_netns(1, client_netns.clone());
+    set_link_up_with_netns(1, rattan_netns.clone());
+    set_link_up_with_netns(1, server_netns.clone());
 
     Ok(StdNetEnv {
         left_ns: client_netns,

@@ -121,3 +121,19 @@ pub fn add_arp_entry_with_netns(dest: IpAddr, mac: MacAddr, device_index: u32, n
         }
     });
 }
+
+pub fn set_link_up_with_netns(device_index: u32, netns: Arc<NetNs>) {
+    trace!(?device_index, ?netns, "Set link up");
+    execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
+        let result = rt.block_on(rtnl_handle.link().set(device_index).up().execute());
+        match result {
+            Ok(_) => {
+                debug!("Set link {} up successfully", device_index);
+            }
+            Err(e) => {
+                error!("Failed to set link up: {}", e);
+                panic!("Failed to set link up: {}", e);
+            }
+        }
+    });
+}
