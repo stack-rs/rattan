@@ -5,7 +5,9 @@ use super::{
     netns::{NetNs, NetNsGuard},
     veth::MacAddr,
 };
+use futures::TryStreamExt;
 use ipnet::{Ipv4Net, Ipv6Net};
+use netlink_packet_route::link::{LinkAttribute, LinkLayerType};
 use tracing::{debug, error, span, trace, Level};
 
 fn execute_rtnetlink_with_new_thread<F>(netns: Arc<NetNs>, f: F)
@@ -119,5 +121,45 @@ pub fn add_arp_entry_with_netns(dest: IpAddr, mac: MacAddr, device_index: u32, n
                 panic!("Failed to add arp entry: {}", e);
             }
         }
+    });
+}
+
+pub fn set_loopback_up_with_netns(netns: Arc<NetNs>) {
+    trace!(?netns, "Set loopback interface up");
+    execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
+        let mut links = rtnl_handle.link().get().execute();
+        rt.block_on(async {
+            while let Some(msg) = links.try_next().await.unwrap() {
+                if msg.header.link_layer_type == LinkLayerType::Loopback {
+                    debug!(
+                        id = msg.header.index,
+                        name = msg.attributes.iter().find_map(|attr| {
+                            if let LinkAttribute::IfName(name) = attr {
+                                Some(name)
+                            } else {
+                                None
+                            }
+                        }),
+                        "Try to set interface with Loopback type up"
+                    );
+                    let result = rtnl_handle
+                        .link()
+                        .set(msg.header.index)
+                        .up()
+                        .execute()
+                        .await;
+                    match result {
+                        Ok(_) => {
+                            debug!("Set loopback up successfully");
+                        }
+                        Err(e) => {
+                            error!("Failed to set loopback up: {}", e);
+                            panic!("Failed to set loopback up: {}", e);
+                        }
+                    }
+                    break;
+                }
+            }
+        });
     });
 }
