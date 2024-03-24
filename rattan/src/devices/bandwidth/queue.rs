@@ -89,6 +89,7 @@ where
 pub struct DropTailQueueConfig {
     pub packet_limit: Option<usize>,
     pub byte_limit: Option<usize>,
+    #[cfg_attr(feature = "serde", serde(default))]
     pub bw_type: BwType,
 }
 
@@ -188,6 +189,7 @@ where
 pub struct DropHeadQueueConfig {
     pub packet_limit: Option<usize>,
     pub byte_limit: Option<usize>,
+    #[cfg_attr(feature = "serde", serde(default))]
     pub bw_type: BwType,
 }
 
@@ -295,6 +297,7 @@ pub struct CoDelQueueConfig {
     #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
     pub target: Duration, // target queue delay
     pub mtu: u32,                  // device MTU, or minimal queue backlog in bytes
+    #[cfg_attr(feature = "serde", serde(default))]
     pub bw_type: BwType,
 }
 
