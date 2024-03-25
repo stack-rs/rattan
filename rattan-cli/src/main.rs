@@ -461,7 +461,7 @@ fn main() {
     });
 
     // Test connectivity before starting
-    let res = {
+    let res = if opts.commands.is_empty() {
         info!("ping {} testing...", rattan_base);
         let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
         let handle = std::process::Command::new("ping")
@@ -472,10 +472,12 @@ fn main() {
         let output = handle.wait_with_output().unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
         stdout.contains("time=")
+    } else {
+        // skip ping test if commands are provided
+        true
     };
     match res {
         true => {
-            info!("ping test passed");
             left_ns.enter().unwrap();
             let mut client_handle = std::process::Command::new("/usr/bin/env");
             client_handle.arg(format!("RATTAN_BASE={}", rattan_base));
