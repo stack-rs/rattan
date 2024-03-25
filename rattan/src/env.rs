@@ -21,7 +21,7 @@ use tracing::{debug, error, info, instrument, span, trace, Level};
 //   ns-client                          ns-rattan                         ns-server
 // +-----------+    veth pair    +--------------------+    veth pair    +-----------+
 // |    rc-left| <-------------> |rc-right [P] rs-left| <-------------> |rs-right   |
-// |   .11.1/32|                 |.11.2/32    .12.2/32|                 |.12.1/32   |
+// |   .11.x/32|                 |.11.2/32    .12.2/32|                 |.12.x/32   |
 // +-----------+                 +--------------------+                 +-----------+
 
 fn get_addresses_in_use() -> Vec<IpAddr> {
@@ -111,7 +111,9 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
         StdNetEnvMode::Compatible => {
             let addresses_in_use = get_addresses_in_use();
             let mut addr_suffix = 1;
-            while addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(192, 168, 12, addr_suffix))) {
+            while addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(192, 168, 12, addr_suffix)))
+                || addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(192, 168, 11, addr_suffix)))
+            {
                 addr_suffix += 1;
                 if addr_suffix == 2 {
                     addr_suffix += 1;
