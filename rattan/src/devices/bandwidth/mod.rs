@@ -10,7 +10,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use super::{ControlInterface, Egress, Ingress};
 
@@ -341,12 +341,12 @@ where
     Q: PacketQueue<P>,
 {
     fn change_bandwidth(&mut self, bandwidth: Bandwidth, change_time: Instant) {
-        debug!(
+        trace!(
             "Changing bandwidth to {:?} (should at {:?} ago)",
             bandwidth,
             change_time.elapsed()
         );
-        debug!(
+        trace!(
             "Previous next_available distance: {:?}",
             self.next_available - change_time
         );
@@ -357,12 +357,12 @@ where
                 + (self.next_available - change_time)
                     .mul_f64(self.current_bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64)
         };
-        debug!(
+        trace!(
             before = ?self.current_bandwidth,
             after = ?bandwidth,
             "Set inner bandwidth:"
         );
-        debug!(
+        trace!(
             "Now next_available distance: {:?}",
             self.next_available - change_time
         );
@@ -371,12 +371,13 @@ where
 
     fn set_config(&mut self, config: BwReplayDeviceConfig<P, Q>) {
         if let Some(trace_config) = config.trace_config {
+            debug!("Set inner trace config");
             self.trace = trace_config.into_model();
             match self.trace.next_bw() {
                 Some((bandwidth, duration)) => {
                     self.change_bandwidth(bandwidth, Instant::now());
                     self.next_change = Instant::now() + duration;
-                    debug!(
+                    trace!(
                         "Bandwidth change to {:?}, next change after {:?}",
                         bandwidth,
                         self.next_change - Instant::now()
@@ -401,7 +402,7 @@ where
         let next_bw = self.trace.next_bw();
         next_bw.map(|(bandwidth, duration)| {
             self.change_bandwidth(bandwidth, change_time);
-            debug!(
+            trace!(
                 "Bandwidth changed to {:?}, next change after {:?}",
                 bandwidth,
                 change_time + duration - Instant::now()

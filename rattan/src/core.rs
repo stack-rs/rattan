@@ -120,7 +120,7 @@ where
         #[cfg(feature = "control")]
         let token_dup = self.token.clone();
         #[cfg(feature = "control")]
-        let control_thread_span = span!(Level::DEBUG, "control_thread").or_current();
+        let control_thread_span = span!(Level::INFO, "control_thread").or_current();
 
         #[cfg(feature = "control")]
         let control_thread = std::thread::spawn(move || {
@@ -128,19 +128,20 @@ where
             config.original_ns.enter().unwrap();
             info!("control thread started");
 
+            #[cfg(feature = "http")]
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap();
+            #[cfg(feature = "http")]
             rt.block_on(async move {
-                #[cfg(feature = "http")]
                 let server =
                     axum::Server::bind(&format!("127.0.0.1:{}", config.port).parse().unwrap())
                         .serve(router_clone.into_make_service())
                         .with_graceful_shutdown(async {
                             token_dup.cancelled().await;
                         });
-                #[cfg(feature = "http")]
+                info!("Listening on http://127.0.0.1:{}", config.port);
                 match server.await {
                     Ok(_) => {}
                     Err(e) => {
