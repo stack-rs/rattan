@@ -23,6 +23,9 @@ use tracing::{debug, error, info, instrument, span, trace, Level};
 // |    rc-left| <-------------> |rc-right [P] rs-left| <-------------> |rs-right   |
 // |   .11.x/32|                 |.11.2/32    .12.2/32|                 |.12.x/32   |
 // +-----------+                 +--------------------+                 +-----------+
+//
+// Use /32 to avoid route conflict between multiple rattan instances
+//
 
 fn get_addresses_in_use() -> Vec<IpAddr> {
     debug!("Get addresses in use");
