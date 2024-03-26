@@ -481,6 +481,7 @@ fn main() {
     match res {
         true => {
             left_ns.enter().unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(1));
             let mut client_handle = std::process::Command::new("/usr/bin/env");
             client_handle.env("RATTAN_BASE", rattan_base.to_string());
             if opts.commands.is_empty() {
