@@ -25,6 +25,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // mod docker;
 
+const CONFIG_PORT_BASE: u16 = 8086;
+
 #[derive(Debug, Parser, Clone)]
 pub struct CommandArgs {
     /// Verbose debug output
@@ -447,7 +449,7 @@ fn main() {
                 }
 
                 // get the last byte of rattan_base as the port number
-                let port = 8086 - 1
+                let port = CONFIG_PORT_BASE - 1
                     + match rattan_base {
                         std::net::IpAddr::V4(ip) => ip.octets()[3],
                         std::net::IpAddr::V6(ip) => ip.octets()[15],
@@ -480,7 +482,7 @@ fn main() {
         true => {
             left_ns.enter().unwrap();
             let mut client_handle = std::process::Command::new("/usr/bin/env");
-            client_handle.arg(format!("RATTAN_BASE={}", rattan_base));
+            client_handle.env("RATTAN_BASE", rattan_base.to_string());
             if opts.commands.is_empty() {
                 client_handle.arg("bash");
             } else {
