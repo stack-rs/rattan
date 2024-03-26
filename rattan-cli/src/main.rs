@@ -20,12 +20,12 @@ use rattan::metal::netns::NetNsGuard;
 use rattan::netem_trace::{Bandwidth, Delay};
 use std::io::BufRead;
 use std::process::Stdio;
-use std::thread::sleep;
-use std::time::Duration;
-use tracing::{error, info, span, Instrument, Level};
+use tracing::{debug, error, info, span, Instrument, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 // mod docker;
+
+const CONFIG_PORT_BASE: u16 = 8086;
 
 #[derive(Debug, Parser, Clone)]
 pub struct CommandArgs {
@@ -159,9 +159,7 @@ fn mahimahi_file_to_pattern(filename: &str) -> Vec<u64> {
                 })
                 .unwrap();
             let line = line.trim();
-            
-            line
-                .parse::<u64>()
+            line.parse::<u64>()
                 .map_err(|e| {
                     error!("Failed to parse line {} in {}: {}", i, &filename, e);
                     e
@@ -169,7 +167,7 @@ fn mahimahi_file_to_pattern(filename: &str) -> Vec<u64> {
                 .unwrap()
         })
         .collect();
-    info!("Trace pattern: {:?}", trace_pattern);
+    debug!("Trace pattern: {:?}", trace_pattern);
     trace_pattern
 }
 
@@ -187,12 +185,13 @@ fn main() {
     // }
     info!("{:?}", opts);
 
-    let _std_env = get_std_env(StdNetEnvConfig {
+    let std_env = get_std_env(StdNetEnvConfig {
         mode: rattan::env::StdNetEnvMode::Compatible,
     })
     .unwrap();
-    let left_ns = _std_env.left_ns.clone();
-    let _right_ns = _std_env.right_ns.clone();
+    let left_ns = std_env.left_ns.clone();
+    let _right_ns = std_env.right_ns.clone();
+    let rattan_base = std_env.right_pair.right.ip_addr.0;
 
     let mut machine = RattanMachine::<StdPacket>::new();
     let cancel_token = machine.cancel_token();
@@ -201,9 +200,9 @@ fn main() {
     let rattan_thread_span = span!(Level::DEBUG, "rattan_thread").or_current();
     let rattan_thread = std::thread::spawn(move || {
         let _entered = rattan_thread_span.entered();
-        let original_ns = _std_env.rattan_ns.enter().unwrap();
-        let _left_pair_guard = _std_env.left_pair.clone();
-        let _right_pair_guard = _std_env.right_pair.clone();
+        let original_ns = std_env.rattan_ns.enter().unwrap();
+        let _left_pair_guard = std_env.left_pair.clone();
+        let _right_pair_guard = std_env.right_pair.clone();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()
@@ -215,10 +214,10 @@ fn main() {
                 let rng = StdRng::seed_from_u64(42);
 
                 let left_device = VirtualEthernet::<StdPacket, AfPacketDriver>::new(
-                    _std_env.left_pair.right.clone(),
+                    std_env.left_pair.right.clone(),
                 );
                 let right_device = VirtualEthernet::<StdPacket, AfPacketDriver>::new(
-                    _std_env.right_pair.left.clone(),
+                    std_env.right_pair.left.clone(),
                 );
 
                 let (left_device_rx, left_device_tx) = machine.add_device(left_device);
@@ -449,10 +448,14 @@ fn main() {
                     machine.link_device(right_fd[i * 2], right_fd[i * 2 + 1]);
                 }
 
-                let config = RattanMachineConfig {
-                    original_ns,
-                    port: 8086,
-                };
+                // get the last byte of rattan_base as the port number
+                let port = CONFIG_PORT_BASE - 1
+                    + match rattan_base {
+                        std::net::IpAddr::V4(ip) => ip.octets()[3],
+                        std::net::IpAddr::V6(ip) => ip.octets()[15],
+                    } as u16;
+
+                let config = RattanMachineConfig { original_ns, port };
                 machine.core_loop(config).await
             }
             .in_current_span(),
@@ -460,28 +463,33 @@ fn main() {
     });
 
     // Test connectivity before starting
-    let res = {
-        let _span = span!(Level::INFO, "ping_test").entered();
-        info!("ping testing...");
+    let res = if opts.commands.is_empty() {
+        info!("ping {} testing...", rattan_base);
         let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
         let handle = std::process::Command::new("ping")
-            .args(["192.168.12.1", "-c", "5", "-i", "0.2"])
+            .args([&rattan_base.to_string(), "-c", "3", "-i", "0.2"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
         let output = handle.wait_with_output().unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
         stdout.contains("time=")
+    } else {
+        // skip ping test if commands are provided
+        true
     };
     match res {
         true => {
-            info!("ping test passed");
             left_ns.enter().unwrap();
-            sleep(Duration::from_secs(1));
-            let mut client_handle = std::process::Command::new("/bin/bash");
-            if !opts.commands.is_empty() {
-                client_handle.arg("-c").args(opts.commands);
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let mut client_handle = std::process::Command::new("/usr/bin/env");
+            client_handle.env("RATTAN_BASE", rattan_base.to_string());
+            if opts.commands.is_empty() {
+                client_handle.arg("bash");
+            } else {
+                client_handle.args(opts.commands);
             }
+            info!("Running {:?}", client_handle);
             let mut client_handle = client_handle
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::inherit())

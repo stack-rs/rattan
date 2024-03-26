@@ -16,13 +16,42 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     str::FromStr,
 };
-use tracing::{debug, info, instrument, span, trace, Level};
+use tracing::{debug, error, info, instrument, span, trace, Level};
 
 //   ns-client                          ns-rattan                         ns-server
 // +-----------+    veth pair    +--------------------+    veth pair    +-----------+
 // |    rc-left| <-------------> |rc-right [P] rs-left| <-------------> |rs-right   |
-// |   .11.1/24|                 |.11.2/24    .12.2/24|                 |.12.1/24   |
+// |   .11.x/32|                 |.11.2/32    .12.2/32|                 |.12.x/32   |
 // +-----------+                 +--------------------+                 +-----------+
+//
+// Use /32 to avoid route conflict between multiple rattan instances
+//
+
+fn get_addresses_in_use() -> Vec<IpAddr> {
+    debug!("Get addresses in use");
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let _guard = rt.enter();
+    let (conn, rtnl_handle, _) = rtnetlink::new_connection().unwrap();
+    rt.spawn(conn);
+
+    let mut addresses = vec![];
+    rt.block_on(async {
+        let mut links = rtnl_handle.address().get().execute();
+        while let Ok(Some(address_msg)) = links.try_next().await {
+            for address_attr in address_msg.attributes {
+                if let AddressAttribute::Address(address) = address_attr {
+                    debug!(?address, ?address_msg.header.prefix_len, "Get address");
+                    addresses.push(address);
+                }
+            }
+        }
+    });
+    debug!(?addresses, "Addresses in use");
+    addresses
+}
 
 lazy_static::lazy_static! {
     static ref STD_ENV_LOCK: Arc<parking_lot::Mutex<()>> = Arc::new(parking_lot::Mutex::new(()));
@@ -59,6 +88,7 @@ pub struct StdNetEnv {
 #[instrument(skip_all, level = "debug")]
 pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
     trace!(?config);
+    get_addresses_in_use();
     let _guard = STD_ENV_LOCK.lock();
     let rand_string: String = thread_rng()
         .sample_iter(&Alphanumeric)
@@ -79,6 +109,29 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
     let rattan_netns = NetNs::new(&rattan_netns_name)?;
     trace!(?rattan_netns, "Rattan netns {} created", rattan_netns_name);
 
+    // Get server veth address
+    let veth_addr_suffix = match config.mode {
+        StdNetEnvMode::Compatible => {
+            let addresses_in_use = get_addresses_in_use();
+            let mut addr_suffix = 1;
+            while addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(192, 168, 12, addr_suffix)))
+                || addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(192, 168, 11, addr_suffix)))
+            {
+                addr_suffix += 1;
+                if addr_suffix == 2 {
+                    addr_suffix += 1;
+                }
+                if addr_suffix == 255 {
+                    error!("No available address suffix for server veth");
+                    return Err(anyhow::anyhow!(
+                        "No available address suffix for server veth"
+                    ));
+                }
+            }
+            addr_suffix
+        }
+        _ => 1,
+    };
     let veth_pair_client = VethPairBuilder::new()
         .name(
             format!("rc-left-{}", rand_string),
@@ -86,12 +139,15 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
         )
         .namespace(Some(client_netns.clone()), Some(rattan_netns.clone()))
         .mac_addr(
-            [0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2a].into(),
-            [0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2b].into(),
+            [0x38, 0x7e, 0x58, 0xe7, 11, veth_addr_suffix].into(),
+            [0x38, 0x7e, 0x58, 0xe7, 11, 2].into(),
         )
         .ip_addr(
-            (IpAddr::V4(Ipv4Addr::new(192, 168, 11, 1)), 24),
-            (IpAddr::V4(Ipv4Addr::new(192, 168, 11, 2)), 24),
+            (
+                IpAddr::V4(Ipv4Addr::new(192, 168, 11, veth_addr_suffix)),
+                32,
+            ),
+            (IpAddr::V4(Ipv4Addr::new(192, 168, 11, 2)), 32),
         )
         .build()?;
 
@@ -102,12 +158,15 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
         )
         .namespace(Some(rattan_netns.clone()), Some(server_netns.clone()))
         .mac_addr(
-            [0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2c].into(),
-            [0x38, 0x7e, 0x58, 0xe7, 0x87, 0x2d].into(),
+            [0x38, 0x7e, 0x58, 0xe7, 12, 2].into(),
+            [0x38, 0x7e, 0x58, 0xe7, 12, veth_addr_suffix].into(),
         )
         .ip_addr(
-            (IpAddr::V4(Ipv4Addr::new(192, 168, 12, 2)), 24),
-            (IpAddr::V4(Ipv4Addr::new(192, 168, 12, 1)), 24),
+            (IpAddr::V4(Ipv4Addr::new(192, 168, 12, 2)), 32),
+            (
+                IpAddr::V4(Ipv4Addr::new(192, 168, 12, veth_addr_suffix)),
+                32,
+            ),
         )
         .build()?;
 
