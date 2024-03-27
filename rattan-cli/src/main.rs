@@ -20,6 +20,7 @@ use rattan::metal::netns::NetNsGuard;
 use rattan::netem_trace::{Bandwidth, Delay};
 use std::io::BufRead;
 use std::process::Stdio;
+use std::thread::sleep;
 use tracing::{debug, error, info, span, Instrument, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -203,6 +204,7 @@ fn main() {
         let original_ns = std_env.rattan_ns.enter().unwrap();
         let _left_pair_guard = std_env.left_pair.clone();
         let _right_pair_guard = std_env.right_pair.clone();
+        sleep(std::time::Duration::from_secs(1));
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()
