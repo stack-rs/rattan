@@ -104,7 +104,7 @@ ping_verify() {
 		--uplink-delay ${delay}ms \
 		--downlink-delay ${delay}ms \
 		--downlink-loss $loss \
-		$WORKDIR/ping.sh $PING_ITERS 192.168.12.1 \
+		$WORKDIR/ping.sh $PING_ITERS '$RATTAN_BASE' \
 		>"rattan_${suffix}_ping.log" 2>&1
 	calc_ping_stats $delay $loss $suffix
 }
@@ -154,7 +154,7 @@ iperf_verify() {
 		--downlink-loss $loss \
 		--uplink-bandwidth $bandwidth \
 		--downlink-bandwidth $bandwidth \
-		$WORKDIR/iperf3.sh $IPERF_ITERS 192.168.12.1 $cc \
+		$WORKDIR/iperf3.sh $IPERF_ITERS '$RATTAN_BASE' $cc \
 		>"rattan_$suffix.log" 2>&1
 	calc_iperf_stats $(expr 12 \* $bw_mul) $loss $suffix
 }
