@@ -204,7 +204,7 @@ fn main() {
         let original_ns = std_env.rattan_ns.enter().unwrap();
         let _left_pair_guard = std_env.left_pair.clone();
         let _right_pair_guard = std_env.right_pair.clone();
-        sleep(std::time::Duration::from_secs(1));
+        sleep(std::time::Duration::from_millis(100));
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()
