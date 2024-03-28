@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 iter=$1
-server_ip=$2
+eval server_ip=$2
 echo "Server IP: $server_ip"
 
 echo "Pre running"
