@@ -96,9 +96,9 @@ where
 // Set the last value of the pattern to 0 to limit the maximum number of consecutive packet losses.
 // If you want to drop packets i.i.d., just set the pattern to a single number, such as [0.1].
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub struct LossDeviceConfig {
-    pattern: LossPattern,
+    pub pattern: LossPattern,
 }
 
 impl LossDeviceConfig {
@@ -118,7 +118,7 @@ impl ControlInterface for LossDeviceControlInterface {
     type Config = LossDeviceConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
-        info!("Set loss pattern to: {:?}", config.pattern);
+        info!("Setting loss pattern to: {:?}", config.pattern);
         self.pattern.store(Box::new(config.pattern));
         Ok(())
     }
@@ -161,11 +161,11 @@ where
     P: Packet,
     R: Rng,
 {
-    pub fn new(rng: R) -> LossDevice<P, R> {
-        debug!("New LossDevice");
+    pub fn new(pattern: LossPattern, rng: R) -> Result<LossDevice<P, R>, Error> {
+        debug!(?pattern, "New LossDevice");
         let (rx, tx) = mpsc::unbounded_channel();
-        let pattern = Arc::new(AtomicRawCell::new(Box::default()));
-        LossDevice {
+        let pattern = Arc::new(AtomicRawCell::new(Box::new(pattern)));
+        Ok(LossDevice {
             ingress: Arc::new(LossDeviceIngress { ingress: rx }),
             egress: LossDeviceEgress {
                 egress: tx,
@@ -175,6 +175,6 @@ where
                 rng,
             },
             control_interface: Arc::new(LossDeviceControlInterface { pattern }),
-        }
+        })
     }
 }

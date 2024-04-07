@@ -1,10 +1,13 @@
-use crate::metal::{
-    netns::NetNs,
-    route::{
-        add_arp_entry_with_netns, add_gateway_with_netns, add_route_with_netns,
-        set_loopback_up_with_netns,
+use crate::{
+    error::{Error, VethError},
+    metal::{
+        netns::NetNs,
+        route::{
+            add_arp_entry_with_netns, add_gateway_with_netns, add_route_with_netns,
+            set_loopback_up_with_netns,
+        },
+        veth::{MacAddr, VethDevice, VethPair, VethPairBuilder},
     },
-    veth::{MacAddr, VethDevice, VethPair, VethPairBuilder},
 };
 use futures::TryStreamExt;
 use netlink_packet_route::{address::AddressAttribute, link::LinkAttribute};
@@ -18,11 +21,14 @@ use std::{
 };
 use tracing::{debug, error, info, instrument, span, trace, Level};
 
-//   ns-client                          ns-rattan                         ns-server
-// +-----------+    veth pair    +--------------------+    veth pair    +-----------+
-// |    rc-left| <-------------> |rc-right [P] rs-left| <-------------> |rs-right   |
-// |   .11.x/32|                 |.11.2/32    .12.2/32|                 |.12.x/32   |
-// +-----------+                 +--------------------+                 +-----------+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+//   ns-left                        ns-rattan                        ns-right
+// +---------+   veth pair   +---------------------+   veth pair   +----------+
+// |   nsL-vL| <-----------> |nsL-vR   [P]   nsR-vL| <-----------> |nsR-vR    |
+// | .11.x/32|               |.11.2/32     .12.2/32|               |.12.x/32  |
+// +---------+               +---------------------+               +----------+
 //
 // Use /32 to avoid route conflict between multiple rattan instances
 //
@@ -57,24 +63,20 @@ lazy_static::lazy_static! {
     static ref STD_ENV_LOCK: Arc<parking_lot::Mutex<()>> = Arc::new(parking_lot::Mutex::new(()));
 }
 
-#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Default)]
 pub enum StdNetEnvMode {
+    #[default]
     Compatible,
     Isolated,
     Container,
 }
 
-#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Default)]
 pub struct StdNetEnvConfig {
+    #[cfg_attr(feature = "serde", serde(default))]
     pub mode: StdNetEnvMode,
-}
-
-impl Default for StdNetEnvConfig {
-    fn default() -> Self {
-        StdNetEnvConfig {
-            mode: StdNetEnvMode::Isolated,
-        }
-    }
 }
 
 pub struct StdNetEnv {
@@ -86,7 +88,7 @@ pub struct StdNetEnv {
 }
 
 #[instrument(skip_all, level = "debug")]
-pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
+pub fn get_std_env(config: StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     trace!(?config);
     get_addresses_in_use();
     let _guard = STD_ENV_LOCK.lock();
@@ -95,8 +97,8 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
         .take(6)
         .map(char::from)
         .collect();
-    let client_netns_name = format!("ns-client-{}", rand_string);
-    let server_netns_name = format!("ns-server-{}", rand_string);
+    let client_netns_name = format!("ns-left-{}", rand_string);
+    let server_netns_name = format!("ns-right-{}", rand_string);
     let rattan_netns_name = format!("ns-rattan-{}", rand_string);
     let client_netns = NetNs::new(&client_netns_name)?;
     trace!(?client_netns, "Client netns {} created", client_netns_name);
@@ -123,9 +125,10 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
                 }
                 if addr_suffix == 255 {
                     error!("No available address suffix for server veth");
-                    return Err(anyhow::anyhow!(
-                        "No available address suffix for server veth"
-                    ));
+                    return Err(VethError::CreateVethPairError(
+                        "No available address suffix for server veth".to_string(),
+                    )
+                    .into());
                 }
             }
             addr_suffix
@@ -134,8 +137,8 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
     };
     let veth_pair_client = VethPairBuilder::new()
         .name(
-            format!("rc-left-{}", rand_string),
-            format!("rc-right-{}", rand_string),
+            format!("nsL-vL-{}", rand_string),
+            format!("nsL-vR-{}", rand_string),
         )
         .namespace(Some(client_netns.clone()), Some(rattan_netns.clone()))
         .mac_addr(
@@ -153,8 +156,8 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
 
     let veth_pair_server = VethPairBuilder::new()
         .name(
-            format!("rs-left-{}", rand_string),
-            format!("rs-right-{}", rand_string),
+            format!("nsR-vL-{}", rand_string),
+            format!("nsR-vR-{}", rand_string),
         )
         .namespace(Some(rattan_netns.clone()), Some(server_netns.clone()))
         .mac_addr(
@@ -285,7 +288,7 @@ pub fn get_std_env(config: StdNetEnvConfig) -> anyhow::Result<StdNetEnv> {
         );
     }
 
-    debug!("Set lo interface up");
+    info!("Set lo interface up");
     set_loopback_up_with_netns(client_netns.clone());
     set_loopback_up_with_netns(rattan_netns.clone());
     set_loopback_up_with_netns(server_netns.clone());

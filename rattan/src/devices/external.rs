@@ -83,7 +83,7 @@ where
 }
 
 #[cfg_attr(feature = "serde", derive(Deserialize))]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VirtualEthernetConfig {}
 
 pub struct VirtualEthernetControlInterface {
@@ -118,12 +118,12 @@ where
     D::Receiver: Send,
 {
     #[instrument(skip_all, name="VirtualEthernet", fields(name = device.name))]
-    pub fn new(device: Arc<VethDevice>) -> Self {
+    pub fn new(device: Arc<VethDevice>) -> Result<Self, Error> {
         debug!("New VirtualEthernet");
-        let driver = D::bind_device(device.clone()).unwrap();
-        let notify = AsyncFd::new(driver.raw_fd()).unwrap();
+        let driver = D::bind_device(device.clone())?;
+        let notify = AsyncFd::new(driver.raw_fd())?;
         let sender_end = driver.sender();
-        Self {
+        Ok(Self {
             _device: device,
             ingress: Arc::new(VirtualEthernetIngress { sender: sender_end }),
             egress: VirtualEthernetEgress {
@@ -134,7 +134,7 @@ where
             control_interface: Arc::new(VirtualEthernetControlInterface {
                 _config: VirtualEthernetConfig {},
             }),
-        }
+        })
     }
 }
 

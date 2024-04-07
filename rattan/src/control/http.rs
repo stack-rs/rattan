@@ -1,112 +1,91 @@
-use std::{collections::HashMap, sync::Arc};
-
-use crate::devices::ControlInterface;
 use axum::{
-    self,
     extract::{Path, State},
-    http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
-use axum_macros::debug_handler;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tracing::info;
+use tracing::debug;
 
-use super::ControlEndpoint;
+use crate::{
+    control::{RattanOp, RattanOpEndpoint, RattanOpResult},
+    error::{Error, RattanOpError},
+};
 
-pub struct HttpControlEndpoint {
-    router: Option<Router>,
-    state: ControlState,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HttpConfig {
+    pub enable: bool,
+    pub port: u16,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            port: 8086,
+        }
+    }
 }
 
 #[derive(Clone)]
 struct ControlState {
-    control_interfaces: HashMap<usize, Arc<dyn HttpControlInterface>>,
+    op_endpoint: RattanOpEndpoint,
 }
 
-impl ControlState {
-    fn new() -> Self {
-        Self {
-            control_interfaces: HashMap::new(),
-        }
-    }
-}
-
-pub trait HttpControlInterface: Send + Sync {
-    fn config_device(&self, payload: serde_json::Value) -> (StatusCode, Json<Value>);
-}
-
-impl<T> HttpControlInterface for T
-where
-    T: ControlInterface,
-{
-    fn config_device(&self, payload: serde_json::Value) -> (StatusCode, Json<Value>) {
-        match serde_json::from_value(payload) {
-            Ok(payload) => match self.set_config(payload) {
-                Ok(_) => (StatusCode::OK, Json(json!({"status": "ok"}))),
-                Err(_) => (StatusCode::BAD_REQUEST, Json(json!({"status": "fail"}))),
-            },
-            Err(_) => (StatusCode::BAD_REQUEST, Json(json!({"status": "fail"}))),
-        }
-    }
-}
-
-#[debug_handler]
-async fn control_device(
-    Path(id): Path<usize>,
-    State(state): State<ControlState>,
-    Json(config): Json<serde_json::Value>,
-) -> (StatusCode, Json<Value>) {
-    info!("config device: {} {:?}", id, config);
-    match state.control_interfaces.get(&id) {
-        Some(control_interface) => control_interface.as_ref().config_device(config),
-        None => (StatusCode::NOT_FOUND, Json(json!({"status": "fail"}))),
-    }
-}
-
-impl ControlEndpoint for HttpControlEndpoint {
-    fn register_device(
-        &mut self,
-        index: usize,
-        control_interface: std::sync::Arc<impl ControlInterface>,
-    ) {
-        self.state
-            .control_interfaces
-            .insert(index, control_interface);
-        self.update_router();
-    }
-}
-
-impl Default for HttpControlEndpoint {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct HttpControlEndpoint {
+    state: ControlState,
 }
 
 impl HttpControlEndpoint {
-    pub fn new() -> Self {
+    pub fn new(op_endpoint: RattanOpEndpoint) -> Self {
         Self {
-            router: Some(Router::new().route(
-                "/health",
-                get(|| async { (StatusCode::OK, Json(json!({"status": "ok"}))) }),
-            )),
-            state: ControlState::new(),
+            state: ControlState { op_endpoint },
         }
     }
 
-    pub fn update_router(&mut self) {
-        self.router = Some(
-            Router::new()
-                .route(
-                    "/health",
-                    get(|| async { (StatusCode::OK, Json(json!({"status": "ok"}))) }),
-                )
-                .route("/control/:id", post(control_device))
-                .with_state(self.state.clone()),
-        );
-    }
-
     pub fn router(&self) -> Router {
-        self.router.clone().unwrap()
+        Router::new()
+            .route("/notify", post(send_notify))
+            .route("/state", get(query_state))
+            .route("/config/:id", post(config_device))
+            .with_state(self.state.clone())
+    }
+}
+
+async fn send_notify(
+    State(state): State<ControlState>,
+    Json(notify): Json<serde_json::Value>,
+) -> Result<(), Error> {
+    let notify = serde_json::from_value(notify)?;
+    let res = state.op_endpoint.exec(RattanOp::SendNotify(notify)).await?;
+    match res {
+        RattanOpResult::SendNotify => Ok(()),
+        _ => Err(RattanOpError::MismatchOpResError.into()),
+    }
+}
+
+async fn query_state(State(state): State<ControlState>) -> Result<Json<Value>, Error> {
+    let res = state.op_endpoint.exec(RattanOp::QueryState).await?;
+    match res {
+        RattanOpResult::QueryState(state) => Ok(Json(json!({"state": state}))),
+        _ => Err(RattanOpError::MismatchOpResError.into()),
+    }
+}
+
+async fn config_device(
+    Path(id): Path<String>,
+    State(state): State<ControlState>,
+    Json(config): Json<serde_json::Value>,
+) -> Result<(), Error> {
+    debug!("Config device (id={}): {:?}", id, config);
+    let config = serde_json::from_value(config)?;
+    let res = state
+        .op_endpoint
+        .exec(RattanOp::ConfigDevice(id, config))
+        .await?;
+    match res {
+        RattanOpResult::ConfigDevice => Ok(()),
+        _ => Err(RattanOpError::MismatchOpResError.into()),
     }
 }

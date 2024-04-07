@@ -27,7 +27,7 @@ jobs:
       - run: sudo apt-get install -y iproute2 ethtool iputils-ping iperf3 datamash bc
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - run: cargo nextest run --profile ci --all-features
+      - run: cargo nextest run --profile ci --all-features --release
         env:
           RUST_LOG: 'info'
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: 'sudo -E'

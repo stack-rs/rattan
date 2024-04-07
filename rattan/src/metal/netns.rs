@@ -7,7 +7,7 @@ use std::thread::{self, JoinHandle};
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{setns, unshare, CloneFlags};
 use nix::unistd::gettid;
-use tracing::{error, info, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::error::NsError;
 
@@ -177,7 +177,7 @@ impl Env for DefaultEnv {
     fn remove(self: &std::sync::Arc<Self>, netns: &mut NetNs) -> Result<(), NsError> {
         let path = &netns.path;
         if path.starts_with(self.persist_dir()) {
-            info!("drop namespace: {}", netns.path().to_string_lossy());
+            debug!("drop namespace: {}", netns.path().to_string_lossy());
             Self::umount_ns(path)?
         }
         Ok(())

@@ -1,0 +1,226 @@
+# This is a sample configuration file for Rattan CLI.
+#
+# Fileds with "Default" are optional.
+# User can specify the configuration file by the `-c` option of `rattan-cli`.
+#
+# **ATTENTION**: Check firewall settings before running Rattan CLI.
+# Please make sure you allow the following addresses:
+# - 192.168.11.0/24
+# - 192.168.12.0/24
+# For example, you can run the following commands if using `ufw`:
+# - `ufw allow from 192.168.11.0/24`
+# - `ufw allow from 192.168.12.0/24`
+# 
+# Run `rattan-cli` will generate some network namespaces and veth pairs to
+# emulate the network environment. The network topology is like:
+#
+#   ns-left                        ns-rattan                        ns-right
+# +---------+   veth pair   +---------------------+   veth pair   +----------+
+# |   nsL-vL| <-----------> |nsL-vR   [P]   nsR-vL| <-----------> |nsR-vR    |
+# | .11.x/32|               |.11.2/32     .12.2/32|               |.12.x/32  |
+# +---------+               +---------------------+               +----------+
+#
+# Then Rattan will build and link the devices according to the configuration file.
+# Each device emulates some network characteristics, such as bandwidth, delay, loss, etc.
+#
+# Then the `COMMAND` specified to `rattan-cli` will run in the `ns-left` network namespace.
+# If not specified, the `$SHELL` will run.
+#
+# Sections:
+# - [env] Section: How to build the environment
+# - [http] Section: HTTP Control Server configuration
+# - [devices] Section: Emulation devices configuration
+# - [links] Section: How to link the devices
+#
+
+
+# ----- Environment Section -----
+# This section determines how to build the environment.
+[env]
+
+# Netns mode
+# Possible values:
+# - "Compatible" : The `ns-left` side is a new network namespace
+#                  (named "ns-left-xxxxxx") and the `ns-right` side is
+#                  the host network namespace. (Mahimahi is this mode)
+# - "Isolated"   : The `ns-left` side is a new network namespace
+#                  (named "ns-left-xxxxxx") and the `ns-right` side is
+#                  another new network namespace (named "ns-right-xxxxxx").
+#                  Now only partially supported in the CLI.
+# - "Container"  : Temporarily not supported
+#
+# Default: "Compatible"
+mode = "Compatible"
+
+# ----- Environment Section End -----
+
+
+# ----- HTTP Section -----
+# This section configures Rattan's HTTP Control Server.
+[http]
+
+# Enable HTTP server
+#
+# Default: false
+enable = false
+
+# HTTP server port
+#
+# Default: 8086
+port = 8086
+
+# ----- HTTP Section End -----
+
+
+# ----- Devices Section -----
+# This section describes the emulation devices.
+# Each device has a unique string ID, defined like "[devices.<ID>]".
+# Each device **MUST** have a "type" field, which determines the device type and device configuration fields.
+# Possible device types:
+# - "Bw"       : Fixed bandwidth
+# - "BwReplay" : Bandwidth trace replayer
+# - "Delay"    : Fixed delay
+# - "Loss"     : Loss pattern
+# - "Custom"   : Custom device, only specify the device ID used in link section,
+#                and the device must be built by the user
+[devices]
+
+
+# Bw Device Example
+[devices.up_1]
+type = "Bw"
+
+# Type of bandwidth calculation
+# Possible values:
+# - "LinkLayer"    : Count the link layer size (NetworkLayer + 38)
+#                    38 = 8 (Preamble + SFD) + 14 (Ethernet header) + 4 (CRC)
+#                         + 12 (Interframe gap)
+# - "NetworkLayer" : Count the network layer size
+#
+# Default: "NetworkLayer"
+bw_type = "NetworkLayer"
+
+# Bandwidth
+# Now we need to break down the bandwidth into two parts: <gbps> and <bps>,
+# which means (1e9 * <gbps> + <bps>) bps. Here <bps> must be less than 1e9.
+# For example, the following line means 1.2 Gbps.
+#
+# Default: Unlimited
+bandwidth = { gbps = 1, bps = 200000000 }
+
+# Queue type
+# Possible values:
+# - "Infinite" : Infinite queue
+# - "DropTail" : DropTail queue
+# - "DropHead" : DropHead queue
+# - "CoDel"    : CoDel queue
+#
+# Default: "Infinite"
+queue = "DropTail"
+
+# Queue configuration
+# Different queue types have different configurations.
+# - For Infinite queue, no configuration is needed.
+#
+# - For DropTail queue and DropHead queue, we have 3 fields:
+#   - "packet_limit" : Queue size in packets numbers.  Default: Unlimited
+#   - "byte_limit"   : Queue size in bytes.            Default: Unlimited
+#   - "bw_type"      : Type of byte calculation.       Default: "NetworkLayer"
+#   Queue size is limited by both "packet_limit" and "byte_limit".
+#
+# - For CoDel queue, we have 6 fields:
+#   - "packet_limit" : Queue size in packets numbers.  Default: Unlimited
+#   - "byte_limit"   : Queue size in bytes.            Default: Unlimited
+#   - "bw_type"      : Type of byte calculation.       Default: "NetworkLayer"
+#   - "interval"     : CoDel Interval.                 Default: 100ms
+#   - "target"       : CoDel Target Delay.             Default: 5ms
+#   - "mtu"          : MTU for CoDel decision.         Default: 1500
+#
+queue_config = { packet_limit = 60 }
+
+
+# Delay Device Example
+[devices.up_2]
+type = "Delay"
+
+# Delay
+# Delay is a string like 10ms, 1s, 100us, etc.
+#
+# Default: "0ms"
+delay = "10ms"
+
+
+# BwReplay Device Example
+[devices.down_1]
+type = "BwReplay"
+
+# Bandwitdh trace
+#
+# Ways to specify the bandwidth trace:
+# - `mahimahi_trace`   : Bandwidth trace file (Mahimahi format)
+# - `trace_config_str` : Bandwidth trace in JSON format
+#
+# **ATTENTION**: These fields are exclusive. One and only one should be specified.
+#
+# Bandwidth trace file (Mahimahi format)
+# Trace file is in the format of Mahimahi bandwidth trace file.
+# Refer to: <https://github.com/ravinet/mahimahi/tree/master/traces>
+#
+# Bandwitdh trace in JSON format
+# Formated as BwTraceConfig in `netem-trace` crate.
+# Refer to: <https://docs.rs/netem-trace/latest/netem_trace/>
+# For example, the following line means 12Mbps for 5 seconds and 24Mbps for 5 seconds and the trace will repeat forever.
+#
+mahimahi_trace = "./assets/24Mbps.trace"
+# trace_config_str = """{\"RepeatedBwPatternConfig\":{\"pattern\":[{\
+# \"StaticBwConfig\":{\"bw\":{\"gbps\":0,\"bps\":12000000},\"duration\":\"5s\"}},\
+# {\"StaticBwConfig\":{\"bw\":{\"gbps\":0,\"bps\":24000000},\"duration\":\"5s\"}}\
+# ]}}"""
+
+# Queue type
+# Same as Bw device
+queue = "CoDel"
+
+
+# Loss Device Example
+[devices.down_2]
+type = "Loss"
+
+# Loss pattern
+# The loss pattern describes how the packets are dropped when going through.
+# It is a list of float numbers, each number is the loss rate of one packet.
+# The loss rate is in the range of [0, 1].
+# Loss pattern will repeat the last value until stop dropping packets.
+# For example, the pattern [0.1, 0.2, 0.3] means [0.1, 0.2, 0.3, 0.3, 0.3, ...].
+# Set the last value of the pattern to 0 to limit the maximum number of consecutive packet losses.
+# If you want to drop packets i.i.d., just set the pattern to a single number, such as [0.1].
+#
+# Default: []
+pattern = [0.1, 0.2]
+
+# ----- Devices Section End -----
+
+
+# ----- Links Section -----
+# This section describes how to link the devices.
+#
+# "left" and "right" are pre-defined device IDs, which respectively represent
+# the `ns-left` side veth (named `nsL-vR`) and the `ns-right` side veth (named `nsR-vL`).
+#
+# The other device IDs are defined by user in the devices section.
+#
+# Each line describes a one-way link from a device egress to a device ingress.
+# For example, the following line means:
+# +------+ --->  up_1  --->  up_2  ---> +-------+
+# | left |                              | right |
+# +------+ <--- down_2 <--- down_1 <--- +-------+
+#
+[links]
+left = "up_1"
+up_1 = "up_2"
+up_2 = "right"
+right = "down_1"
+down_1 = "down_2"
+down_2 = "left"
+
+# ----- Links Section End -----

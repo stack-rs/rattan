@@ -1,42 +1,53 @@
-use clap::{Parser, ValueEnum};
-use netem_trace::BwTrace;
-use paste::paste;
-use rand::rngs::StdRng;
-use rand::SeedableRng;
-use rattan::core::{RattanMachine, RattanMachineConfig};
-use rattan::devices::bandwidth::queue::{
-    CoDelQueue, CoDelQueueConfig, DropHeadQueue, DropHeadQueueConfig, DropTailQueue,
-    DropTailQueueConfig,
-};
-use rattan::devices::bandwidth::BwType;
-use rattan::devices::bandwidth::{queue::InfiniteQueue, BwDevice, BwReplayDevice};
-use rattan::devices::delay::{DelayDevice, DelayDeviceConfig};
-use rattan::devices::external::VirtualEthernet;
-use rattan::devices::loss::{LossDevice, LossDeviceConfig};
-use rattan::devices::{ControlInterface, Device, StdPacket};
-use rattan::env::{get_std_env, StdNetEnvConfig};
-use rattan::metal::io::AfPacketDriver;
-use rattan::metal::netns::NetNsGuard;
-use rattan::netem_trace::{Bandwidth, Delay};
-use std::io::BufRead;
 use std::process::Stdio;
-use std::thread::sleep;
-use tracing::{debug, error, info, span, Instrument, Level};
+
+use clap::{Parser, ValueEnum};
+use paste::paste;
+use rattan::config::{
+    BwDeviceBuildConfig, BwReplayCLIConfig, BwReplayDeviceBuildConfig, DelayDeviceBuildConfig,
+    DeviceBuildConfig, LossDeviceBuildConfig, RattanConfig, RattanCoreConfig,
+};
+use rattan::devices::bandwidth::queue::{
+    CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
+};
+use rattan::devices::bandwidth::BwDeviceConfig;
+use rattan::devices::StdPacket;
+use rattan::env::{StdNetEnvConfig, StdNetEnvMode};
+use rattan::netem_trace::{Bandwidth, Delay};
+use rattan::radix::RattanRadix;
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+#[cfg(feature = "http")]
+use rattan::control::http::HttpConfig;
 
 // mod docker;
 
-const CONFIG_PORT_BASE: u16 = 8086;
+// const CONFIG_PORT_BASE: u16 = 8086;
 
 #[derive(Debug, Parser, Clone)]
 pub struct CommandArgs {
-    /// Verbose debug output
+    // Verbose debug output
     // #[arg(short, long)]
     // verbose: bool,
+    // Run in docker mode
+    // #[arg(long)]
+    // docker: bool,
+    /// Use config file and ignore other options
+    #[arg(short, long, value_name = "Config File")]
+    config: Option<String>,
 
-    /// Run in docker mode
+    /// Only generate config and exit
     #[arg(long)]
-    docker: bool,
+    gen_config: bool,
+
+    #[cfg(feature = "http")]
+    /// Enable HTTP control server
+    #[arg(long)]
+    http: bool,
+    #[cfg(feature = "http")]
+    /// HTTP control server port (default: 8086)
+    #[arg(short, long, value_name = "Port")]
+    port: Option<u16>,
 
     /// Uplink packet loss
     #[arg(long, value_name = "Loss")]
@@ -88,8 +99,8 @@ pub struct CommandArgs {
     #[arg(long, value_name = "JSON", requires = "downlink-queue")]
     downlink_queue_args: Option<String>,
 
-    /// Commands to run
-    commands: Vec<String>,
+    /// Command to run
+    command: Vec<String>,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -101,411 +112,353 @@ enum QueueType {
     CoDel,
 }
 
-// Deserialize queue args, create queue, create BwDevice and add to machine
-// $type: queue type (key in `QueueType`)
-// $args: queue args
-// $machine: RattanMachine
-// $bandwidth: bandwidth for BwDevice
-macro_rules! bw_q_args_into_machine {
-    ($type:ident, $args:expr, $machine:expr, $bandwidth:expr) => {
+// Deserialize queue args and create BwDeviceBuildConfig
+// $q_type: queue type (key in `QueueType`)
+// $q_args: queue args
+// $bw: bandwidth for BwDevice
+macro_rules! bw_q_args_into_config {
+    ($q_type:ident, $q_args:expr, $bw:expr) => {
         paste!(
-            match serde_json::from_str::<[<$type QueueConfig>]> (&$args.unwrap_or("{}".to_string())) {
-                Ok(config) => {
-                    let packet_queue: [<$type Queue>]<StdPacket> = config.into();
-                    let bw_device = BwDevice::new($bandwidth, packet_queue, BwType::default());
-                    $machine.add_device(bw_device)
-                }
+            match serde_json::from_str::<[<$q_type QueueConfig>]> (&$q_args.unwrap_or("{}".to_string())) {
+                Ok(queue_config) => DeviceBuildConfig::Bw(BwDeviceBuildConfig::$q_type(
+                    if $q_args.is_none() {
+                        BwDeviceConfig::new($bw, None, None)
+                    } else {
+                        BwDeviceConfig::new($bw, queue_config, None)
+                    }
+                )),
                 Err(e) => {
-                    error!("Failed to parse uplink-queue-args: {}", e);
-                    return;
+                    error!("Failed to parse queue args {:?}: {}", $q_args, e);
+                    return Err(anyhow::anyhow!("Failed to parse queue args {:?}: {}", $q_args, e));
                 }
             }
         )
     };
 }
 
-// Deserialize queue args, create queue, create BwReplayDevice and add to machine
-// $type: queue type (key in `QueueType`)
-// $args: queue args
-// $machine: RattanMachine
-// $trace: trace for BwReplayDevice
-macro_rules! bwreplay_q_args_into_machine {
-    ($type:ident, $args:expr, $machine:expr, $trace:expr) => {
+// Deserialize queue args and create BwReplayDeviceBuildConfig
+// $q_type: queue type (key in `QueueType`)
+// $q_args: queue args
+// $mahimahi_trace: mahimahi_trace for BwReplayDevice
+macro_rules! bwreplay_q_args_into_config {
+    ($q_type:ident, $q_args:expr, $mahimahi_trace:expr) => {
         paste!(
-            match serde_json::from_str::<[<$type QueueConfig>]> (&$args.unwrap_or("{}".to_string())) {
-                Ok(config) => {
-                    let packet_queue: [<$type Queue>]<StdPacket> = config.into();
-                    let bw_device = BwReplayDevice::new($trace, packet_queue, BwType::default());
-                    $machine.add_device(bw_device)
-                }
+            match serde_json::from_str::<[<$q_type QueueConfig>]> (&$q_args.unwrap_or("{}".to_string())) {
+                Ok(queue_config) => DeviceBuildConfig::BwReplay(BwReplayDeviceBuildConfig::$q_type(
+                    if $q_args.is_none() {
+                        BwReplayCLIConfig::new($mahimahi_trace, None, None, None)
+                    } else {
+                        BwReplayCLIConfig::new($mahimahi_trace, None, queue_config, None)
+                    }
+                )),
                 Err(e) => {
-                    error!("Failed to parse uplink-queue-args: {}", e);
-                    return;
+                    error!("Failed to parse queue args {:?}: {}", $q_args, e);
+                    return Err(anyhow::anyhow!("Failed to parse queue args {:?}: {}", $q_args, e));
                 }
             }
         )
     };
 }
 
-fn mahimahi_file_to_pattern(filename: &str) -> Vec<u64> {
-    let trace_file = std::fs::File::open(filename).expect("Failed to open uplink trace file");
-    let trace_pattern = std::io::BufReader::new(trace_file)
-        .lines()
-        .enumerate()
-        .map(|(i, line)| {
-            let line = line
-                .map_err(|e| {
-                    error!("Failed to read line {} in {}: {}", i, &filename, e);
-                    e
-                })
-                .unwrap();
-            let line = line.trim();
-            line.parse::<u64>()
-                .map_err(|e| {
-                    error!("Failed to parse line {} in {}: {}", i, &filename, e);
-                    e
-                })
-                .unwrap()
-        })
-        .collect();
-    debug!("Trace pattern: {:?}", trace_pattern);
-    trace_pattern
-}
-
-fn main() {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
+
     let opts = CommandArgs::parse();
+    debug!("{:?}", opts);
     // if opts.docker {
     //     docker::docker_main(opts).unwrap();
     //     return;
     // }
-    info!("{:?}", opts);
 
-    let std_env = get_std_env(StdNetEnvConfig {
-        mode: rattan::env::StdNetEnvMode::Compatible,
-    })
-    .unwrap();
-    let left_ns = std_env.left_ns.clone();
-    let _right_ns = std_env.right_ns.clone();
-    let rattan_base = std_env.right_pair.right.ip_addr.0;
-
-    let mut machine = RattanMachine::<StdPacket>::new();
-    let cancel_token = machine.cancel_token();
-
-    let rattan_opts = opts.clone();
-    let rattan_thread_span = span!(Level::DEBUG, "rattan_thread").or_current();
-    let rattan_thread = std::thread::spawn(move || {
-        let _entered = rattan_thread_span.entered();
-        let original_ns = std_env.rattan_ns.enter().unwrap();
-        let _left_pair_guard = std_env.left_pair.clone();
-        let _right_pair_guard = std_env.right_pair.clone();
-        sleep(std::time::Duration::from_millis(100));
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_io()
-            .enable_time()
-            .build()
-            .unwrap();
-
-        runtime.block_on(
-            async move {
-                let rng = StdRng::seed_from_u64(42);
-
-                let left_device = VirtualEthernet::<StdPacket, AfPacketDriver>::new(
-                    std_env.left_pair.right.clone(),
-                );
-                let right_device = VirtualEthernet::<StdPacket, AfPacketDriver>::new(
-                    std_env.right_pair.left.clone(),
-                );
-
-                let (left_device_rx, left_device_tx) = machine.add_device(left_device);
-                info!(left_device_rx, left_device_tx, "Left device");
-                let (right_device_rx, right_device_tx) = machine.add_device(right_device);
-                info!(right_device_rx, right_device_tx, "Right device");
-                let mut left_fd = vec![left_device_rx];
-                let mut right_fd = vec![right_device_rx];
-
-                if let Some(bandwidth) = rattan_opts.uplink_bandwidth {
-                    let bandwidth = Bandwidth::from_bps(bandwidth);
-                    let (bw_rx, bw_tx) = match rattan_opts.uplink_queue {
-                        Some(QueueType::Infinite) | None => {
-                            let packet_queue = InfiniteQueue::new();
-                            let bw_device =
-                                BwDevice::new(bandwidth, packet_queue, BwType::default());
-                            machine.add_device(bw_device)
-                        }
-                        Some(QueueType::DropTail) => {
-                            bw_q_args_into_machine!(
-                                DropTail,
-                                rattan_opts.uplink_queue_args,
-                                machine,
-                                bandwidth
-                            )
-                        }
-                        Some(QueueType::DropHead) => {
-                            bw_q_args_into_machine!(
-                                DropHead,
-                                rattan_opts.uplink_queue_args,
-                                machine,
-                                bandwidth
-                            )
-                        }
-                        Some(QueueType::CoDel) => {
-                            bw_q_args_into_machine!(
-                                CoDel,
-                                rattan_opts.uplink_queue_args,
-                                machine,
-                                bandwidth
-                            )
-                        }
-                    };
-                    info!(bw_rx, bw_tx, "Uplink bandwidth");
-                    left_fd.push(bw_tx);
-                    left_fd.push(bw_rx);
-                } else if let Some(trace_file) = rattan_opts.uplink_trace {
-                    let trace_pattern = mahimahi_file_to_pattern(&trace_file);
-                    let trace = netem_trace::load_mahimahi_trace(trace_pattern, None)
-                        .map_err(|e| {
-                            error!("Failed to load uplink trace file {}: {}", &trace_file, e);
-                            e
-                        })
-                        .unwrap();
-                    let trace = Box::new(trace.build()) as Box<dyn BwTrace>;
-                    let (bw_rx, bw_tx) = match rattan_opts.uplink_queue {
-                        Some(QueueType::Infinite) | None => {
-                            let packet_queue = InfiniteQueue::new();
-                            let bw_device =
-                                BwReplayDevice::new(trace, packet_queue, BwType::default());
-                            machine.add_device(bw_device)
-                        }
-                        Some(QueueType::DropTail) => {
-                            bwreplay_q_args_into_machine!(
-                                DropTail,
-                                rattan_opts.uplink_queue_args,
-                                machine,
-                                trace
-                            )
-                        }
-                        Some(QueueType::DropHead) => {
-                            bwreplay_q_args_into_machine!(
-                                DropHead,
-                                rattan_opts.uplink_queue_args,
-                                machine,
-                                trace
-                            )
-                        }
-                        Some(QueueType::CoDel) => {
-                            bwreplay_q_args_into_machine!(
-                                CoDel,
-                                rattan_opts.uplink_queue_args,
-                                machine,
-                                trace
-                            )
-                        }
-                    };
-                    info!(bw_rx, bw_tx, "Uplink trace");
-                    left_fd.push(bw_tx);
-                    left_fd.push(bw_rx);
-                }
-
-                if let Some(bandwidth) = rattan_opts.downlink_bandwidth {
-                    let bandwidth = Bandwidth::from_bps(bandwidth);
-                    let (bw_rx, bw_tx) = match rattan_opts.downlink_queue {
-                        Some(QueueType::Infinite) | None => {
-                            let packet_queue = InfiniteQueue::new();
-                            let bw_device =
-                                BwDevice::new(bandwidth, packet_queue, BwType::default());
-                            machine.add_device(bw_device)
-                        }
-                        Some(QueueType::DropTail) => {
-                            bw_q_args_into_machine!(
-                                DropTail,
-                                rattan_opts.downlink_queue_args,
-                                machine,
-                                bandwidth
-                            )
-                        }
-                        Some(QueueType::DropHead) => {
-                            bw_q_args_into_machine!(
-                                DropHead,
-                                rattan_opts.downlink_queue_args,
-                                machine,
-                                bandwidth
-                            )
-                        }
-                        Some(QueueType::CoDel) => {
-                            bw_q_args_into_machine!(
-                                CoDel,
-                                rattan_opts.downlink_queue_args,
-                                machine,
-                                bandwidth
-                            )
-                        }
-                    };
-                    info!(bw_rx, bw_tx, "Downlink bandwidth");
-                    right_fd.push(bw_tx);
-                    right_fd.push(bw_rx);
-                } else if let Some(trace_file) = rattan_opts.downlink_trace {
-                    let trace_pattern = mahimahi_file_to_pattern(&trace_file);
-                    let trace = netem_trace::load_mahimahi_trace(trace_pattern, None)
-                        .map_err(|e| {
-                            error!("Failed to load downlink trace file {}: {}", &trace_file, e);
-                            e
-                        })
-                        .unwrap();
-                    let trace = Box::new(trace.build()) as Box<dyn BwTrace>;
-                    let (bw_rx, bw_tx) = match rattan_opts.downlink_queue {
-                        Some(QueueType::Infinite) | None => {
-                            let packet_queue = InfiniteQueue::new();
-                            let bw_device =
-                                BwReplayDevice::new(trace, packet_queue, BwType::default());
-                            machine.add_device(bw_device)
-                        }
-                        Some(QueueType::DropTail) => {
-                            bwreplay_q_args_into_machine!(
-                                DropTail,
-                                rattan_opts.downlink_queue_args,
-                                machine,
-                                trace
-                            )
-                        }
-                        Some(QueueType::DropHead) => {
-                            bwreplay_q_args_into_machine!(
-                                DropHead,
-                                rattan_opts.downlink_queue_args,
-                                machine,
-                                trace
-                            )
-                        }
-                        Some(QueueType::CoDel) => {
-                            bwreplay_q_args_into_machine!(
-                                CoDel,
-                                rattan_opts.downlink_queue_args,
-                                machine,
-                                trace
-                            )
-                        }
-                    };
-                    info!(bw_rx, bw_tx, "Downlink trace");
-                    left_fd.push(bw_tx);
-                    left_fd.push(bw_rx);
-                }
-
-                if let Some(delay) = rattan_opts.uplink_delay {
-                    let delay_device = DelayDevice::<StdPacket>::new();
-                    let delay_ctl = delay_device.control_interface();
-                    delay_ctl.set_config(DelayDeviceConfig::new(delay)).unwrap();
-                    let (delay_rx, delay_tx) = machine.add_device(delay_device);
-                    info!(delay_rx, delay_tx, "Uplink delay");
-                    left_fd.push(delay_tx);
-                    left_fd.push(delay_rx);
-                }
-
-                if let Some(delay) = rattan_opts.downlink_delay {
-                    let delay_device = DelayDevice::<StdPacket>::new();
-                    let delay_ctl = delay_device.control_interface();
-                    delay_ctl.set_config(DelayDeviceConfig::new(delay)).unwrap();
-                    let (delay_rx, delay_tx) = machine.add_device(delay_device);
-                    info!(delay_rx, delay_tx, "Downlink delay");
-                    right_fd.push(delay_tx);
-                    right_fd.push(delay_rx);
-                }
-
-                if let Some(loss) = rattan_opts.uplink_loss {
-                    let loss_device = LossDevice::<StdPacket, StdRng>::new(rng.clone());
-                    let loss_ctl = loss_device.control_interface();
-                    loss_ctl.set_config(LossDeviceConfig::new([loss])).unwrap();
-                    let (loss_rx, loss_tx) = machine.add_device(loss_device);
-                    info!(loss_rx, loss_tx, "Uplink loss");
-                    left_fd.push(loss_tx);
-                    left_fd.push(loss_rx);
-                }
-
-                if let Some(loss) = rattan_opts.downlink_loss {
-                    let loss_device = LossDevice::<StdPacket, StdRng>::new(rng);
-                    let loss_ctl = loss_device.control_interface();
-                    loss_ctl.set_config(LossDeviceConfig::new([loss])).unwrap();
-                    let (loss_rx, loss_tx) = machine.add_device(loss_device);
-                    info!(loss_rx, loss_tx, "Downlink loss");
-                    right_fd.push(loss_tx);
-                    right_fd.push(loss_rx);
-                }
-
-                left_fd.push(right_device_tx);
-                if left_fd.len() % 2 != 0 {
-                    panic!("Wrong number of devices");
-                }
-                for i in 0..left_fd.len() / 2 {
-                    machine.link_device(left_fd[i * 2], left_fd[i * 2 + 1]);
-                }
-                right_fd.push(left_device_tx);
-                if right_fd.len() % 2 != 0 {
-                    panic!("Wrong number of devices");
-                }
-                for i in 0..right_fd.len() / 2 {
-                    machine.link_device(right_fd[i * 2], right_fd[i * 2 + 1]);
-                }
-
-                // get the last byte of rattan_base as the port number
-                let port = CONFIG_PORT_BASE - 1
-                    + match rattan_base {
-                        std::net::IpAddr::V4(ip) => ip.octets()[3],
-                        std::net::IpAddr::V6(ip) => ip.octets()[15],
-                    } as u16;
-
-                let config = RattanMachineConfig { original_ns, port };
-                machine.core_loop(config).await
+    let config = match opts.config {
+        Some(config_file) => {
+            info!("Loading config from {}", config_file);
+            let content = config::Config::builder()
+                .add_source(config::File::with_name(&config_file))
+                .build()?;
+            let config: RattanConfig<StdPacket> = content.try_deserialize()?;
+            config
+        }
+        None => {
+            #[cfg(feature = "http")]
+            let mut http_config = HttpConfig {
+                enable: opts.http,
+                ..Default::default()
+            };
+            #[cfg(feature = "http")]
+            if let Some(port) = opts.port {
+                http_config.port = port;
             }
-            .in_current_span(),
-        );
-    });
 
-    // Test connectivity before starting
-    let res = if opts.commands.is_empty() {
-        info!("ping {} testing...", rattan_base);
-        let _left_ns_guard = NetNsGuard::new(left_ns.clone()).unwrap();
-        let handle = std::process::Command::new("ping")
-            .args([&rattan_base.to_string(), "-c", "3", "-i", "0.2"])
-            .stdout(std::process::Stdio::piped())
+            let mut core_config = RattanCoreConfig::<StdPacket>::default();
+            let mut uplink_count = 0;
+            let mut downlink_count = 0;
+
+            if let Some(bandwidth) = opts.uplink_bandwidth {
+                let bandwidth = Bandwidth::from_bps(bandwidth);
+                let device_config = match opts.uplink_queue {
+                    Some(QueueType::Infinite) | None => {
+                        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+                            bandwidth,
+                            InfiniteQueueConfig::new(),
+                            None,
+                        )))
+                    }
+                    Some(QueueType::DropTail) => {
+                        bw_q_args_into_config!(DropTail, opts.uplink_queue_args.clone(), bandwidth)
+                    }
+                    Some(QueueType::DropHead) => {
+                        bw_q_args_into_config!(DropHead, opts.uplink_queue_args.clone(), bandwidth)
+                    }
+                    Some(QueueType::CoDel) => {
+                        bw_q_args_into_config!(CoDel, opts.uplink_queue_args.clone(), bandwidth)
+                    }
+                };
+                uplink_count += 1;
+                core_config
+                    .devices
+                    .insert(format!("up_{}", uplink_count), device_config);
+            } else if let Some(trace_file) = opts.uplink_trace {
+                let device_config = match opts.uplink_queue {
+                    Some(QueueType::Infinite) | None => DeviceBuildConfig::BwReplay(
+                        BwReplayDeviceBuildConfig::Infinite(BwReplayCLIConfig::new(
+                            trace_file,
+                            None,
+                            InfiniteQueueConfig::new(),
+                            None,
+                        )),
+                    ),
+                    Some(QueueType::DropTail) => {
+                        bwreplay_q_args_into_config!(
+                            DropTail,
+                            opts.uplink_queue_args.clone(),
+                            trace_file
+                        )
+                    }
+                    Some(QueueType::DropHead) => {
+                        bwreplay_q_args_into_config!(
+                            DropHead,
+                            opts.uplink_queue_args.clone(),
+                            trace_file
+                        )
+                    }
+                    Some(QueueType::CoDel) => {
+                        bwreplay_q_args_into_config!(
+                            CoDel,
+                            opts.uplink_queue_args.clone(),
+                            trace_file
+                        )
+                    }
+                };
+                uplink_count += 1;
+                core_config
+                    .devices
+                    .insert(format!("up_{}", uplink_count), device_config);
+            }
+
+            if let Some(bandwidth) = opts.downlink_bandwidth {
+                let bandwidth = Bandwidth::from_bps(bandwidth);
+                let device_config = match opts.downlink_queue {
+                    Some(QueueType::Infinite) | None => {
+                        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+                            bandwidth,
+                            InfiniteQueueConfig::new(),
+                            None,
+                        )))
+                    }
+                    Some(QueueType::DropTail) => {
+                        bw_q_args_into_config!(
+                            DropTail,
+                            opts.downlink_queue_args.clone(),
+                            bandwidth
+                        )
+                    }
+                    Some(QueueType::DropHead) => {
+                        bw_q_args_into_config!(
+                            DropHead,
+                            opts.downlink_queue_args.clone(),
+                            bandwidth
+                        )
+                    }
+                    Some(QueueType::CoDel) => {
+                        bw_q_args_into_config!(CoDel, opts.downlink_queue_args.clone(), bandwidth)
+                    }
+                };
+                downlink_count += 1;
+                core_config
+                    .devices
+                    .insert(format!("down_{}", downlink_count), device_config);
+            } else if let Some(trace_file) = opts.downlink_trace {
+                let device_config = match opts.downlink_queue {
+                    Some(QueueType::Infinite) | None => DeviceBuildConfig::BwReplay(
+                        BwReplayDeviceBuildConfig::Infinite(BwReplayCLIConfig::new(
+                            trace_file,
+                            None,
+                            InfiniteQueueConfig::new(),
+                            None,
+                        )),
+                    ),
+                    Some(QueueType::DropTail) => {
+                        bwreplay_q_args_into_config!(
+                            DropTail,
+                            opts.downlink_queue_args.clone(),
+                            trace_file
+                        )
+                    }
+                    Some(QueueType::DropHead) => {
+                        bwreplay_q_args_into_config!(
+                            DropHead,
+                            opts.downlink_queue_args.clone(),
+                            trace_file
+                        )
+                    }
+                    Some(QueueType::CoDel) => {
+                        bwreplay_q_args_into_config!(
+                            CoDel,
+                            opts.downlink_queue_args.clone(),
+                            trace_file
+                        )
+                    }
+                };
+                downlink_count += 1;
+                core_config
+                    .devices
+                    .insert(format!("down_{}", downlink_count), device_config);
+            }
+
+            if let Some(delay) = opts.uplink_delay {
+                let device_config = DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(delay));
+                uplink_count += 1;
+                core_config
+                    .devices
+                    .insert(format!("up_{}", uplink_count), device_config);
+            }
+
+            if let Some(delay) = opts.downlink_delay {
+                let device_config = DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(delay));
+                downlink_count += 1;
+                core_config
+                    .devices
+                    .insert(format!("down_{}", downlink_count), device_config);
+            }
+
+            if let Some(loss) = opts.uplink_loss {
+                let device_config = DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([loss]));
+                uplink_count += 1;
+                core_config
+                    .devices
+                    .insert(format!("up_{}", uplink_count), device_config);
+            }
+
+            if let Some(loss) = opts.downlink_loss {
+                let device_config = DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([loss]));
+                downlink_count += 1;
+                core_config
+                    .devices
+                    .insert(format!("down_{}", downlink_count), device_config);
+            }
+
+            for i in 1..uplink_count {
+                core_config
+                    .links
+                    .insert(format!("up_{}", i), format!("up_{}", i + 1));
+            }
+            for i in 1..downlink_count {
+                core_config
+                    .links
+                    .insert(format!("down_{}", i), format!("down_{}", i + 1));
+            }
+
+            if uplink_count > 0 {
+                core_config
+                    .links
+                    .insert("left".to_string(), "up_1".to_string());
+                core_config
+                    .links
+                    .insert(format!("up_{}", uplink_count), "right".to_string());
+            } else {
+                core_config
+                    .links
+                    .insert("left".to_string(), "right".to_string());
+            }
+            if downlink_count > 0 {
+                core_config
+                    .links
+                    .insert("right".to_string(), "down_1".to_string());
+                core_config
+                    .links
+                    .insert(format!("down_{}", downlink_count), "left".to_string());
+            } else {
+                core_config
+                    .links
+                    .insert("right".to_string(), "left".to_string());
+            }
+
+            RattanConfig::<StdPacket> {
+                env: StdNetEnvConfig {
+                    mode: StdNetEnvMode::Compatible,
+                },
+                #[cfg(feature = "http")]
+                http: http_config,
+                core: core_config,
+            }
+        }
+    };
+    debug!(?config);
+    if config.core.devices.is_empty() {
+        warn!("No devices specified in config");
+    }
+    if config.core.links.is_empty() {
+        warn!("No links specified in config");
+    }
+
+    if opts.gen_config {
+        let toml_string = toml::to_string_pretty(&config)?;
+        println!("{}", toml_string);
+        return Ok(());
+    }
+
+    let mut radix = RattanRadix::<StdPacket>::new(config)?;
+    radix.spawn_rattan()?;
+
+    let rattan_base = radix.right_ip();
+    let left_handle = radix.left_spawn(move || {
+        let mut client_handle = std::process::Command::new("/usr/bin/env");
+        client_handle.env("RATTAN_BASE", rattan_base.to_string());
+        if opts.command.is_empty() {
+            let shell = std::env::var("SHELL").unwrap_or("/bin/bash".to_string());
+            client_handle.arg(shell);
+        } else {
+            client_handle.args(opts.command);
+        }
+        info!("Running {:?}", client_handle);
+        let mut client_handle = client_handle
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
-        let output = handle.wait_with_output().unwrap();
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        stdout.contains("time=")
-    } else {
-        // skip ping test if commands are provided
-        true
-    };
-    match res {
-        true => {
-            left_ns.enter().unwrap();
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            let mut client_handle = std::process::Command::new("/usr/bin/env");
-            client_handle.env("RATTAN_BASE", rattan_base.to_string());
-            if opts.commands.is_empty() {
-                client_handle.arg("bash");
-            } else {
-                client_handle.args(opts.commands);
-            }
-            info!("Running {:?}", client_handle);
-            let mut client_handle = client_handle
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .unwrap();
-            let output = client_handle.wait().unwrap();
-            info!("Exit {}", output.code().unwrap());
-        }
-        false => {
-            error!("ping test failed");
-        }
-    };
+        let output = client_handle.wait()?;
+        info!("Exit {}", output.code().unwrap());
+        anyhow::Result::Ok(())
+    })?;
+    radix.start_rattan()?;
+    left_handle
+        .join()
+        .map_err(|e| anyhow::anyhow!("Error joining left handle: {:?}", e))??;
 
-    cancel_token.cancel();
-    rattan_thread.join().unwrap();
+    // get the last byte of rattan_base as the port number
+    // let port = CONFIG_PORT_BASE - 1
+    //     + match rattan_base {
+    //         std::net::IpAddr::V4(ip) => ip.octets()[3],
+    //         std::net::IpAddr::V6(ip) => ip.octets()[15],
+    //     } as u16;
+    // let config = RattanMachineConfig { original_ns, port };
+
+    Ok(())
 }
