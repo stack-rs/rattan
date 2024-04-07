@@ -1,16 +1,25 @@
-use std::{collections::HashMap, sync::Arc};
-
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, span, trace, Instrument, Level};
-
-use crate::{
-    devices::{Device, Egress, Ingress, Packet},
-    error::Error,
-    metal::netns::NetNs,
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc,
+    },
 };
 
-#[cfg(feature = "http")]
-use crate::control::{http::HttpControlEndpoint, ControlEndpoint};
+use tokio::{
+    runtime::{Handle, Runtime},
+    sync::{broadcast, mpsc},
+    task,
+};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, span, trace, warn, Instrument, Level};
+
+use crate::{
+    control::{RattanController, RattanNotify, RattanOp, RattanOpEndpoint, RattanOpResult},
+    devices::{Device, Egress, Ingress, Packet},
+    error::{Error, RattanCoreError},
+};
 
 #[cfg(feature = "packet-dump")]
 use pcap_file::pcapng::{
@@ -23,48 +32,93 @@ use pcap_file::pcapng::{
 #[cfg(feature = "packet-dump")]
 use std::{fs::File, io::Write, sync::Mutex};
 
-#[derive(Debug)]
-pub struct RattanMachineConfig {
-    pub original_ns: Arc<NetNs>,
-    pub port: u16,
+pub trait DeviceFactory<D>: FnOnce(&Handle) -> Result<D, Error> {}
+
+impl<T: FnOnce(&Handle) -> Result<D, Error>, D> DeviceFactory<D> for T {}
+
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone)]
+#[repr(u8)]
+pub enum RattanState {
+    Initial = 0,
+    Spawned = 1,
+    Running = 2,
+    Exited = 3,
 }
 
-pub struct RattanMachine<P>
+impl From<u8> for RattanState {
+    fn from(v: u8) -> Self {
+        match v {
+            0 => RattanState::Initial,
+            1 => RattanState::Spawned,
+            2 => RattanState::Running,
+            3 => RattanState::Exited,
+            _ => panic!("Invalid RattanState value: {}", v),
+        }
+    }
+}
+
+pub struct RattanCore<P>
 where
     P: Packet,
 {
-    token: CancellationToken,
-    sender: HashMap<usize, Arc<dyn Ingress<P>>>,
-    receiver: HashMap<usize, Box<dyn Egress<P>>>,
-    router: HashMap<usize, usize>,
-    #[cfg(feature = "http")]
-    config_endpoint: HttpControlEndpoint,
+    // Env
+    runtime: Arc<Runtime>,
+    cancel_token: CancellationToken,
+    rt_cancel_token: CancellationToken,
+    op_endpoint: RattanOpEndpoint,
+
+    // Build
+    sender: HashMap<String, Arc<dyn Ingress<P>>>,
+    receiver: HashMap<String, Box<dyn Egress<P>>>,
+    router: HashMap<String, String>,
+
+    // Runtime
+    state: Arc<AtomicU8>, // RattanState
+    rattan_handles: Vec<task::JoinHandle<()>>,
+    rattan_notify_rx: broadcast::Receiver<RattanNotify>,
+    controller_handle: task::JoinHandle<()>,
+
+    #[cfg(feature = "packet-dump")]
+    interface_id: HashMap<String, u32>,
     #[cfg(feature = "packet-dump")]
     pcap_writer: Arc<Mutex<PcapNgWriter<Vec<u8>>>>,
 }
 
-impl<P> Default for RattanMachine<P>
+impl<P> RattanCore<P>
 where
     P: Packet + 'static,
 {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<P> RattanMachine<P>
-where
-    P: Packet + 'static,
-{
-    pub fn new() -> Self {
-        info!("New RattanMachine");
+    pub fn new(
+        runtime: Arc<Runtime>,
+        cancel_token: CancellationToken,
+        rt_cancel_token: CancellationToken,
+    ) -> Self {
+        info!("New RattanCore");
+        let (notify_tx, notify_rx) = broadcast::channel(16);
+        let (op_tx, op_rx) = mpsc::unbounded_channel();
+        let state = Arc::new(AtomicU8::from(RattanState::Initial as u8));
+        let controller_handle = runtime.spawn(
+            RattanController::new(op_rx, notify_tx, cancel_token.child_token(), state.clone())
+                .run(),
+        );
         Self {
-            token: CancellationToken::new(),
+            runtime,
+            rt_cancel_token,
+            cancel_token,
+            op_endpoint: RattanOpEndpoint::new(op_tx),
+
             sender: HashMap::new(),
             receiver: HashMap::new(),
             router: HashMap::new(),
-            #[cfg(feature = "http")]
-            config_endpoint: HttpControlEndpoint::new(),
+
+            state,
+            rattan_handles: Vec::new(),
+            rattan_notify_rx: notify_rx,
+            controller_handle,
+
+            #[cfg(feature = "packet-dump")]
+            interface_id: HashMap::new(),
             #[cfg(feature = "packet-dump")]
             pcap_writer: Arc::new(Mutex::new(
                 PcapNgWriter::new(Vec::new()).expect("Error creating pcapng writer"),
@@ -72,19 +126,62 @@ where
         }
     }
 
-    pub fn add_device(&mut self, device: impl Device<P>) -> (usize, usize) {
-        let tx_id = self.sender.len();
-        let rx_id = self.receiver.len();
+    pub fn op_endpoint(&self) -> RattanOpEndpoint {
+        self.op_endpoint.clone()
+    }
 
-        #[cfg(feature = "http")]
+    pub fn op_block_exec(&self, op: RattanOp) -> Result<RattanOpResult, Error> {
+        self.runtime.block_on(self.op_endpoint.exec(op))
+    }
+
+    pub fn build_deivce<D, F>(
+        &mut self,
+        id: String,
+        builder: F,
+    ) -> Result<Arc<D::ControlInterfaceType>, Error>
+    where
+        D: Device<P>,
+        F: DeviceFactory<D>,
+    {
+        info!("Build device \"{}\"", id);
+        let device = builder(self.runtime.handle())?;
         let control_interface = device.control_interface();
-        #[cfg(feature = "http")]
-        self.config_endpoint
-            .register_device(rx_id, control_interface);
+        self.register_device(id.clone(), device)?;
+        #[cfg(feature = "serde")]
+        self.op_block_exec(RattanOp::AddControlInterface(
+            id.clone(),
+            control_interface.clone(),
+        ))?;
+        Ok(control_interface)
+    }
 
-        self.sender.insert(tx_id, device.sender());
-        self.receiver
-            .insert(rx_id, Box::new(device.into_receiver()));
+    fn register_device(
+        &mut self,
+        id: String,
+        device: impl Device<P>,
+    ) -> Result<(), RattanCoreError> {
+        match self.sender.entry(id.clone()) {
+            std::collections::hash_map::Entry::Occupied(_) => {
+                error!(id, "Device ID already exists in sender list");
+                return Err(RattanCoreError::AddDeviceError(
+                    "Device ID already exists in sender list".to_string(),
+                ));
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(device.sender());
+            }
+        };
+        match self.receiver.entry(id.clone()) {
+            std::collections::hash_map::Entry::Occupied(_) => {
+                error!(id, "Device ID already exists in receiver list");
+                return Err(RattanCoreError::AddDeviceError(
+                    "Device ID already exists in receiver list".to_string(),
+                ));
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(Box::new(device.into_receiver()));
+            }
+        };
 
         #[cfg(feature = "packet-dump")]
         {
@@ -92,8 +189,13 @@ where
                 linktype: pcap_file::DataLink::ETHERNET,
                 snaplen: 0xFFFF,
                 // XXX: Solve the problem <https://github.com/courvoif/pcap-file/pull/32>
-                options: vec![InterfaceDescriptionOption::IfTsResol(9)],
+                options: vec![
+                    InterfaceDescriptionOption::IfName(std::borrow::Cow::Borrowed(&id)),
+                    InterfaceDescriptionOption::IfTsResol(9),
+                ],
             };
+            self.interface_id
+                .insert(id.clone(), self.interface_id.len() as u32);
             self.pcap_writer
                 .lock()
                 .unwrap()
@@ -101,65 +203,78 @@ where
                 .unwrap();
         }
 
-        (tx_id, rx_id)
+        Ok(())
     }
 
-    pub fn link_device(&mut self, rx_id: usize, tx_id: usize) {
-        info!(rx_id, tx_id, "Link device:");
+    pub fn link_device(&mut self, rx_id: String, tx_id: String) {
+        info!("Link device \"{}\" --> \"{}\"", rx_id, tx_id);
         self.router.insert(rx_id, tx_id);
     }
 
-    pub fn cancel_token(&self) -> CancellationToken {
-        self.token.clone()
-    }
+    pub fn spawn_rattan(&mut self) -> Result<(), RattanCoreError> {
+        if self.state.load(Ordering::Relaxed) != RattanState::Initial as u8 {
+            let err_msg = format!(
+                "Rattan state is {:?} instead of Initial",
+                RattanState::from(self.state.load(Ordering::Relaxed))
+            );
+            error!("{}", err_msg);
+            return Err(RattanCoreError::SpawnError(err_msg));
+        }
+        if self.router.is_empty() {
+            let err_msg = "No links specified".to_string();
+            error!("{}", err_msg);
+            return Err(RattanCoreError::SpawnError(err_msg));
+        }
 
-    pub async fn core_loop(&mut self, config: RattanMachineConfig) {
-        let mut handles = Vec::new();
-        #[cfg(feature = "control")]
-        let router_clone = self.config_endpoint.router();
-        #[cfg(feature = "control")]
-        let token_dup = self.token.clone();
-        #[cfg(feature = "control")]
-        let control_thread_span = span!(Level::INFO, "control_thread").or_current();
-
-        #[cfg(feature = "control")]
-        let control_thread = std::thread::spawn(move || {
-            let _entered = control_thread_span.entered();
-            config.original_ns.enter().unwrap();
-            info!("control thread started");
-
-            #[cfg(feature = "http")]
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            #[cfg(feature = "http")]
-            rt.block_on(async move {
-                let server =
-                    axum::Server::bind(&format!("127.0.0.1:{}", config.port).parse().unwrap())
-                        .serve(router_clone.into_make_service())
-                        .with_graceful_shutdown(async {
-                            token_dup.cancelled().await;
-                        });
-                info!("Listening on http://127.0.0.1:{}", config.port);
-                match server.await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("server error: {}", e);
-                    }
-                }
-            })
-        });
-
-        for (&rx_id, &tx_id) in self.router.iter() {
-            let mut rx = self.receiver.remove(&rx_id).unwrap();
-            let tx = self.sender.get(&tx_id).unwrap().clone();
-            let token_dup = self.token.clone();
+        let rattan_cancel_token = self.cancel_token.child_token();
+        for (rx_id, tx_id) in self.router.iter() {
+            let rattan_cancel_token = rattan_cancel_token.clone();
+            let mut notify_rx = self.rattan_notify_rx.resubscribe();
+            let rx_id = rx_id.clone();
+            let tx_id = tx_id.clone();
+            let mut rx = self.receiver.remove(&rx_id).ok_or_else(|| {
+                error!("Unknow receiver ID: {}", rx_id);
+                RattanCoreError::UnknowIdError(rx_id.clone())
+            })?;
+            let tx = self
+                .sender
+                .get(&tx_id)
+                .ok_or_else(|| {
+                    error!("Unknow sender ID: {}", tx_id);
+                    RattanCoreError::UnknowIdError(tx_id.clone())
+                })?
+                .clone();
             #[cfg(feature = "packet-dump")]
             let pcap_writer = self.pcap_writer.clone();
+            #[cfg(feature = "packet-dump")]
+            let interface_id = *self.interface_id.get(&rx_id).ok_or_else(|| {
+                error!("Unknow interface ID: {}", rx_id);
+                RattanCoreError::UnknowIdError(rx_id.clone())
+            })?;
 
-            handles.push(tokio::spawn(
+            self.rattan_handles.push(self.runtime.spawn(
                 async move {
+                    loop {
+                        tokio::select! {
+                            biased;
+                            notify = notify_rx.recv() => {
+                                match notify {
+                                    Ok(RattanNotify::Start) => {
+                                        rx.reset(); // Reset the device
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        warn!(rx_id, tx_id, "Core router exited since notify channel is closed before rattan start");
+                                        return
+                                    }
+                                }
+                            }
+                            _ = rx.dequeue(), if rx_id == "left" || rx_id == "right" => {
+                                debug!(rx_id, tx_id, "Drop packet since the rattan is not started yet");
+                            }
+                        }
+                        tokio::task::yield_now().await;
+                    }
                     loop {
                         tokio::select! {
                             packet = rx.dequeue() => {
@@ -173,7 +288,7 @@ where
                                     #[cfg(feature = "packet-dump")]
                                     {
                                         let packet_block = EnhancedPacketBlock {
-                                            interface_id: rx_id as u32,
+                                            interface_id,
                                             timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap(),
                                             original_len: p.length() as u32,
                                             data: std::borrow::Cow::Borrowed(p.as_slice()),
@@ -184,7 +299,7 @@ where
                                     match tx.enqueue(p) {
                                         Ok(_) => {}
                                         Err(Error::ChannelError(_)) => {
-                                            token_dup.cancel();
+                                            rattan_cancel_token.cancel();
                                             info!(rx_id, tx_id, "Core router exited since the channel is closed");
                                             return
                                         }
@@ -195,7 +310,7 @@ where
                                     }
                                 }
                             }
-                            _ = token_dup.cancelled() => {
+                            _ = rattan_cancel_token.cancelled() => {
                                 debug!(rx_id, tx_id, "Core router cancelled");
                                 return
                             }
@@ -203,14 +318,35 @@ where
                         tokio::task::yield_now().await;
                     }
                 }
-                .instrument(span!(Level::DEBUG, "router")),
+                .instrument(span!(Level::DEBUG, "CoreRouter").or_current()),
             ));
         }
 
-        for handle in handles {
-            handle.await.unwrap();
-        }
+        self.state
+            .store(RattanState::Spawned as u8, Ordering::Relaxed);
+        Ok(())
+    }
 
+    pub fn send_notify(&mut self, notify: RattanNotify) -> Result<(), Error> {
+        self.op_block_exec(RattanOp::SendNotify(notify)).map(|_| ())
+    }
+
+    pub fn start_rattan(&mut self) -> Result<(), Error> {
+        self.send_notify(RattanNotify::Start)
+    }
+
+    pub fn join_rattan(&mut self) {
+        if self.state.load(Ordering::Relaxed) == RattanState::Exited as u8 {
+            return;
+        }
+        self.runtime.block_on(async {
+            for handle in self.rattan_handles.drain(..) {
+                handle.await.unwrap();
+            }
+        });
+        self.rt_cancel_token.cancel();
+        self.state
+            .store(RattanState::Exited as u8, Ordering::Relaxed);
         #[cfg(feature = "packet-dump")]
         if let Ok(path) = std::env::var("PACKET_DUMP_FILE") {
             let mut file_out = File::create(&path)
@@ -219,8 +355,20 @@ where
                 .write_all(self.pcap_writer.lock().unwrap().get_mut())
                 .unwrap();
         };
+    }
 
-        #[cfg(feature = "control")]
-        control_thread.join().unwrap();
+    pub fn cancel_rattan(&mut self) {
+        self.cancel_token.cancel();
+        self.join_rattan();
+        self.controller_handle.abort();
+    }
+}
+
+impl<P> Drop for RattanCore<P>
+where
+    P: Packet,
+{
+    fn drop(&mut self) {
+        self.cancel_rattan();
     }
 }

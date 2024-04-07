@@ -10,10 +10,21 @@ pub enum Error {
     IoError(#[from] std::io::Error),
     #[error("Metal error: {0}")]
     MetalError(#[from] crate::metal::error::MetalError),
+    #[error("Runtime error: {0}")]
+    RuntimeError(#[from] RuntimeError),
+    #[error("Rattan radix error: {0}")]
+    RattanRadixError(String),
+    #[error("Rattan core error: {0}")]
+    RattanCoreError(#[from] RattanCoreError),
+    #[error("Rattan operation error: {0}")]
+    RattanOpError(#[from] RattanOpError),
     #[error("Config error: {0}")]
     ConfigError(String),
     #[error("Channel error: {0}")]
     ChannelError(String),
+    #[cfg(feature = "serde")]
+    #[error("Serde error: {0}")]
+    SerdeError(#[from] serde_json::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -71,4 +82,62 @@ pub enum VethError {
     AlreadyInNamespace(String),
     #[error("Set Veth error, {0}")]
     SetError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RuntimeError {
+    #[error("Failed to build runtime, {0}")]
+    CreateError(#[from] std::io::Error),
+    #[error("Encounter namespace error, {0}")]
+    NsError(#[from] NsError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RattanCoreError {
+    #[error("Failed to spawn rattan task, {0}")]
+    SpawnError(String),
+    #[error("Failed to add device, {0}")]
+    AddDeviceError(String),
+    #[error("Failed to send notify, {0}")]
+    SendNotifyError(String),
+    #[error("Unknow interface ID \"{0}\"")]
+    UnknowIdError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RattanOpError {
+    #[error("Failed to send operation {0:?} to rattan controller")]
+    SendOpError(crate::control::RattanOp),
+    #[error("Failed to receive operation result from rattan controller")]
+    RecvOpResError,
+    #[error("Operation result mismatch operation type, maybe implement error")]
+    MismatchOpResError,
+}
+
+#[cfg(feature = "http")]
+impl axum::response::IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        use axum::http::StatusCode;
+        use axum::response::Json;
+        use serde_json::json;
+
+        let status = match self {
+            Error::MacParseError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::NsError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::VethError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::IoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::MetalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::RuntimeError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::RattanRadixError(_) => StatusCode::BAD_REQUEST,
+            Error::RattanCoreError(RattanCoreError::UnknowIdError(_)) => StatusCode::NOT_FOUND,
+            Error::RattanCoreError(_) => StatusCode::BAD_REQUEST,
+            Error::RattanOpError(_) => StatusCode::BAD_REQUEST,
+            Error::ConfigError(_) => StatusCode::BAD_REQUEST,
+            Error::ChannelError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            #[cfg(feature = "serde")]
+            Error::SerdeError(_) => StatusCode::BAD_REQUEST,
+        };
+
+        (status, Json(json!({"error": self.to_string(),}))).into_response()
+    }
 }

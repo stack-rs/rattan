@@ -7,8 +7,8 @@ remove_stdenv_netns() {
         suffix="-$suffix"
     fi
     ip netns del ns-rattan"$suffix"
-    ip netns del ns-client"$suffix"
-    ip netns del ns-server"$suffix"
+    ip netns del ns-left"$suffix"
+    ip netns del ns-right"$suffix"
 }
 
 remove_stdenv_netns_list() {
@@ -31,8 +31,8 @@ options:
 Example:
     $myname ABC123 eFG456
 
-    * this will clean all the netns named ns-rattan-ABC123, ns-client-ABC123, ns-server-ABC123,
-      ns-rattan-eFG456, ns-client-eFG456, ns-server-eFG456
+    * this will clean all the netns named ns-rattan-ABC123, ns-left-ABC123, ns-right-ABC123,
+      ns-rattan-eFG456, ns-left-eFG456, ns-right-eFG456
 EOL
     exit 1
 }
@@ -71,7 +71,7 @@ if [ "$DEFAULT" = true ]; then
 fi
 
 if [ "$REMOVE_ALL" = true ]; then
-    ip netns list | grep -E 'ns-(rattan|client|server)' | awk '{print $1}' | xargs -I {} ip netns del {}
+    ip netns list | grep -E 'ns-(rattan|left|right)' | awk '{print $1}' | xargs -I {} ip netns del {}
     exit 0
 fi
 

@@ -13,20 +13,11 @@ use tracing::{debug, info};
 
 use super::{ControlInterface, Egress, Ingress};
 
-#[derive(Debug)]
-struct DelayPacket<P>
-where
-    P: Packet,
-{
-    ingress_time: Instant,
-    packet: P,
-}
-
 pub struct DelayDeviceIngress<P>
 where
     P: Packet,
 {
-    ingress: mpsc::UnboundedSender<DelayPacket<P>>,
+    ingress: mpsc::UnboundedSender<P>,
 }
 
 impl<P> Clone for DelayDeviceIngress<P>
@@ -44,12 +35,10 @@ impl<P> Ingress<P> for DelayDeviceIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, packet: P) -> Result<(), Error> {
+    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
+        packet.set_timestamp(Instant::now());
         self.ingress
-            .send(DelayPacket {
-                ingress_time: Instant::now(),
-                packet,
-            })
+            .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
         Ok(())
     }
@@ -59,7 +48,7 @@ pub struct DelayDeviceEgress<P>
 where
     P: Packet,
 {
-    egress: mpsc::UnboundedReceiver<DelayPacket<P>>,
+    egress: mpsc::UnboundedReceiver<P>,
     delay: Delay,
     config_rx: mpsc::UnboundedReceiver<DelayDeviceConfig>,
     timer: Timer,
@@ -85,26 +74,31 @@ where
     P: Packet + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
-        let packet = self.egress.recv().await.unwrap();
+        let packet = self.egress.recv().await;
+        let packet = match packet {
+            Some(packet) => packet,
+            None => return None,
+        };
         loop {
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                _ = self.timer.sleep(packet.ingress_time + self.delay - Instant::now()) => {
+                _ = self.timer.sleep(packet.get_timestamp() + self.delay - Instant::now()) => {
                     break;
                 }
             }
         }
-        Some(packet.packet)
+        Some(packet)
     }
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Default, Clone)]
 pub struct DelayDeviceConfig {
     #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
-    delay: Delay,
+    pub delay: Delay,
 }
 
 impl DelayDeviceConfig {
@@ -166,28 +160,20 @@ impl<P> DelayDevice<P>
 where
     P: Packet,
 {
-    pub fn new() -> DelayDevice<P> {
-        debug!("New DelayDevice");
+    pub fn new<D: Into<Option<Delay>>>(delay: D) -> Result<DelayDevice<P>, Error> {
+        let delay = delay.into().unwrap_or_default();
+        debug!(?delay, "New DelayDevice");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
-        DelayDevice {
+        Ok(DelayDevice {
             ingress: Arc::new(DelayDeviceIngress { ingress: rx }),
             egress: DelayDeviceEgress {
                 egress: tx,
-                delay: Delay::default(),
+                delay,
                 config_rx,
-                timer: Timer::new().unwrap(),
+                timer: Timer::new()?,
             },
             control_interface: Arc::new(DelayDeviceControlInterface { config_tx }),
-        }
-    }
-}
-
-impl<P> Default for DelayDevice<P>
-where
-    P: Packet,
-{
-    fn default() -> Self {
-        Self::new()
+        })
     }
 }

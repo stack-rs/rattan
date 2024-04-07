@@ -34,7 +34,7 @@ fn transfer_time(length: usize, bandwidth: Bandwidth, bw_type: BwType) -> Delay 
 
 // Bandwidth calculation type, deciding the extra length of the packet
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum BwType {
     LinkLayer, // + 38 = 8 (Preamble + SFD) + 14 (Ethernet header) + 4 (CRC) + 12 (Interframe gap)
     #[default]
@@ -128,6 +128,10 @@ where
             debug!(?queue_config, "Set inner queue config:");
             self.packet_queue.configure(queue_config);
         }
+        if let Some(bw_type) = config.bw_type {
+            debug!(?bw_type, "Set inner bw_type:");
+            self.bw_type = bw_type;
+        }
     }
 }
 
@@ -199,8 +203,24 @@ where
     P: Packet,
     Q: PacketQueue<P>,
 {
-    bandwidth: Option<Bandwidth>,
-    queue_config: Option<Q::Config>,
+    pub bandwidth: Option<Bandwidth>,
+    pub queue_config: Option<Q::Config>,
+    pub bw_type: Option<BwType>,
+}
+
+impl<P, Q> Clone for BwDeviceConfig<P, Q>
+where
+    P: Packet,
+    Q: PacketQueue<P>,
+    Q::Config: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            bandwidth: self.bandwidth,
+            queue_config: self.queue_config.clone(),
+            bw_type: self.bw_type,
+        }
+    }
 }
 
 impl<P, Q> BwDeviceConfig<P, Q>
@@ -208,13 +228,15 @@ where
     P: Packet,
     Q: PacketQueue<P>,
 {
-    pub fn new<T: Into<Option<Bandwidth>>, U: Into<Option<Q::Config>>>(
+    pub fn new<T: Into<Option<Bandwidth>>, U: Into<Option<Q::Config>>, V: Into<Option<BwType>>>(
         bandwidth: T,
         queue_config: U,
+        bw_type: V,
     ) -> Self {
         Self {
             bandwidth: bandwidth.into(),
             queue_config: queue_config.into(),
+            bw_type: bw_type.into(),
         }
     }
 }
@@ -235,10 +257,10 @@ where
     type Config = BwDeviceConfig<P, Q>;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
-        if config.bandwidth.is_none() && config.queue_config.is_none() {
+        if config.bandwidth.is_none() && config.queue_config.is_none() && config.bw_type.is_none() {
             // This ensures that incorrect HTTP requests will return errors.
             return Err(Error::ConfigError(
-                "At least one of bandwidth and queue_config should be set".to_string(),
+                "At least one of bandwidth, queue_config and bw_type should be set".to_string(),
             ));
         }
         if let Some(bandwidth) = config.bandwidth {
@@ -251,6 +273,9 @@ where
         }
         if let Some(queue_config) = config.queue_config.as_ref() {
             info!("Setting queue config to: {:?}", queue_config);
+        }
+        if let Some(bw_type) = config.bw_type {
+            info!("Setting bw_type to: {:?}", bw_type);
         }
         self.config_tx
             .send(config)
@@ -296,23 +321,27 @@ where
     P: Packet,
     Q: PacketQueue<P>,
 {
-    pub fn new(bandwidth: Bandwidth, packet_queue: Q, bw_type: BwType) -> BwDevice<P, Q> {
+    pub fn new<B: Into<Option<Bandwidth>>, BT: Into<Option<BwType>>>(
+        bandwidth: B,
+        packet_queue: Q,
+        bw_type: BT,
+    ) -> Result<BwDevice<P, Q>, Error> {
         debug!("New BwDevice");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
-        BwDevice {
+        Ok(BwDevice {
             ingress: Arc::new(BwDeviceIngress { ingress: rx }),
             egress: BwDeviceEgress {
                 egress: tx,
-                bw_type,
-                bandwidth,
+                bw_type: bw_type.into().unwrap_or_default(),
+                bandwidth: bandwidth.into().unwrap_or(MAX_BANDWIDTH),
                 packet_queue,
                 next_available: Instant::now(),
                 config_rx,
-                timer: Timer::new().unwrap(),
+                timer: Timer::new()?,
             },
             control_interface: Arc::new(BwDeviceControlInterface { config_tx }),
-        }
+        })
     }
 }
 
@@ -373,12 +402,13 @@ where
         if let Some(trace_config) = config.trace_config {
             debug!("Set inner trace config");
             self.trace = trace_config.into_model();
+            let now = Instant::now();
             match self.trace.next_bw() {
                 Some((bandwidth, duration)) => {
-                    self.change_bandwidth(bandwidth, Instant::now());
-                    self.next_change = Instant::now() + duration;
+                    self.change_bandwidth(bandwidth, now);
+                    self.next_change = now + duration;
                     trace!(
-                        "Bandwidth change to {:?}, next change after {:?}",
+                        "Bandwidth changed to {:?}, next change after {:?}",
                         bandwidth,
                         self.next_change - Instant::now()
                     );
@@ -386,14 +416,18 @@ where
                 None => {
                     // handle null trace outside this function
                     warn!("Setting null trace");
-                    self.change_bandwidth(Bandwidth::from_bps(0), Instant::now());
-                    self.next_change = Instant::now();
+                    self.change_bandwidth(Bandwidth::from_bps(0), now);
+                    self.next_change = now;
                 }
             }
         }
         if let Some(queue_config) = config.queue_config {
             debug!(?queue_config, "Set inner queue config:");
             self.packet_queue.configure(queue_config);
+        }
+        if let Some(bw_type) = config.bw_type {
+            debug!(?bw_type, "Set inner bw_type:");
+            self.bw_type = bw_type;
         }
     }
 
@@ -495,6 +529,12 @@ where
         }
         Some(packet)
     }
+
+    // This must be called before any dequeue
+    fn reset(&mut self) {
+        self.next_available = Instant::now();
+        self.next_change = Instant::now();
+    }
 }
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
@@ -503,8 +543,24 @@ where
     P: Packet,
     Q: PacketQueue<P>,
 {
-    trace_config: Option<Box<dyn BwTraceConfig>>,
-    queue_config: Option<Q::Config>,
+    pub trace_config: Option<Box<dyn BwTraceConfig>>,
+    pub queue_config: Option<Q::Config>,
+    pub bw_type: Option<BwType>,
+}
+
+impl<P, Q> Clone for BwReplayDeviceConfig<P, Q>
+where
+    P: Packet,
+    Q: PacketQueue<P>,
+    Q::Config: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            trace_config: self.trace_config.clone(),
+            queue_config: self.queue_config.clone(),
+            bw_type: self.bw_type,
+        }
+    }
 }
 
 impl<P, Q> BwReplayDeviceConfig<P, Q>
@@ -512,13 +568,19 @@ where
     P: Packet,
     Q: PacketQueue<P>,
 {
-    pub fn new<T: Into<Option<Box<dyn BwTraceConfig>>>, U: Into<Option<Q::Config>>>(
+    pub fn new<
+        T: Into<Option<Box<dyn BwTraceConfig>>>,
+        U: Into<Option<Q::Config>>,
+        V: Into<Option<BwType>>,
+    >(
         trace_config: T,
         queue_config: U,
+        bw_type: V,
     ) -> Self {
         Self {
             trace_config: trace_config.into(),
             queue_config: queue_config.into(),
+            bw_type: bw_type.into(),
         }
     }
 }
@@ -539,23 +601,29 @@ where
     type Config = BwReplayDeviceConfig<P, Q>;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
-        if config.trace_config.is_none() && config.queue_config.is_none() {
+        if config.trace_config.is_none()
+            && config.queue_config.is_none()
+            && config.bw_type.is_none()
+        {
             // This ensures that incorrect HTTP requests will return errors.
             return Err(Error::ConfigError(
-                "At least one of bandwidth and queue_config should be set".to_string(),
+                "At least one of bandwidth, queue_config and bw_type should be set".to_string(),
             ));
         }
-        if let Some(trace_config) = config.trace_config.as_ref() {
+        if let Some(_trace_config) = config.trace_config.as_ref() {
             #[cfg(feature = "serde")]
             info!(
                 "Setting trace config to: {}",
-                serde_json::to_string(trace_config).unwrap()
+                serde_json::to_string(_trace_config).unwrap()
             );
             #[cfg(not(feature = "serde"))]
             info!("Setting trace config");
         }
         if let Some(queue_config) = config.queue_config.as_ref() {
             info!("Setting queue config to: {:?}", queue_config);
+        }
+        if let Some(bw_type) = config.bw_type {
+            info!("Setting bw_type to: {:?}", bw_type);
         }
         self.config_tx
             .send(config)
@@ -601,25 +669,29 @@ where
     P: Packet,
     Q: PacketQueue<P>,
 {
-    pub fn new(trace: Box<dyn BwTrace>, packet_queue: Q, bw_type: BwType) -> BwReplayDevice<P, Q> {
+    pub fn new<BT: Into<Option<BwType>>>(
+        trace: Box<dyn BwTrace>,
+        packet_queue: Q,
+        bw_type: BT,
+    ) -> Result<BwReplayDevice<P, Q>, Error> {
         debug!("New BwReplayDevice");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
-        BwReplayDevice {
+        Ok(BwReplayDevice {
             ingress: Arc::new(BwReplayDeviceIngress { ingress: rx }),
             egress: BwReplayDeviceEgress {
                 egress: tx,
-                bw_type,
+                bw_type: bw_type.into().unwrap_or_default(),
                 trace,
                 packet_queue,
                 current_bandwidth: Bandwidth::from_bps(0),
                 next_available: Instant::now(),
                 next_change: Instant::now(),
                 config_rx,
-                send_timer: Timer::new().unwrap(),
-                change_timer: Timer::new().unwrap(),
+                send_timer: Timer::new()?,
+                change_timer: Timer::new()?,
             },
             control_interface: Arc::new(BwReplayDeviceControlInterface { config_tx }),
-        }
+        })
     }
 }

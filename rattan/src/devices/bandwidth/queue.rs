@@ -8,6 +8,11 @@ use tracing::{debug, trace};
 
 use super::BwType;
 
+#[cfg(feature = "serde")]
+fn serde_default<T: Default + PartialEq>(t: &T) -> bool {
+    *t == Default::default()
+}
+
 pub trait PacketQueue<P>: Send
 where
     P: Packet,
@@ -26,14 +31,8 @@ where
 }
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub struct InfiniteQueueConfig {}
-
-impl Default for InfiniteQueueConfig {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl InfiniteQueueConfig {
     pub fn new() -> Self {
@@ -42,8 +41,8 @@ impl InfiniteQueueConfig {
 }
 
 impl<P> From<InfiniteQueueConfig> for InfiniteQueue<P> {
-    fn from(_val: InfiniteQueueConfig) -> Self {
-        InfiniteQueue::new()
+    fn from(config: InfiniteQueueConfig) -> Self {
+        InfiniteQueue::new(config)
     }
 }
 
@@ -53,7 +52,7 @@ pub struct InfiniteQueue<P> {
 }
 
 impl<P> InfiniteQueue<P> {
-    pub fn new() -> Self {
+    pub fn new(_config: InfiniteQueueConfig) -> Self {
         debug!("New InfiniteQueue");
         Self {
             queue: VecDeque::new(),
@@ -63,7 +62,7 @@ impl<P> InfiniteQueue<P> {
 
 impl<P> Default for InfiniteQueue<P> {
     fn default() -> Self {
-        Self::new()
+        Self::new(InfiniteQueueConfig::default())
     }
 }
 
@@ -71,7 +70,7 @@ impl<P> PacketQueue<P> for InfiniteQueue<P>
 where
     P: Packet,
 {
-    type Config = ();
+    type Config = InfiniteQueueConfig;
 
     fn configure(&mut self, _config: Self::Config) {}
 
@@ -85,11 +84,14 @@ where
 }
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub struct DropTailQueueConfig {
-    pub packet_limit: Option<usize>,
-    pub byte_limit: Option<usize>,
-    #[cfg_attr(feature = "serde", serde(default))]
+    pub packet_limit: Option<usize>, // None means unlimited
+    pub byte_limit: Option<usize>,   // None means unlimited
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "serde_default")
+    )]
     pub bw_type: BwType,
 }
 
@@ -108,8 +110,8 @@ impl DropTailQueueConfig {
 }
 
 impl<P> From<DropTailQueueConfig> for DropTailQueue<P> {
-    fn from(val: DropTailQueueConfig) -> Self {
-        DropTailQueue::new(val.packet_limit, val.byte_limit, val.bw_type)
+    fn from(config: DropTailQueueConfig) -> Self {
+        DropTailQueue::new(config)
     }
 }
 
@@ -123,21 +125,23 @@ pub struct DropTailQueue<P> {
 }
 
 impl<P> DropTailQueue<P> {
-    pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
-        packet_limit: A,
-        byte_limit: B,
-        bw_type: BwType,
-    ) -> Self {
-        let packet_limit = packet_limit.into();
-        let byte_limit = byte_limit.into();
-        debug!(packet_limit, byte_limit, "New DropTailQueue");
+    pub fn new(config: DropTailQueueConfig) -> Self {
+        let packet_limit = config.packet_limit;
+        let byte_limit = config.byte_limit;
+        debug!(?config, "New DropTailQueue");
         Self {
             queue: VecDeque::new(),
-            bw_type,
+            bw_type: config.bw_type,
             packet_limit,
             byte_limit,
             now_bytes: 0,
         }
+    }
+}
+
+impl<P> Default for DropTailQueue<P> {
+    fn default() -> Self {
+        Self::new(DropTailQueueConfig::default())
     }
 }
 
@@ -185,11 +189,14 @@ where
 }
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub struct DropHeadQueueConfig {
     pub packet_limit: Option<usize>,
     pub byte_limit: Option<usize>,
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "serde_default")
+    )]
     pub bw_type: BwType,
 }
 
@@ -208,8 +215,8 @@ impl DropHeadQueueConfig {
 }
 
 impl<P> From<DropHeadQueueConfig> for DropHeadQueue<P> {
-    fn from(val: DropHeadQueueConfig) -> Self {
-        DropHeadQueue::new(val.packet_limit, val.byte_limit, val.bw_type)
+    fn from(config: DropHeadQueueConfig) -> Self {
+        DropHeadQueue::new(config)
     }
 }
 
@@ -223,21 +230,23 @@ pub struct DropHeadQueue<P> {
 }
 
 impl<P> DropHeadQueue<P> {
-    pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
-        packet_limit: A,
-        byte_limit: B,
-        bw_type: BwType,
-    ) -> Self {
-        let packet_limit = packet_limit.into();
-        let byte_limit = byte_limit.into();
-        debug!(packet_limit, byte_limit, "New DropHeadQueue");
+    pub fn new(config: DropHeadQueueConfig) -> Self {
+        let packet_limit = config.packet_limit;
+        let byte_limit = config.byte_limit;
+        debug!(?config, "New DropHeadQueue");
         Self {
             queue: VecDeque::new(),
-            bw_type,
+            bw_type: config.bw_type,
             packet_limit,
             byte_limit,
             now_bytes: 0,
         }
+    }
+}
+
+impl<P> Default for DropHeadQueue<P> {
+    fn default() -> Self {
+        Self::new(DropHeadQueueConfig::default())
     }
 }
 
@@ -250,6 +259,7 @@ where
     fn configure(&mut self, config: Self::Config) {
         self.packet_limit = config.packet_limit;
         self.byte_limit = config.byte_limit;
+        self.bw_type = config.bw_type;
     }
 
     fn enqueue(&mut self, packet: P) {
@@ -288,7 +298,7 @@ where
 // https://github.com/ravinet/mahimahi/blob/0bd12164388bc109bbbd8ffa03a09e94adcbec5a/src/packet/codel_packet_queue.cc
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(default))]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CoDelQueueConfig {
     pub packet_limit: Option<usize>, // the maximum number of packets in the queue, or None for unlimited
     pub byte_limit: Option<usize>, // the maximum number of bytes in the queue, or None for unlimited
@@ -297,7 +307,10 @@ pub struct CoDelQueueConfig {
     #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
     pub target: Duration, // target queue delay
     pub mtu: u32,                  // device MTU, or minimal queue backlog in bytes
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "serde_default")
+    )]
     pub bw_type: BwType,
 }
 
@@ -335,8 +348,8 @@ impl CoDelQueueConfig {
 }
 
 impl<P> From<CoDelQueueConfig> for CoDelQueue<P> {
-    fn from(val: CoDelQueueConfig) -> Self {
-        CoDelQueue::new(val)
+    fn from(config: CoDelQueueConfig) -> Self {
+        CoDelQueue::new(config)
     }
 }
 
@@ -368,6 +381,15 @@ impl<P> CoDelQueue<P> {
             drop_next: Instant::now(),
             ldelay: Duration::ZERO,
         }
+    }
+}
+
+impl<P> Default for CoDelQueue<P>
+where
+    P: Packet,
+{
+    fn default() -> Self {
+        Self::new(CoDelQueueConfig::default())
     }
 }
 
