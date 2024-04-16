@@ -43,6 +43,20 @@
       project_src: /etc/runner
       state: present 
 
+  - name: enable bbr
+    become: true
+    ansible.posix.sysctl:
+      name: net.ipv4.tcp_congestion_control
+      value: "bbr"
+      sysctl_set: true
+
+  - name: change default tcp congestion control to cubic
+    become: true
+    ansible.posix.sysctl:
+      name: net.ipv4.tcp_congestion_control
+      value: "cubic"
+      sysctl_set: true
+
   - name: Tune TCP write buffer
     become: true
     ansible.posix.sysctl:
