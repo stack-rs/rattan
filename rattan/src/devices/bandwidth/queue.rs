@@ -492,12 +492,14 @@ where
                                 self.config.bw_type.extra_length()
                             );
                             let new_packet = self.queue.pop_front();
-                            if new_packet.is_none() {
-                                self.dropping = false;
-                                trace!("Exit dropping state since queue is empty");
-                                return None;
-                            }
-                            packet = new_packet.unwrap();
+                            packet = match new_packet {
+                                Some(packet) => packet,
+                                None => {
+                                    self.dropping = false;
+                                    trace!("Exit dropping state since queue is empty");
+                                    return None;
+                                }
+                            };
                             self.now_bytes -=
                                 packet.l3_length() + self.config.bw_type.extra_length();
 
@@ -521,12 +523,14 @@ where
                         self.config.bw_type.extra_length()
                     );
                     let new_packet = self.queue.pop_front();
-                    if new_packet.is_none() {
-                        self.dropping = false;
-                        trace!("Exit dropping state since queue is empty");
-                        return None;
-                    }
-                    packet = new_packet.unwrap();
+                    let packet = match new_packet {
+                        Some(packet) => packet,
+                        None => {
+                            self.dropping = false;
+                            trace!("Exit dropping state since queue is empty");
+                            return None;
+                        }
+                    };
                     self.now_bytes -= packet.l3_length() + self.config.bw_type.extra_length();
 
                     self.dropping = true;

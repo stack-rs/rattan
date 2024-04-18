@@ -71,7 +71,10 @@ where
     R: Rng + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
-        let packet = self.egress.recv().await.unwrap();
+        let packet = match self.egress.recv().await {
+            Some(packet) => packet,
+            None => return None,
+        };
         if let Some(pattern) = self.pattern.swap_null() {
             self.inner_pattern = pattern;
             debug!(?self.inner_pattern, "Set inner pattern:");

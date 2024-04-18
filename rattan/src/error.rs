@@ -82,6 +82,8 @@ pub enum VethError {
     AlreadyInNamespace(String),
     #[error("Set Veth error, {0}")]
     SetError(String),
+    #[error("Failed to build veth, {0}")]
+    TokioRuntimeError(#[from] TokioRuntimeError),
 }
 
 #[derive(Debug, thiserror::Error)]

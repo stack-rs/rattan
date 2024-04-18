@@ -88,8 +88,7 @@ pub fn get_feature_flag(name: &str) -> Result<[u32; OFF_FLAG_DEF_SIZE], VethErro
         SockType::Datagram,
         SockFlag::empty(),
         None,
-    )
-    .unwrap();
+    )?;
 
     let mut ifr = ifreq {
         ifr_name: [0; libc::IF_NAMESIZE],
@@ -129,8 +128,7 @@ pub fn disable_checksum_offload(name: &str) -> Result<(), VethError> {
         SockType::Datagram,
         SockFlag::empty(),
         None,
-    )
-    .unwrap();
+    )?;
 
     let mut ifr = ifreq {
         ifr_name: [0; libc::IF_NAMESIZE],

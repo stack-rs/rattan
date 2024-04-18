@@ -74,8 +74,7 @@ where
     P: Packet + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
-        let packet = self.egress.recv().await;
-        let packet = match packet {
+        let packet = match self.egress.recv().await {
             Some(packet) => packet,
             None => return None,
         };

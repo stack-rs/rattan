@@ -611,13 +611,12 @@ where
             ));
         }
         if let Some(_trace_config) = config.trace_config.as_ref() {
-            #[cfg(feature = "serde")]
-            info!(
-                "Setting trace config to: {}",
-                serde_json::to_string(_trace_config).unwrap()
-            );
-            #[cfg(not(feature = "serde"))]
             info!("Setting trace config");
+            #[cfg(feature = "serde")]
+            debug!(
+                "Trace config: {:?}",
+                serde_json::to_string_pretty(_trace_config)
+            );
         }
         if let Some(queue_config) = config.queue_config.as_ref() {
             info!("Setting queue config to: {:?}", queue_config);

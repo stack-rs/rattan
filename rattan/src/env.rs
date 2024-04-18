@@ -33,14 +33,17 @@ use serde::{Deserialize, Serialize};
 // Use /32 to avoid route conflict between multiple rattan instances
 //
 
-fn get_addresses_in_use() -> Vec<IpAddr> {
+fn get_addresses_in_use() -> Result<Vec<IpAddr>, Error> {
     debug!("Get addresses in use");
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .unwrap();
+        .map_err(|e| {
+            error!("Failed to build rtnetlink runtime: {:?}", e);
+            Error::TokioRuntimeError(e.into())
+        })?;
     let _guard = rt.enter();
-    let (conn, rtnl_handle, _) = rtnetlink::new_connection().unwrap();
+    let (conn, rtnl_handle, _) = rtnetlink::new_connection()?;
     rt.spawn(conn);
 
     let mut addresses = vec![];
@@ -56,7 +59,7 @@ fn get_addresses_in_use() -> Vec<IpAddr> {
         }
     });
     debug!(?addresses, "Addresses in use");
-    addresses
+    Ok(addresses)
 }
 
 lazy_static::lazy_static! {
@@ -90,7 +93,6 @@ pub struct StdNetEnv {
 #[instrument(skip_all, level = "debug")]
 pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     trace!(?config);
-    get_addresses_in_use();
     let _guard = STD_ENV_LOCK.lock();
     let rand_string: String = thread_rng()
         .sample_iter(&Alphanumeric)
@@ -114,7 +116,7 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     // Get server veth address
     let veth_addr_suffix = match config.mode {
         StdNetEnvMode::Compatible => {
-            let addresses_in_use = get_addresses_in_use();
+            let addresses_in_use = get_addresses_in_use()?;
             let mut addr_suffix = 1;
             while addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(192, 168, 12, addr_suffix)))
                 || addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(192, 168, 11, addr_suffix)))
@@ -314,9 +316,12 @@ pub fn get_container_env() -> anyhow::Result<ContainerEnv> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .unwrap();
+        .map_err(|e| {
+            error!("Failed to build rtnetlink runtime: {:?}", e);
+            Error::TokioRuntimeError(e.into())
+        })?;
     let _guard = rt.enter();
-    let (conn, rtnl_handle, _) = rtnetlink::new_connection().unwrap();
+    let (conn, rtnl_handle, _) = rtnetlink::new_connection()?;
     rt.spawn(conn);
 
     // Get all link device

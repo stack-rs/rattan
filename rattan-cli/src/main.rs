@@ -441,10 +441,13 @@ fn main() -> anyhow::Result<()> {
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
+            .spawn()?;
         let output = client_handle.wait()?;
-        info!("Exit {}", output.code().unwrap());
+        match output.code() {
+            Some(0) => info!("Exited with status code: 0"),
+            Some(code) => warn!("Exited with status code: {}", code),
+            None => error!("Process terminated by signal"),
+        }
         anyhow::Result::Ok(())
     })?;
     radix.start_rattan()?;

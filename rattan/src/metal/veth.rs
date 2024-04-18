@@ -298,46 +298,55 @@ impl VethPairBuilder {
         self,
         tokio_handle: &tokio::runtime::Handle,
     ) -> Result<Arc<VethPair>, VethError> {
-        if self.name.is_none() {
-            return Err(VethError::CreateVethPairError(
-                "Veth pair name is not specified.".to_string(),
-            ));
-        }
-        if self.mac_addr.is_none() {
-            return Err(VethError::CreateVethPairError(
-                "Veth pair MAC address is not specified.".to_string(),
-            ));
-        }
-        if self.ip_addr.is_none() {
-            return Err(VethError::CreateVethPairError(
-                "Veth pair IP address is not specified.".to_string(),
-            ));
-        }
+        let name = match self.name {
+            Some(name) => name,
+            None => {
+                return Err(VethError::CreateVethPairError(
+                    "Veth pair name is not specified.".to_string(),
+                ));
+            }
+        };
+        let mac_addr = match self.mac_addr {
+            Some(mac_addr) => mac_addr,
+            None => {
+                return Err(VethError::CreateVethPairError(
+                    "Veth pair MAC address is not specified.".to_string(),
+                ));
+            }
+        };
+        let ip_addr = match self.ip_addr {
+            Some(ip_addr) => ip_addr,
+            None => {
+                return Err(VethError::CreateVethPairError(
+                    "Veth pair IP address is not specified.".to_string(),
+                ));
+            }
+        };
 
-        let (conn, rtnl_handle, _) = rtnetlink::new_connection().unwrap();
+        let (conn, rtnl_handle, _) = rtnetlink::new_connection()?;
         tokio_handle.spawn(conn);
         rtnl_handle
             .link()
             .add()
-            .veth(self.name.clone().unwrap().0, self.name.clone().unwrap().1)
+            .veth(name.clone().0, name.clone().1)
             .execute()
             .await
             .map_err(|e| VethError::CreateVethPairError(e.to_string()))?;
 
         let pair = VethPair {
             left: Arc::new(VethDevice {
-                name: self.name.clone().unwrap().0,
-                index: if_nametoindex(self.name.clone().unwrap().0.as_str())?,
-                mac_addr: self.mac_addr.unwrap().0,
-                ip_addr: self.ip_addr.unwrap().0,
+                name: name.clone().0,
+                index: if_nametoindex(name.clone().0.as_str())?,
+                mac_addr: mac_addr.0,
+                ip_addr: ip_addr.0,
                 peer: OnceCell::new(),
                 namespace: self.namespace.0.unwrap_or(NetNs::current()?),
             }),
             right: Arc::new(VethDevice {
-                name: self.name.clone().unwrap().1,
-                index: if_nametoindex(self.name.clone().unwrap().1.as_str())?,
-                mac_addr: self.mac_addr.unwrap().1,
-                ip_addr: self.ip_addr.unwrap().1,
+                name: name.clone().1,
+                index: if_nametoindex(name.clone().1.as_str())?,
+                mac_addr: mac_addr.1,
+                ip_addr: ip_addr.1,
                 peer: OnceCell::new(),
                 namespace: self.namespace.1.unwrap_or(NetNs::current()?),
             }),
@@ -358,7 +367,7 @@ impl VethPairBuilder {
             // Enter namespace
             let _ns_guard = NetNsGuard::new(device.namespace.clone())?;
             // std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime spawn
-            let (conn, rtnl_handle, _) = rtnetlink::new_connection().unwrap();
+            let (conn, rtnl_handle, _) = rtnetlink::new_connection()?;
             tokio_handle.spawn(conn);
 
             // Set mac address
@@ -411,7 +420,10 @@ impl VethPairBuilder {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .unwrap();
+                .map_err(|e| {
+                    error!("Failed to build rtnetlink runtime: {:?}", e);
+                    VethError::TokioRuntimeError(e.into())
+                })?;
             rt.block_on(self.build_impl(rt.handle()))
         });
         build_thread.join().unwrap()
@@ -421,36 +433,41 @@ impl VethPairBuilder {
 impl Drop for VethPair {
     fn drop(&mut self) {
         let left = self.left.clone();
+        let left_name = left.name.clone();
         let right = self.right.clone();
         let build_thread_span = span!(Level::DEBUG, "build_thread").or_current();
-        let build_thread = std::thread::spawn(move || {
+        let build_thread = std::thread::spawn(move || -> Result<(), Error> {
             let _entered = build_thread_span.entered();
-            let ns_guard = NetNsGuard::new(left.namespace.clone());
-            if let Err(e) = ns_guard {
+            let _ns_guard = NetNsGuard::new(left.namespace.clone()).map_err(|e| {
                 error!("Failed to enter netns: {}", e);
-                return;
-            }
+                e
+            })?;
             // std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .unwrap();
+                .map_err(|e| {
+                    error!("Failed to build rtnetlink runtime: {:?}", e);
+                    Error::TokioRuntimeError(e.into())
+                })?;
             let _guard = rt.enter();
-            let (conn, rtnl_handle, _) = rtnetlink::new_connection().unwrap();
+            let (conn, rtnl_handle, _) = rtnetlink::new_connection()?;
             rt.spawn(conn);
-            match rt.block_on(rtnl_handle.link().del(left.index).execute()) {
-                Ok(_) => {
+            rt.block_on(rtnl_handle.link().del(left.index).execute())
+                .map(|_| {
                     debug!(
                         "Veth pair deleted: {:>15} <--> {:<15}",
                         &left.name, &right.name
                     );
-                }
-                Err(e) => {
-                    error!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &left.name);
-                }
-            };
+                })
+                .map_err(|e| {
+                    error!("Failed to delete veth pair: {}", e);
+                    Error::MetalError(e.into())
+                })
         });
-        build_thread.join().unwrap();
+        if let Err(e) = build_thread.join().unwrap() {
+            error!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, left_name);
+        };
     }
 }
 

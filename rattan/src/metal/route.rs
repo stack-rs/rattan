@@ -74,7 +74,15 @@ pub fn add_route_with_netns(
                     .add()
                     .v4()
                     .destination_prefix(
-                        Ipv4Net::new(dest, prefix_length).unwrap().trunc().addr(),
+                        Ipv4Net::new(dest, prefix_length)
+                            .map_err(|_| {
+                                let msg =
+                                    format!("IPv4 prefix length {} is invalid", prefix_length);
+                                error!("{}", msg);
+                                Error::ConfigError(msg)
+                            })?
+                            .trunc()
+                            .addr(),
                         prefix_length,
                     )
                     .gateway(gateway)
@@ -86,15 +94,27 @@ pub fn add_route_with_netns(
                     .add()
                     .v6()
                     .destination_prefix(
-                        Ipv6Net::new(dest, prefix_length).unwrap().trunc().addr(),
+                        Ipv6Net::new(dest, prefix_length)
+                            .map_err(|_| {
+                                let msg =
+                                    format!("IPv6 prefix length {} is invalid", prefix_length);
+                                error!("{}", msg);
+                                Error::ConfigError(msg)
+                            })?
+                            .trunc()
+                            .addr(),
                         prefix_length,
                     )
                     .gateway(gateway)
                     .execute(),
             ),
             _ => {
-                error!(?dest, ?gateway, "dest and gateway are not the same type");
-                panic!("dest and gateway are not the same type");
+                let msg = format!(
+                    "dest {} and gateway {} are not the same type",
+                    dest, gateway
+                );
+                error!("{}", msg);
+                return Err(Error::ConfigError(msg));
             }
         }
         .map(|_| {
