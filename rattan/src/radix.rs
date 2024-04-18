@@ -1,8 +1,9 @@
 use std::{net::IpAddr, sync::Arc, thread};
 
+use backon::{BlockingRetryable, ExponentialBuilder};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, span, Level};
+use tracing::{debug, error, info, span, warn, Level};
 
 use crate::{
     config::{DeviceBuildConfig, RattanConfig, RattanCoreConfig},
@@ -44,7 +45,19 @@ where
 {
     pub fn new(config: RattanConfig<P>) -> Result<Self, Error> {
         info!("New RattanRadix");
-        let env = get_std_env(config.env)?;
+        let build_env = || {
+            get_std_env(&config.env).map_err(|e| {
+                warn!("Failed to build environment, retrying");
+                e
+            })
+        };
+        let env = build_env
+            .retry(
+                &ExponentialBuilder::default()
+                    .with_jitter()
+                    .with_max_times(5),
+            )
+            .call()?;
         let cancel_token = CancellationToken::new();
 
         let rattan_thread_span = span!(Level::ERROR, "rattan_thread").or_current();
@@ -57,7 +70,7 @@ where
             info!("Rattan thread started");
             if let Err(e) = rattan_ns.enter() {
                 error!("Failed to enter rattan namespace: {:?}", e);
-                runtime_tx.send(Err(Error::RuntimeError(e.into()))).unwrap();
+                runtime_tx.send(Err(e.into())).unwrap();
                 return;
             }
             // std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
@@ -72,7 +85,9 @@ where
                 }
                 Err(e) => {
                     error!("Failed to build runtime: {:?}", e);
-                    runtime_tx.send(Err(Error::RuntimeError(e.into()))).unwrap();
+                    runtime_tx
+                        .send(Err(Error::TokioRuntimeError(e.into())))
+                        .unwrap();
                 }
             }
             info!("Rattan thread exited");
@@ -323,7 +338,9 @@ where
         {
             debug!("Wait for http thread to finish");
             if let Some(http_thread_handle) = self.http_thread_handle.take() {
-                http_thread_handle.join().unwrap().unwrap();
+                if let Err(_) = http_thread_handle.join().unwrap() {
+                    error!("HTTP thread exited due to error");
+                }
             }
         }
         debug!("Wait for rattan cancellation");

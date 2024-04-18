@@ -1,6 +1,8 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use crate::error::Error;
+
 use super::{
     netns::{NetNs, NetNsGuard},
     veth::MacAddr,
@@ -8,59 +10,64 @@ use super::{
 use futures::TryStreamExt;
 use ipnet::{Ipv4Net, Ipv6Net};
 use netlink_packet_route::link::{LinkAttribute, LinkLayerType};
-use tracing::{debug, error, span, trace, Level};
+use tracing::{debug, error, span, trace, warn, Level};
 
-fn execute_rtnetlink_with_new_thread<F>(netns: Arc<NetNs>, f: F)
+fn execute_rtnetlink_with_new_thread<F>(netns: Arc<NetNs>, f: F) -> Result<(), Error>
 where
-    F: FnOnce(tokio::runtime::Runtime, rtnetlink::Handle) + Send + 'static,
+    F: FnOnce(tokio::runtime::Runtime, rtnetlink::Handle) -> Result<(), Error> + Send + 'static,
 {
     let build_thread_span = span!(Level::DEBUG, "build_thread").or_current();
-    let build_thread = std::thread::spawn(move || {
+    let build_thread = std::thread::spawn(move || -> Result<(), Error> {
         let _entered = build_thread_span.entered();
-        let ns_guard = NetNsGuard::new(netns.clone());
-        if let Err(e) = ns_guard {
+        let _ns_guard = NetNsGuard::new(netns.clone()).map_err(|e| {
             error!("Failed to enter netns: {}", e);
-            return;
-        }
+            e
+        })?;
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .unwrap();
+            .map_err(|e| {
+                error!("Failed to build rtnetlink runtime: {:?}", e);
+                Error::TokioRuntimeError(e.into())
+            })?;
         let _guard = rt.enter();
-        let (conn, rtnl_handle, _) = rtnetlink::new_connection().unwrap();
+        let (conn, rtnl_handle, _) = rtnetlink::new_connection()?;
         rt.spawn(conn);
-        f(rt, rtnl_handle);
+        f(rt, rtnl_handle)
     });
-    build_thread.join().unwrap();
+    build_thread.join().unwrap()
 }
 
-pub fn add_gateway_with_netns(gateway: IpAddr, netns: Arc<NetNs>) {
+pub fn add_gateway_with_netns(gateway: IpAddr, netns: Arc<NetNs>) -> Result<(), Error> {
     trace!(?gateway, ?netns, "Add gateway");
     execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
-        let result = match gateway {
+        match gateway {
             IpAddr::V4(gateway) => {
                 rt.block_on(rtnl_handle.route().add().v4().gateway(gateway).execute())
             }
             IpAddr::V6(gateway) => {
                 rt.block_on(rtnl_handle.route().add().v6().gateway(gateway).execute())
             }
-        };
-        match result {
-            Ok(_) => {
-                debug!("Add gateway {} successfully", gateway);
-            }
-            Err(e) => {
-                error!("Failed to add gateway: {}", e);
-                panic!("Failed to add gateway: {}", e);
-            }
         }
-    });
+        .map(|_| {
+            debug!("Add gateway {} successfully", gateway);
+        })
+        .map_err(|e| {
+            error!("Failed to add gateway: {}", e);
+            Error::MetalError(e.into())
+        })
+    })
 }
 
-pub fn add_route_with_netns(dest: IpAddr, prefix_length: u8, gateway: IpAddr, netns: Arc<NetNs>) {
+pub fn add_route_with_netns(
+    dest: IpAddr,
+    prefix_length: u8,
+    gateway: IpAddr,
+    netns: Arc<NetNs>,
+) -> Result<(), Error> {
     trace!(?dest, ?prefix_length, ?gateway, ?netns, "Add route");
     execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
-        let result = match (dest, gateway) {
+        match (dest, gateway) {
             (IpAddr::V4(dest), IpAddr::V4(gateway)) => rt.block_on(
                 rtnl_handle
                     .route()
@@ -89,42 +96,43 @@ pub fn add_route_with_netns(dest: IpAddr, prefix_length: u8, gateway: IpAddr, ne
                 error!(?dest, ?gateway, "dest and gateway are not the same type");
                 panic!("dest and gateway are not the same type");
             }
-        };
-        match result {
-            Ok(_) => {
-                debug!("Add route {} via {} successfully", dest, gateway);
-            }
-            Err(e) => {
-                error!("Failed to add route: {}", e);
-                panic!("Failed to add route: {}", e);
-            }
         }
-    });
+        .map(|_| {
+            debug!("Add route {} via {} successfully", dest, gateway);
+        })
+        .map_err(|e| {
+            error!("Failed to add route: {}", e);
+            Error::MetalError(e.into())
+        })
+    })
 }
 
-pub fn add_arp_entry_with_netns(dest: IpAddr, mac: MacAddr, device_index: u32, netns: Arc<NetNs>) {
+pub fn add_arp_entry_with_netns(
+    dest: IpAddr,
+    mac: MacAddr,
+    device_index: u32,
+    netns: Arc<NetNs>,
+) -> Result<(), Error> {
     trace!(?dest, ?mac, ?netns, ?device_index, "Add arp entry");
     execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
-        let result = rt.block_on(
+        rt.block_on(
             rtnl_handle
                 .neighbours()
                 .add(device_index, dest)
                 .link_local_address(&mac.bytes())
                 .execute(),
-        );
-        match result {
-            Ok(_) => {
-                debug!("Add arp entry {} -> {} successfully", dest, mac);
-            }
-            Err(e) => {
-                error!("Failed to add arp entry: {}", e);
-                panic!("Failed to add arp entry: {}", e);
-            }
-        }
-    });
+        )
+        .map(|_| {
+            debug!("Add arp entry {} -> {} successfully", dest, mac);
+        })
+        .map_err(|e| {
+            error!("Failed to add arp entry: {}", e);
+            Error::MetalError(e.into())
+        })
+    })
 }
 
-pub fn set_loopback_up_with_netns(netns: Arc<NetNs>) {
+pub fn set_loopback_up_with_netns(netns: Arc<NetNs>) -> Result<(), Error> {
     trace!(?netns, "Set loopback interface up");
     execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
         let mut links = rtnl_handle.link().get().execute();
@@ -142,24 +150,23 @@ pub fn set_loopback_up_with_netns(netns: Arc<NetNs>) {
                         }),
                         "Try to set interface with Loopback type up"
                     );
-                    let result = rtnl_handle
+                    return rtnl_handle
                         .link()
                         .set(msg.header.index)
                         .up()
                         .execute()
-                        .await;
-                    match result {
-                        Ok(_) => {
+                        .await
+                        .map(|_| {
                             debug!("Set loopback up successfully");
-                        }
-                        Err(e) => {
+                        })
+                        .map_err(|e| {
                             error!("Failed to set loopback up: {}", e);
-                            panic!("Failed to set loopback up: {}", e);
-                        }
-                    }
-                    break;
+                            Error::MetalError(e.into())
+                        });
                 }
             }
-        });
-    });
+            warn!("Loopback interface not found");
+            Ok(())
+        })
+    })
 }

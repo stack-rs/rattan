@@ -88,7 +88,7 @@ pub struct StdNetEnv {
 }
 
 #[instrument(skip_all, level = "debug")]
-pub fn get_std_env(config: StdNetEnvConfig) -> Result<StdNetEnv, Error> {
+pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     trace!(?config);
     get_addresses_in_use();
     let _guard = STD_ENV_LOCK.lock();
@@ -177,7 +177,7 @@ pub fn get_std_env(config: StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     info!("Set default route");
 
     debug!("Set default route for client namespace");
-    add_gateway_with_netns(veth_pair_client.left.ip_addr.0, client_netns.clone());
+    add_gateway_with_netns(veth_pair_client.left.ip_addr.0, client_netns.clone())?;
 
     debug!("Set default route for server namespace");
     match config.mode {
@@ -187,10 +187,10 @@ pub fn get_std_env(config: StdNetEnvConfig) -> Result<StdNetEnv, Error> {
                 veth_pair_client.left.ip_addr.1,
                 veth_pair_server.right.ip_addr.0,
                 server_netns.clone(),
-            );
+            )?;
         }
         _ => {
-            add_gateway_with_netns(veth_pair_server.right.ip_addr.0, server_netns.clone());
+            add_gateway_with_netns(veth_pair_server.right.ip_addr.0, server_netns.clone())?;
         }
     }
 
@@ -203,7 +203,7 @@ pub fn get_std_env(config: StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         veth_pair_server.right.mac_addr,
         veth_pair_client.left.index,
         client_netns.clone(),
-    );
+    )?;
 
     debug!("Set default neighbours for server namespace");
     add_arp_entry_with_netns(
@@ -211,7 +211,7 @@ pub fn get_std_env(config: StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         veth_pair_client.left.mac_addr,
         veth_pair_server.right.index,
         server_netns.clone(),
-    );
+    )?;
 
     if std::env::var("TEST_STD_NS").is_ok() {
         let _span = span!(Level::INFO, "TEST_STD_NS").entered();
@@ -289,9 +289,9 @@ pub fn get_std_env(config: StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     }
 
     info!("Set lo interface up");
-    set_loopback_up_with_netns(client_netns.clone());
-    set_loopback_up_with_netns(rattan_netns.clone());
-    set_loopback_up_with_netns(server_netns.clone());
+    set_loopback_up_with_netns(client_netns.clone())?;
+    set_loopback_up_with_netns(rattan_netns.clone())?;
+    set_loopback_up_with_netns(server_netns.clone())?;
 
     Ok(StdNetEnv {
         left_ns: client_netns,

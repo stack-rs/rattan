@@ -145,7 +145,7 @@ enum PacketType {
 #[test]
 #[ignore]
 fn af_packet_test() -> anyhow::Result<()> {
-    let stdenv = get_std_env(StdNetEnvConfig::default()).unwrap();
+    let stdenv = get_std_env(&StdNetEnvConfig::default()).unwrap();
 
     // step into rattan namespace
     {

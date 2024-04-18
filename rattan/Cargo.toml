@@ -10,6 +10,7 @@ anyhow = "1.0.69"
 async-trait = "0.1.68"
 axum = { version = "0.6.16", optional = true }
 axum-macros = { version = "0.3.7", optional = true }
+backon = "0.4.4"
 bandwidth = "0.3.0"
 ctrlc = "3.2.5"
 etherparse = "0.13.0"

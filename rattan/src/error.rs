@@ -10,8 +10,8 @@ pub enum Error {
     IoError(#[from] std::io::Error),
     #[error("Metal error: {0}")]
     MetalError(#[from] crate::metal::error::MetalError),
-    #[error("Runtime error: {0}")]
-    RuntimeError(#[from] RuntimeError),
+    #[error("Tokio Runtime error: {0}")]
+    TokioRuntimeError(#[from] TokioRuntimeError),
     #[error("Rattan radix error: {0}")]
     RattanRadixError(String),
     #[error("Rattan core error: {0}")]
@@ -85,11 +85,9 @@ pub enum VethError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum RuntimeError {
+pub enum TokioRuntimeError {
     #[error("Failed to build runtime, {0}")]
     CreateError(#[from] std::io::Error),
-    #[error("Encounter namespace error, {0}")]
-    NsError(#[from] NsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -127,7 +125,7 @@ impl axum::response::IntoResponse for Error {
             Error::VethError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::IoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::MetalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Error::RuntimeError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::TokioRuntimeError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::RattanRadixError(_) => StatusCode::BAD_REQUEST,
             Error::RattanCoreError(RattanCoreError::UnknowIdError(_)) => StatusCode::NOT_FOUND,
             Error::RattanCoreError(_) => StatusCode::BAD_REQUEST,
