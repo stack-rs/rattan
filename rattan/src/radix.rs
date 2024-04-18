@@ -73,7 +73,7 @@ where
                 runtime_tx.send(Err(e.into())).unwrap();
                 return;
             }
-            // std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
+            std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()

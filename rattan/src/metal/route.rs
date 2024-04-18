@@ -10,7 +10,7 @@ use super::{
 use futures::TryStreamExt;
 use ipnet::{Ipv4Net, Ipv6Net};
 use netlink_packet_route::link::{LinkAttribute, LinkLayerType};
-use tracing::{debug, error, span, trace, warn, Level};
+use tracing::{debug, error, span, warn, Level};
 
 fn execute_rtnetlink_with_new_thread<F>(netns: Arc<NetNs>, f: F) -> Result<(), Error>
 where
@@ -23,6 +23,7 @@ where
             error!("Failed to enter netns: {}", e);
             e
         })?;
+        std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -39,7 +40,7 @@ where
 }
 
 pub fn add_gateway_with_netns(gateway: IpAddr, netns: Arc<NetNs>) -> Result<(), Error> {
-    trace!(?gateway, ?netns, "Add gateway");
+    debug!(?gateway, ?netns, "Add gateway");
     execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
         match gateway {
             IpAddr::V4(gateway) => {
@@ -65,7 +66,7 @@ pub fn add_route_with_netns(
     gateway: IpAddr,
     netns: Arc<NetNs>,
 ) -> Result<(), Error> {
-    trace!(?dest, ?prefix_length, ?gateway, ?netns, "Add route");
+    debug!(?dest, ?prefix_length, ?gateway, ?netns, "Add route");
     execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
         match (dest, gateway) {
             (IpAddr::V4(dest), IpAddr::V4(gateway)) => rt.block_on(
@@ -133,7 +134,7 @@ pub fn add_arp_entry_with_netns(
     device_index: u32,
     netns: Arc<NetNs>,
 ) -> Result<(), Error> {
-    trace!(?dest, ?mac, ?netns, ?device_index, "Add arp entry");
+    debug!(?dest, ?mac, ?netns, ?device_index, "Add arp entry");
     execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
         rt.block_on(
             rtnl_handle
@@ -153,7 +154,7 @@ pub fn add_arp_entry_with_netns(
 }
 
 pub fn set_loopback_up_with_netns(netns: Arc<NetNs>) -> Result<(), Error> {
-    trace!(?netns, "Set loopback interface up");
+    debug!(?netns, "Set loopback interface up");
     execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
         let mut links = rtnl_handle.link().get().execute();
         rt.block_on(async {

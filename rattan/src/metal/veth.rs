@@ -366,7 +366,7 @@ impl VethPairBuilder {
 
             // Enter namespace
             let _ns_guard = NetNsGuard::new(device.namespace.clone())?;
-            // std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime spawn
+            std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime spawn
             let (conn, rtnl_handle, _) = rtnetlink::new_connection()?;
             tokio_handle.spawn(conn);
 
@@ -442,7 +442,7 @@ impl Drop for VethPair {
                 error!("Failed to enter netns: {}", e);
                 e
             })?;
-            // std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
+            std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
