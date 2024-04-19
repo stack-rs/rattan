@@ -71,6 +71,7 @@ if [ "$DEFAULT" = true ]; then
 fi
 
 if [ "$REMOVE_ALL" = true ]; then
+    rm -rf /tmp/rattan/
     ip netns list | grep -E 'ns-(rattan|left|right)' | awk '{print $1}' | xargs -I {} ip netns del {}
     exit 0
 fi

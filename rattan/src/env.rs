@@ -19,7 +19,7 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     str::FromStr,
 };
-use tracing::{debug, error, info, instrument, span, trace, Level};
+use tracing::{debug, error, info, instrument, trace};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -52,7 +52,7 @@ fn get_addresses_in_use() -> Result<Vec<IpAddr>, Error> {
         while let Ok(Some(address_msg)) = links.try_next().await {
             for address_attr in address_msg.attributes {
                 if let AddressAttribute::Address(address) = address_attr {
-                    debug!(?address, ?address_msg.header.prefix_len, "Get address");
+                    trace!(?address, ?address_msg.header.prefix_len, "Get address");
                     addresses.push(address);
                 }
             }
@@ -60,6 +60,46 @@ fn get_addresses_in_use() -> Result<Vec<IpAddr>, Error> {
     });
     debug!(?addresses, "Addresses in use");
     Ok(addresses)
+}
+
+const RATTAN_TMP_DIR: &str = "/tmp/rattan";
+
+enum VethAddressSuffix {
+    Unlocked(u8),
+    Locked(u8),
+}
+
+impl VethAddressSuffix {
+    pub fn new_unlocked(suffix: u8) -> Self {
+        VethAddressSuffix::Unlocked(suffix)
+    }
+
+    // Create a lock file to avoid address conflict
+    // Directory `{RATTAN_TMP_DIR}/ip_lock` should be created before calling this function
+    pub fn new_lock(suffix: u8) -> std::io::Result<Self> {
+        std::fs::File::create_new(format!("{RATTAN_TMP_DIR}/ip_lock/{suffix}"))?;
+        Ok(VethAddressSuffix::Locked(suffix))
+    }
+
+    pub fn content(&self) -> u8 {
+        match self {
+            VethAddressSuffix::Unlocked(suffix) => *suffix,
+            VethAddressSuffix::Locked(suffix) => *suffix,
+        }
+    }
+}
+
+impl Drop for VethAddressSuffix {
+    fn drop(&mut self) {
+        match self {
+            VethAddressSuffix::Unlocked(_) => {}
+            VethAddressSuffix::Locked(suffix) => {
+                let addr_lock_path = format!("{RATTAN_TMP_DIR}/ip_lock/{suffix}");
+                debug!(?addr_lock_path, "Remove address lock file");
+                let _ = std::fs::remove_file(addr_lock_path);
+            }
+        }
+    }
 }
 
 lazy_static::lazy_static! {
@@ -116,11 +156,34 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     // Get server veth address
     let veth_addr_suffix = match config.mode {
         StdNetEnvMode::Compatible => {
-            let addresses_in_use = get_addresses_in_use()?;
+            std::fs::create_dir_all(format!("{RATTAN_TMP_DIR}/ip_lock"))?;
             let mut addr_suffix = 1;
-            while addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(192, 168, 12, addr_suffix)))
-                || addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(192, 168, 11, addr_suffix)))
-            {
+            loop {
+                let addresses_in_use = get_addresses_in_use()?;
+                if !addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(192, 168, 12, addr_suffix)))
+                    && !addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(
+                        192,
+                        168,
+                        11,
+                        addr_suffix,
+                    )))
+                {
+                    // Create a lock file to avoid address conflict
+                    match VethAddressSuffix::new_lock(addr_suffix) {
+                        Ok(lock) => {
+                            info!("Successfully lock address suffix {}", addr_suffix);
+                            break lock;
+                        }
+                        Err(e) => {
+                            if e.kind() != std::io::ErrorKind::AlreadyExists {
+                                error!("Failed to create address lock file: {}", e);
+                                return Err(e.into());
+                            }
+                            debug!("Failed to lock address suffix {}", addr_suffix);
+                        }
+                    }
+                }
+                debug!("Address suffix {} in use, try next.", addr_suffix);
                 addr_suffix += 1;
                 if addr_suffix == 2 {
                     addr_suffix += 1;
@@ -133,9 +196,8 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
                     .into());
                 }
             }
-            addr_suffix
         }
-        _ => 1,
+        _ => VethAddressSuffix::new_unlocked(1),
     };
     let veth_pair_client = VethPairBuilder::new()
         .name(
@@ -144,12 +206,12 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         )
         .namespace(Some(client_netns.clone()), Some(rattan_netns.clone()))
         .mac_addr(
-            [0x38, 0x7e, 0x58, 0xe7, 11, veth_addr_suffix].into(),
+            [0x38, 0x7e, 0x58, 0xe7, 11, veth_addr_suffix.content()].into(),
             [0x38, 0x7e, 0x58, 0xe7, 11, 2].into(),
         )
         .ip_addr(
             (
-                IpAddr::V4(Ipv4Addr::new(192, 168, 11, veth_addr_suffix)),
+                IpAddr::V4(Ipv4Addr::new(192, 168, 11, veth_addr_suffix.content())),
                 32,
             ),
             (IpAddr::V4(Ipv4Addr::new(192, 168, 11, 2)), 32),
@@ -164,12 +226,12 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         .namespace(Some(rattan_netns.clone()), Some(server_netns.clone()))
         .mac_addr(
             [0x38, 0x7e, 0x58, 0xe7, 12, 2].into(),
-            [0x38, 0x7e, 0x58, 0xe7, 12, veth_addr_suffix].into(),
+            [0x38, 0x7e, 0x58, 0xe7, 12, veth_addr_suffix.content()].into(),
         )
         .ip_addr(
             (IpAddr::V4(Ipv4Addr::new(192, 168, 12, 2)), 32),
             (
-                IpAddr::V4(Ipv4Addr::new(192, 168, 12, veth_addr_suffix)),
+                IpAddr::V4(Ipv4Addr::new(192, 168, 12, veth_addr_suffix.content())),
                 32,
             ),
         )
@@ -214,81 +276,6 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         veth_pair_server.right.index,
         server_netns.clone(),
     )?;
-
-    if std::env::var("TEST_STD_NS").is_ok() {
-        let _span = span!(Level::INFO, "TEST_STD_NS").entered();
-        let output = std::process::Command::new("ip")
-            .arg("netns")
-            .arg("list")
-            .output()
-            .unwrap();
-        info!(
-            "ip netns list:\n{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-
-        for ns in &[&client_netns_name, &server_netns_name, &rattan_netns_name] {
-            let output = std::process::Command::new("ip")
-                .args(["netns", "exec", ns, "ip", "addr", "show"])
-                .output()
-                .unwrap();
-
-            info!(
-                "ip netns exec {} ip link list:\n{}",
-                ns,
-                String::from_utf8_lossy(&output.stdout)
-            );
-
-            let output = std::process::Command::new("ip")
-                .args(["netns", "exec", ns, "ip", "-4", "route", "show"])
-                .output()
-                .unwrap();
-
-            info!(
-                "ip netns exec {} ip -4 route show:\n{}",
-                ns,
-                String::from_utf8_lossy(&output.stdout)
-            );
-        }
-
-        let output = std::process::Command::new("ip")
-            .args([
-                "netns",
-                "exec",
-                &rattan_netns_name,
-                "ping",
-                "-c",
-                "3",
-                "192.168.11.1",
-            ])
-            .output()
-            .unwrap();
-
-        info!(
-            "ip netns exec {} ping -c 3 192.168.11.1:\n{}",
-            &rattan_netns_name,
-            String::from_utf8_lossy(&output.stdout)
-        );
-
-        let output = std::process::Command::new("ip")
-            .args([
-                "netns",
-                "exec",
-                &rattan_netns_name,
-                "ping",
-                "-c",
-                "3",
-                "192.168.12.1",
-            ])
-            .output()
-            .unwrap();
-
-        info!(
-            "ip netns exec {} ping -c 3 192.168.12.1:\n{}",
-            &rattan_netns_name,
-            String::from_utf8_lossy(&output.stdout)
-        );
-    }
 
     info!("Set lo interface up");
     set_loopback_up_with_netns(client_netns.clone())?;
