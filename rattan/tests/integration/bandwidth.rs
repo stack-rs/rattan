@@ -247,7 +247,7 @@ fn test_droptail_queue() {
 
         let right_handle = radix
             .right_spawn(|| {
-                // std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
+                std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -273,7 +273,7 @@ fn test_droptail_queue() {
         let op_endpoint = radix.op_endpoint();
         let left_handle = radix
             .left_spawn(move || {
-                // std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
+                std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -414,7 +414,7 @@ fn test_drophead_queue() {
 
         let right_handle = radix
             .right_spawn(|| {
-                // std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
+                std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -440,7 +440,7 @@ fn test_drophead_queue() {
         let op_endpoint = radix.op_endpoint();
         let left_handle = radix
             .left_spawn(move || {
-                // std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
+                std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -592,7 +592,7 @@ fn test_codel_queue() {
 
         let right_handle = radix
             .right_spawn(|| {
-                // std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
+                std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -618,7 +618,7 @@ fn test_codel_queue() {
         let op_endpoint = radix.op_endpoint();
         let left_handle = radix
             .left_spawn(move || {
-                // std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
+                std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()

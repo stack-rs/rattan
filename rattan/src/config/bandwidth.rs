@@ -128,11 +128,13 @@ fn mahimahi_file_to_pattern(filename: &str) -> Result<Vec<u64>, Error> {
         .lines()
         .enumerate()
         .map(|(i, line)| {
-            if let Err(e) = line {
-                error!("Failed to read line {} in {}: {}", i, &filename, e);
-                return Err(Error::IoError(e));
-            }
-            let line = line.unwrap();
+            let line = match line {
+                Ok(line) => line,
+                Err(e) => {
+                    error!("Failed to read line {} in {}: {}", i, &filename, e);
+                    return Err(Error::IoError(e));
+                }
+            };
             let line = line.trim();
             line.parse::<u64>().map_err(|e| {
                 error!("Failed to parse line {} in {}: {}", i, &filename, e);

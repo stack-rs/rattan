@@ -235,7 +235,7 @@ where
                     times -= 1;
                     if times <= 0 {
                         error!("bind device failed: {}", e);
-                        panic!("bind device failed: {}", e)
+                        return Err(MetalError::SystemError(e));
                     } else {
                         warn!("bind device failed (Retrys Remain: {}): {}", times, e);
                         std::thread::sleep(std::time::Duration::from_millis(100));
