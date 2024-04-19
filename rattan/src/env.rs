@@ -199,6 +199,7 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         }
         _ => VethAddressSuffix::new_unlocked(1),
     };
+
     let veth_pair_client = VethPairBuilder::new()
         .name(
             format!("nsL-vL-{}", rand_string),
@@ -236,6 +237,8 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
             ),
         )
         .build()?;
+
+    std::thread::sleep(std::time::Duration::from_millis(100)); // BUG: wait for veth device to be created
 
     // Set the default route of left and right namespaces
     info!("Set default route");
