@@ -55,7 +55,7 @@ where
             .retry(
                 &ExponentialBuilder::default()
                     .with_jitter()
-                    .with_max_times(5),
+                    .with_max_times(3),
             )
             .call()?;
         let cancel_token = CancellationToken::new();
@@ -279,7 +279,7 @@ where
 
     // Spawn a thread running task in left namespace
     pub fn left_spawn<R: Send + 'static>(
-        &mut self,
+        &self,
         task: impl Task<R> + 'static,
     ) -> Result<thread::JoinHandle<anyhow::Result<R>>, Error> {
         let thread_span = span!(Level::INFO, "left_ns").or_current();
@@ -297,7 +297,7 @@ where
 
     // Spawn a thread running task in right namespace
     pub fn right_spawn<R: Send + 'static>(
-        &mut self,
+        &self,
         task: impl Task<R> + 'static,
     ) -> Result<thread::JoinHandle<anyhow::Result<R>>, Error> {
         let thread_span = span!(Level::INFO, "right_ns").or_current();
