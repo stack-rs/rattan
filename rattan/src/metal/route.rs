@@ -39,90 +39,130 @@ where
     build_thread.join().unwrap()
 }
 
-pub fn add_gateway_with_netns(gateway: IpAddr, netns: Arc<NetNs>) -> Result<(), Error> {
-    debug!(?gateway, ?netns, "Add gateway");
-    execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
-        match gateway {
-            IpAddr::V4(gateway) => {
-                rt.block_on(rtnl_handle.route().add().v4().gateway(gateway).execute())
-            }
-            IpAddr::V6(gateway) => {
-                rt.block_on(rtnl_handle.route().add().v6().gateway(gateway).execute())
-            }
-        }
-        .map(|_| {
-            debug!("Add gateway {} successfully", gateway);
-        })
-        .map_err(|e| {
-            error!("Failed to add gateway: {}", e);
-            Error::MetalError(e.into())
-        })
-    })
-}
-
-pub fn add_route_with_netns(
-    dest: IpAddr,
-    prefix_length: u8,
-    gateway: IpAddr,
+pub fn add_route_with_netns<
+    T: Into<Option<(IpAddr, u8)>>,
+    U: Into<Option<IpAddr>>,
+    V: Into<Option<u32>>,
+>(
+    dest: T,
+    gateway: U,
+    outif_id: V,
     netns: Arc<NetNs>,
 ) -> Result<(), Error> {
-    debug!(?dest, ?prefix_length, ?gateway, ?netns, "Add route");
+    let dest = dest.into();
+    let gateway = gateway.into();
+    let outif_id = outif_id.into();
+    debug!(?dest, ?gateway, ?outif_id, ?netns, "Add route");
+    if gateway.is_none() && outif_id.is_none() {
+        return Err(Error::ConfigError(
+            "gateway and outif_id cannot be both None".to_string(),
+        ));
+    }
     execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
-        match (dest, gateway) {
-            (IpAddr::V4(dest), IpAddr::V4(gateway)) => rt.block_on(
-                rtnl_handle
-                    .route()
-                    .add()
-                    .v4()
-                    .destination_prefix(
-                        Ipv4Net::new(dest, prefix_length)
-                            .map_err(|_| {
-                                let msg =
-                                    format!("IPv4 prefix length {} is invalid", prefix_length);
-                                error!("{}", msg);
-                                Error::ConfigError(msg)
-                            })?
-                            .trunc()
-                            .addr(),
-                        prefix_length,
-                    )
-                    .gateway(gateway)
-                    .execute(),
-            ),
-            (IpAddr::V6(dest), IpAddr::V6(gateway)) => rt.block_on(
-                rtnl_handle
-                    .route()
-                    .add()
-                    .v6()
-                    .destination_prefix(
-                        Ipv6Net::new(dest, prefix_length)
-                            .map_err(|_| {
-                                let msg =
-                                    format!("IPv6 prefix length {} is invalid", prefix_length);
-                                error!("{}", msg);
-                                Error::ConfigError(msg)
-                            })?
-                            .trunc()
-                            .addr(),
-                        prefix_length,
-                    )
-                    .gateway(gateway)
-                    .execute(),
-            ),
-            _ => {
-                let msg = format!(
-                    "dest {} and gateway {} are not the same type",
-                    dest, gateway
+        match dest {
+            Some((IpAddr::V4(dest_v4), prefix_length)) => {
+                let mut handle = rtnl_handle.route().add().v4().destination_prefix(
+                    Ipv4Net::new(dest_v4, prefix_length)
+                        .map_err(|_| {
+                            let msg = format!("IPv4 prefix length {} is invalid", prefix_length);
+                            error!("{}", msg);
+                            Error::ConfigError(msg)
+                        })?
+                        .trunc()
+                        .addr(),
+                    prefix_length,
                 );
-                error!("{}", msg);
-                return Err(Error::ConfigError(msg));
+                if let Some(gateway) = gateway {
+                    if let IpAddr::V4(gateway_v4) = gateway {
+                        handle = handle.gateway(gateway_v4);
+                    } else {
+                        let msg = format!(
+                            "dest {} and gateway {} are not the same type",
+                            dest_v4, gateway
+                        );
+                        error!("{}", msg);
+                        return Err(Error::ConfigError(msg.to_string()));
+                    }
+                }
+                if let Some(if_id) = outif_id {
+                    handle = handle.output_interface(if_id);
+                }
+                rt.block_on(handle.execute())
+            }
+            Some((IpAddr::V6(dest_v6), prefix_length)) => {
+                let mut handle = rtnl_handle.route().add().v6().destination_prefix(
+                    Ipv6Net::new(dest_v6, prefix_length)
+                        .map_err(|_| {
+                            let msg = format!("IPv6 prefix length {} is invalid", prefix_length);
+                            error!("{}", msg);
+                            Error::ConfigError(msg)
+                        })?
+                        .trunc()
+                        .addr(),
+                    prefix_length,
+                );
+                if let Some(gateway) = gateway {
+                    if let IpAddr::V6(gateway_v6) = gateway {
+                        handle = handle.gateway(gateway_v6);
+                    } else {
+                        let msg = format!(
+                            "dest {} and gateway {} are not the same type",
+                            dest_v6, gateway
+                        );
+                        error!("{}", msg);
+                        return Err(Error::ConfigError(msg.to_string()));
+                    }
+                }
+                if let Some(if_id) = outif_id {
+                    handle = handle.output_interface(if_id);
+                }
+                rt.block_on(handle.execute())
+            }
+            None => {
+                let mut handle = rtnl_handle.route().add();
+                if let Some(if_id) = outif_id {
+                    handle = handle.output_interface(if_id);
+                }
+                match gateway {
+                    Some(IpAddr::V4(gateway_v4)) => {
+                        rt.block_on(handle.v4().gateway(gateway_v4).execute())
+                    }
+                    Some(IpAddr::V6(gateway_v6)) => {
+                        rt.block_on(handle.v6().gateway(gateway_v6).execute())
+                    }
+                    _ => {
+                        let res = rt.block_on(handle.v4().execute());
+                        if res.is_ok() {
+                            let mut handle = rtnl_handle.route().add();
+                            if let Some(if_id) = outif_id {
+                                handle = handle.output_interface(if_id);
+                            }
+                            rt.block_on(handle.v6().execute())
+                        } else {
+                            res
+                        }
+                    }
+                }
             }
         }
         .map(|_| {
-            debug!("Add route {} via {} successfully", dest, gateway);
+            debug!(?dest, ?gateway, ?outif_id, "Add route successfully");
         })
         .map_err(|e| {
-            error!("Failed to add route: {}", e);
+            error!(
+                "Failed to add route (add {:?} via {:?} dev {:?}): {}",
+                dest, gateway, outif_id, e
+            );
+            // XXX: Debug command: ip route
+            let output = std::process::Command::new("ip")
+                .arg("route")
+                .output()
+                .map(|output| {
+                    String::from_utf8_lossy(&output.stdout).to_string()
+                        + &String::from_utf8_lossy(&output.stderr).to_string()
+                })
+                .unwrap_or_else(|e| e.to_string());
+            println!("ip route: {}", output);
             Error::MetalError(e.into())
         })
     })
@@ -148,6 +188,16 @@ pub fn add_arp_entry_with_netns(
         })
         .map_err(|e| {
             error!("Failed to add arp entry: {}", e);
+            // XXX: Debug command: arp -n
+            let output = std::process::Command::new("arp")
+                .arg("-n")
+                .output()
+                .map(|output| {
+                    String::from_utf8_lossy(&output.stdout).to_string()
+                        + &String::from_utf8_lossy(&output.stderr).to_string()
+                })
+                .unwrap_or_else(|e| e.to_string());
+            println!("arp -n: {}", output);
             Error::MetalError(e.into())
         })
     })
