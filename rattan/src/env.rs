@@ -2,10 +2,7 @@ use crate::{
     error::{Error, VethError},
     metal::{
         netns::NetNs,
-        route::{
-            add_arp_entry_with_netns, add_gateway_with_netns, add_route_with_netns,
-            set_loopback_up_with_netns,
-        },
+        route::{add_arp_entry_with_netns, add_route_with_netns, set_loopback_up_with_netns},
         veth::{MacAddr, VethDevice, VethPair, VethPairBuilder},
     },
 };
@@ -238,26 +235,37 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         )
         .build()?;
 
-    std::thread::sleep(std::time::Duration::from_millis(100)); // BUG: wait for veth device to be created
-
     // Set the default route of left and right namespaces
     info!("Set default route");
 
     debug!("Set default route for client namespace");
-    add_gateway_with_netns(veth_pair_client.left.ip_addr.0, client_netns.clone())?;
+    add_route_with_netns(
+        None,
+        None,
+        veth_pair_client.left.index,
+        client_netns.clone(),
+    )?;
 
     debug!("Set default route for server namespace");
     match config.mode {
         StdNetEnvMode::Compatible => {
             add_route_with_netns(
-                veth_pair_client.left.ip_addr.0,
-                veth_pair_client.left.ip_addr.1,
-                veth_pair_server.right.ip_addr.0,
+                (
+                    veth_pair_client.left.ip_addr.0,
+                    veth_pair_client.left.ip_addr.1,
+                ),
+                None,
+                veth_pair_server.right.index,
                 server_netns.clone(),
             )?;
         }
         _ => {
-            add_gateway_with_netns(veth_pair_server.right.ip_addr.0, server_netns.clone())?;
+            add_route_with_netns(
+                None,
+                None,
+                veth_pair_server.right.index,
+                server_netns.clone(),
+            )?;
         }
     }
 
