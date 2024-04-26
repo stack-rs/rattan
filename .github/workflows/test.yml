@@ -31,7 +31,7 @@ jobs:
         env:
           RUST_LOG: 'info'
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: 'sudo -E'
-      - run: sudo ./rattan/tests/scripts/clean_stdenv.sh -a
+      - run: sudo ./scripts/clean_stdenv.sh -a
       - name: Performance verification
         run: |
           /bin/bash ./ci/scripts/verify.sh
