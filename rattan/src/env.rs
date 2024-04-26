@@ -155,44 +155,53 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         StdNetEnvMode::Compatible => {
             std::fs::create_dir_all(format!("{RATTAN_TMP_DIR}/ip_lock"))?;
             let mut addr_suffix = 1;
-            loop {
+            let lock = loop {
+                // Create a lock file to avoid address conflict
+                let lock = match VethAddressSuffix::new_lock(addr_suffix) {
+                    Ok(lock) => Ok(lock),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(()),
+                    Err(e) => {
+                        error!("Failed to create address lock file: {}", e);
+                        return Err(e.into());
+                    }
+                };
                 let addresses_in_use = get_addresses_in_use()?;
-                if !addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(192, 168, 12, addr_suffix)))
+                if lock.is_ok()
                     && !addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(
                         192,
                         168,
-                        11,
+                        12,
                         addr_suffix,
                     )))
                 {
-                    // Create a lock file to avoid address conflict
-                    match VethAddressSuffix::new_lock(addr_suffix) {
-                        Ok(lock) => {
-                            info!("Successfully lock address suffix {}", addr_suffix);
-                            break lock;
+                    break lock.unwrap();
+                } else {
+                    debug!("Address suffix {} in use, try next.", addr_suffix);
+                    loop {
+                        addr_suffix += 1;
+                        if addr_suffix == 2 {
+                            addr_suffix += 1;
                         }
-                        Err(e) => {
-                            if e.kind() != std::io::ErrorKind::AlreadyExists {
-                                error!("Failed to create address lock file: {}", e);
-                                return Err(e.into());
-                            }
-                            debug!("Failed to lock address suffix {}", addr_suffix);
+                        if addr_suffix == 255 {
+                            error!("No available address suffix for server veth");
+                            return Err(VethError::CreateVethPairError(
+                                "No available address suffix for server veth".to_string(),
+                            )
+                            .into());
+                        }
+                        if !addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(
+                            192,
+                            168,
+                            12,
+                            addr_suffix,
+                        ))) {
+                            break;
                         }
                     }
                 }
-                debug!("Address suffix {} in use, try next.", addr_suffix);
-                addr_suffix += 1;
-                if addr_suffix == 2 {
-                    addr_suffix += 1;
-                }
-                if addr_suffix == 255 {
-                    error!("No available address suffix for server veth");
-                    return Err(VethError::CreateVethPairError(
-                        "No available address suffix for server veth".to_string(),
-                    )
-                    .into());
-                }
-            }
+            };
+            info!("Successfully lock address suffix {}", lock.content());
+            lock
         }
         _ => VethAddressSuffix::new_unlocked(1),
     };
