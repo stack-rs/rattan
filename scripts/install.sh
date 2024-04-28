@@ -3,9 +3,6 @@ myname=${0##*/}
 
 set -e
 
-# Config systemd-networkd to not change MAC address of veth interfaces
-# Ref: https://github.com/stack-rs/rattan/issues/42
-
 install() {
     local binary_path=${1:-"rattan-cli"}
     install_binary $binary_path
@@ -17,9 +14,11 @@ install_binary() {
     sudo setcap 'cap_dac_override,cap_dac_read_search,cap_sys_ptrace,cap_net_admin,cap_sys_admin,cap_net_raw+ep' /usr/local/bin/rattan-cli
 }
 
+# Config systemd-networkd to not change MAC address of veth interfaces
+# Ref: https://github.com/stack-rs/rattan/issues/42
 config_networkd() {
     if [ -d "/lib/systemd/network" ]; then
-        cat <<EOF >/lib/systemd/network/80-rattan.link
+        sudo sh -c "cat <<EOF >/lib/systemd/network/80-rattan.link
 [Match]
 OriginalName=ns*-v*-*
 Driver=veth
@@ -27,9 +26,9 @@ Driver=veth
 [Link]
 MACAddressPolicy=none
 EOF
-
-        systemctl daemon-reload
-        systemctl restart systemd-networkd.service
+"
+        sudo systemctl daemon-reload
+        sudo systemctl restart systemd-networkd.service
     fi
 }
 
