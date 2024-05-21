@@ -399,7 +399,7 @@ fn test_drophead_queue() {
         ("right".to_string(), "down_bw".to_string()),
         ("down_bw".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<StdPacket>::new(config).unwrap();
+    let mut radix: RattanRadix<StdPacket> = RattanRadix::<StdPacket>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 

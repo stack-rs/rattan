@@ -12,7 +12,7 @@ use crate::{
     devices::{external::VirtualEthernet, Device, Packet},
     env::{get_std_env, StdNetEnv},
     error::Error,
-    metal::{io::AfPacketDriver, netns::NetNsGuard},
+    metal::{io::af_packet::AfPacketDriver, netns::NetNsGuard},
 };
 
 #[cfg(feature = "http")]

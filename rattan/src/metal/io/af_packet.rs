@@ -12,44 +12,9 @@ use tracing::{debug, error, trace, warn};
 
 use crate::devices::Packet;
 
-use super::{error::MetalError, veth::VethDevice};
-
-enum PacketType {
-    PacketHost = 0,
-    _PacketBroadcast = 1,
-    _PacketMulticast = 2,
-    PacketOtherhost = 3,
-    _PacketOutgoing = 4,
-}
-
-pub trait InterfaceSender<P>
-where
-    P: Packet,
-{
-    fn send(&self, packet: P) -> std::io::Result<()>;
-}
-
-pub trait InterfaceReceiver<P>
-where
-    P: Packet,
-{
-    fn receive(&mut self) -> std::io::Result<Option<P>>;
-}
-
-pub trait InterfaceDriver<P>
-where
-    P: Packet,
-{
-    type Sender: InterfaceSender<P>;
-    type Receiver: InterfaceReceiver<P>;
-
-    fn bind_device(device: Arc<VethDevice>) -> Result<Self, MetalError>
-    where
-        Self: Sized;
-    fn raw_fd(&self) -> i32;
-    fn sender(&self) -> Arc<Self::Sender>;
-    fn receiver(&mut self) -> &mut Self::Receiver;
-}
+use super::common::PacketType;
+use crate::metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender};
+use crate::metal::{error::MetalError, veth::VethDevice};
 
 pub struct AfPacketSender {
     raw_fd: Mutex<i32>,
@@ -65,7 +30,7 @@ where
 
         let mut target_interface = libc::sockaddr_ll {
             sll_family: libc::AF_PACKET as u16,
-            sll_protocol: packet.ether_hdr().unwrap().ether_type,
+            sll_protocol: packet.ether_hdr().unwrap().ether_type.0,
             sll_ifindex: self.device.index as i32,
             sll_hatype: 0,
             sll_pkttype: 0,

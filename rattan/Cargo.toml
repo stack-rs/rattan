@@ -13,8 +13,9 @@ axum = { version = "0.6.16", optional = true }
 axum-macros = { version = "0.3.7", optional = true }
 backon = "0.4.4"
 bandwidth = "0.3.0"
+core_affinity = "0.8.1"
 ctrlc = "3.2.5"
-etherparse = "0.13.0"
+etherparse = "0.14.3"
 futures = "0.3.26"
 humantime-serde = { version = "1.1.1", optional = true }
 ipnet = "2.8.0"

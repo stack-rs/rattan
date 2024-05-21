@@ -2,10 +2,11 @@ use crate::{
     devices::{Device, Packet},
     error::Error,
     metal::{
-        io::{InterfaceDriver, InterfaceReceiver, InterfaceSender},
+        io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender},
         veth::VethDevice,
     },
 };
+
 /// External devices are all devices not created by Rattan.
 /// Network interfaces, physical or virtual, are examples of external devices.
 use std::{marker::PhantomData, sync::Arc};
