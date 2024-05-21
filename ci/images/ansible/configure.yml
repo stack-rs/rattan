@@ -17,7 +17,8 @@
       apply:
         become: true
     vars:
-      - docker_install_compose: true
+      docker_install_compose_plugin: true
+      docker_compose_url: "https://github.com/docker/compose/releases/download/{{ docker_compose_version }}/docker-compose-linux-{{ docker_compose_arch }}"
 
   - name: set service configuration directory
     become: true
@@ -34,7 +35,7 @@
   - name: poll a image
     become: true
     community.docker.docker_image:
-      name: myoung34/github-runner:latest
+      name: docker.io/myoung34/github-runner:latest
       source: pull
 
   - name: start the github-runner container

@@ -6,6 +6,7 @@ use std::net::IpAddr;
 use std::os::fd::AsRawFd;
 use std::process::Command;
 use std::sync::{Arc, Mutex, Weak};
+use tempfile::TempDir;
 use tracing::{debug, error, info, instrument, span, Level};
 
 use super::ioctl::disable_checksum_offload;
@@ -365,7 +366,7 @@ impl VethPairBuilder {
                 .map_err(|e| VethError::SetError(e.to_string()))?;
 
             // Enter namespace
-            let _ns_guard = NetNsGuard::new(device.namespace.clone())?;
+            let _ns_guard: NetNsGuard = NetNsGuard::new(device.namespace.clone())?;
             std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime spawn
             let (conn, rtnl_handle, _) = rtnetlink::new_connection()?;
             tokio_handle.spawn(conn);
@@ -556,5 +557,46 @@ impl std::fmt::Display for MacAddr {
         );
 
         Ok(())
+    }
+}
+
+fn remount_sys() -> Result<TempDir, VethError> {
+    let temp_dir = TempDir::with_prefix("ns_sys")?;
+
+    Command::new("mount")
+        .args([
+            "-t",
+            "sysfs",
+            "none",
+            temp_dir.path().as_os_str().to_str().unwrap(),
+        ])
+        .spawn()?
+        .wait()?;
+
+    Ok(temp_dir)
+}
+
+pub fn set_rps_cores(name: &str, cores: &[usize]) {
+    let temp_dir = remount_sys().unwrap();
+    let sys_path = format!("{}/class/net/{}/queues", temp_dir.path().display(), name);
+
+    for entry in std::fs::read_dir(sys_path).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.is_dir()
+            && path
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("rx-")
+        {
+            let file = path.join("rps_cpus");
+            let bitmap = cores.iter().map(|c| 1u64 << c).fold(0, |acc, m| acc | m);
+
+            println!("write {:x} to {}", bitmap, file.display());
+
+            std::fs::write(file, format!("{bitmap:x}")).unwrap();
+        }
     }
 }

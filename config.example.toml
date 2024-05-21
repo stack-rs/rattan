@@ -251,3 +251,11 @@ down_1 = "down_2"
 down_2 = "left"
 
 # ----- Links Section End -----
+
+# --- Resource Section -----
+# This section describes how rattan use system resource
+# `cores` are cores rattan are allowed to use
+[resource]
+cores = [1]
+
+# ----- Resource Section End -----

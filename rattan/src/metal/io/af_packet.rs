@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::devices::{Packet, StdPacket};
 use libc::{c_void, size_t, sockaddr, sockaddr_ll, socklen_t};
 use nix::{
     errno::Errno,
@@ -10,62 +11,22 @@ use nix::{
 };
 use tracing::{debug, error, trace, warn};
 
-use crate::devices::Packet;
-
-use super::{error::MetalError, veth::VethDevice};
-
-enum PacketType {
-    PacketHost = 0,
-    _PacketBroadcast = 1,
-    _PacketMulticast = 2,
-    PacketOtherhost = 3,
-    _PacketOutgoing = 4,
-}
-
-pub trait InterfaceSender<P>
-where
-    P: Packet,
-{
-    fn send(&self, packet: P) -> std::io::Result<()>;
-}
-
-pub trait InterfaceReceiver<P>
-where
-    P: Packet,
-{
-    fn receive(&mut self) -> std::io::Result<Option<P>>;
-}
-
-pub trait InterfaceDriver<P>
-where
-    P: Packet,
-{
-    type Sender: InterfaceSender<P>;
-    type Receiver: InterfaceReceiver<P>;
-
-    fn bind_device(device: Arc<VethDevice>) -> Result<Self, MetalError>
-    where
-        Self: Sized;
-    fn raw_fd(&self) -> i32;
-    fn sender(&self) -> Arc<Self::Sender>;
-    fn receiver(&mut self) -> &mut Self::Receiver;
-}
+use super::common::PacketType;
+use crate::metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender};
+use crate::metal::{error::MetalError, veth::VethDevice};
 
 pub struct AfPacketSender {
     raw_fd: Mutex<i32>,
     device: Arc<VethDevice>,
 }
 
-impl<P> InterfaceSender<P> for AfPacketSender
-where
-    P: Packet,
-{
-    fn send(&self, mut packet: P) -> std::io::Result<()> {
+impl InterfaceSender<StdPacket> for AfPacketSender {
+    fn send(&self, mut packet: StdPacket) -> std::io::Result<()> {
         let peer_address = { self.device.peer().mac_addr };
 
         let mut target_interface = libc::sockaddr_ll {
             sll_family: libc::AF_PACKET as u16,
-            sll_protocol: packet.ether_hdr().unwrap().ether_type,
+            sll_protocol: packet.ether_hdr().unwrap().ether_type.0,
             sll_ifindex: self.device.index as i32,
             sll_hatype: 0,
             sll_pkttype: 0,
@@ -105,17 +66,28 @@ where
         }
         Ok(())
     }
+
+    fn send_bulk<Iter, T>(&self, packets: Iter) -> std::io::Result<usize>
+    where
+        T: Into<StdPacket>,
+        Iter: IntoIterator<Item = T>,
+        Iter::IntoIter: ExactSizeIterator,
+    {
+        let mut count = 0;
+        for packet in packets {
+            self.send(packet.into())?;
+            count += 1;
+        }
+        Ok(count)
+    }
 }
 
 pub struct AfPacketReceiver {
     raw_fd: i32,
 }
 
-impl<P> InterfaceReceiver<P> for AfPacketReceiver
-where
-    P: Packet,
-{
-    fn receive(&mut self) -> std::io::Result<Option<P>> {
+impl InterfaceReceiver<StdPacket> for AfPacketReceiver {
+    fn receive(&mut self) -> std::io::Result<Option<StdPacket>> {
         let mut sockaddr = mem::MaybeUninit::<libc::sockaddr_ll>::uninit();
         let mut len = mem::size_of_val(&sockaddr) as socklen_t;
 
@@ -165,7 +137,15 @@ where
                 addr_ll.sll_pkttype, addr_ll.sll_ifindex,
                 addr_ll.sll_addr[0], addr_ll.sll_addr[1], addr_ll.sll_addr[2], addr_ll.sll_addr[3], addr_ll.sll_addr[4], addr_ll.sll_addr[5]
             );
-            Ok(Some(P::from_raw_buffer(&buf[0..ret])))
+            Ok(Some(StdPacket::from_raw_buffer(&buf[0..ret])))
+        }
+    }
+
+    fn receive_bulk(&mut self) -> std::io::Result<Vec<StdPacket>> {
+        if let Some(x) = self.receive()? {
+            Ok(vec![x])
+        } else {
+            Ok(vec![])
         }
     }
 }
@@ -177,13 +157,12 @@ pub struct AfPacketDriver {
     _device: Arc<VethDevice>,
 }
 
-impl<P> InterfaceDriver<P> for AfPacketDriver
-where
-    P: Packet,
-{
+impl InterfaceDriver for AfPacketDriver {
+    type Packet = StdPacket;
     type Sender = AfPacketSender;
     type Receiver = AfPacketReceiver;
-    fn bind_device(device: Arc<VethDevice>) -> Result<Self, MetalError> {
+
+    fn bind_device(device: Arc<VethDevice>) -> Result<Vec<Self>, MetalError> {
         debug!(?device, "bind device to AF_PACKET driver");
         let mut times = 3;
         let mut raw_fd;
@@ -248,7 +227,7 @@ where
             warn!("bind device success after {} times", 3 - times);
         }
 
-        Ok(Self {
+        Ok(vec![Self {
             sender: Arc::new(AfPacketSender {
                 raw_fd: Mutex::new(raw_fd),
                 device: device.clone(),
@@ -256,7 +235,7 @@ where
             receiver: AfPacketReceiver { raw_fd },
             raw_fd,
             _device: device,
-        })
+        }])
     }
 
     fn raw_fd(&self) -> i32 {
@@ -269,6 +248,10 @@ where
 
     fn receiver(&mut self) -> &mut Self::Receiver {
         &mut self.receiver
+    }
+
+    fn into_receiver(self) -> Self::Receiver {
+        self.receiver
     }
 }
 

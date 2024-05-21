@@ -1,9 +1,9 @@
 use crate::{
     error::{Error, VethError},
     metal::{
-        netns::NetNs,
+        netns::{NetNs, NetNsGuard},
         route::{add_arp_entry_with_netns, add_route_with_netns, set_loopback_up_with_netns},
-        veth::{MacAddr, VethDevice, VethPair, VethPairBuilder},
+        veth::{set_rps_cores, MacAddr, VethDevice, VethPair, VethPairBuilder},
     },
 };
 use futures::TryStreamExt;
@@ -114,9 +114,23 @@ pub enum StdNetEnvMode {
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Default)]
+pub enum IODriver {
+    #[default]
+    Packet,
+    Xdp,
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Default)]
 pub struct StdNetEnvConfig {
     #[cfg_attr(feature = "serde", serde(default))]
     pub mode: StdNetEnvMode,
+    // TODO(minhuw): pretty sure these two configs should not be here
+    // but let it be for now
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub client_cores: Vec<usize>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub server_cores: Vec<usize>,
 }
 
 pub struct StdNetEnv {
@@ -225,6 +239,32 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         )
         .build()?;
 
+    {
+        // TODO(haixuan): could you please replace this with Netlink version when
+        // time is appropriate?
+        let _ns_guard = NetNsGuard::new(veth_pair_client.left.namespace.clone())?;
+        std::process::Command::new("tc")
+            .args([
+                "qdisc",
+                "add",
+                "dev",
+                &veth_pair_client.left.name,
+                "root",
+                "handle",
+                "1:",
+                "fq",
+            ])
+            .spawn()
+            .unwrap()
+            .wait()
+            .unwrap();
+
+        // we need to send packets to cores belonging to client and servers.
+        // otherwise networking processing of client and server is done on
+        // rattan's cores
+        set_rps_cores(veth_pair_client.left.name.as_str(), &config.client_cores);
+    }
+
     let veth_pair_server = VethPairBuilder::new()
         .name(
             format!("nsR-vL-{}", rand_string),
@@ -243,6 +283,29 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
             ),
         )
         .build()?;
+
+    {
+        // TODO(haixuan): could you please replace this with Netlink version when
+        // time is appropriate?
+        let _ns_guard: NetNsGuard = NetNsGuard::new(veth_pair_server.right.namespace.clone())?;
+        std::process::Command::new("tc")
+            .args([
+                "qdisc",
+                "add",
+                "dev",
+                &veth_pair_server.right.name,
+                "root",
+                "handle",
+                "1:",
+                "fq",
+            ])
+            .spawn()
+            .unwrap()
+            .wait()
+            .unwrap();
+
+        set_rps_cores(veth_pair_server.right.name.as_str(), &config.server_cores);
+    }
 
     // Set the default route of left and right namespaces
     info!("Set default route");

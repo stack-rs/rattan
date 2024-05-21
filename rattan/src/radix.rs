@@ -1,6 +1,10 @@
 use std::{net::IpAddr, sync::Arc, thread};
 
 use backon::{BlockingRetryable, ExponentialBuilder};
+use nix::{
+    sched::{sched_setaffinity, CpuSet},
+    unistd::Pid,
+};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, span, warn, Level};
@@ -12,7 +16,7 @@ use crate::{
     devices::{external::VirtualEthernet, Device, Packet},
     env::{get_std_env, StdNetEnv},
     error::Error,
-    metal::{io::AfPacketDriver, netns::NetNsGuard},
+    metal::{io::common::InterfaceDriver, netns::NetNsGuard},
 };
 
 #[cfg(feature = "http")]
@@ -25,25 +29,31 @@ pub trait Task<R: Send>: FnOnce() -> anyhow::Result<R> + Send {}
 impl<R: Send, T: FnOnce() -> anyhow::Result<R> + Send> Task<R> for T {}
 
 // Manage environment and resources
-pub struct RattanRadix<P>
+pub struct RattanRadix<D>
 where
-    P: Packet + Sync,
+    D: InterfaceDriver + Send,
+    D::Packet: Packet + Send + Sync,
+    D::Sender: Send + Sync,
+    D::Receiver: Send,
 {
     env: StdNetEnv,
     cancel_token: CancellationToken,
 
     rattan_thread_handle: Option<thread::JoinHandle<()>>, // Use option to allow take ownership in drop
     _rattan_runtime: Arc<Runtime>,
-    rattan: RattanCore<P>,
+    rattan: RattanCore<D>,
     #[cfg(feature = "http")]
     http_thread_handle: Option<thread::JoinHandle<anyhow::Result<()>>>,
 }
 
-impl<P> RattanRadix<P>
+impl<D> RattanRadix<D>
 where
-    P: Packet + Sync,
+    D: InterfaceDriver,
+    D::Packet: Packet + Send + Sync,
+    D::Sender: Send + Sync,
+    D::Receiver: Send,
 {
-    pub fn new(config: RattanConfig<P>) -> Result<Self, Error> {
+    pub fn new(config: RattanConfig<D::Packet>) -> Result<Self, Error> {
         info!("New RattanRadix");
         let build_env = || {
             get_std_env(&config.env).map_err(|e| {
@@ -51,6 +61,14 @@ where
                 e
             })
         };
+        let running_core = config
+            .core
+            .resource
+            .cpu
+            .clone()
+            .or_else(|| Some(vec![1]))
+            .unwrap();
+
         let env = build_env
             .retry(
                 &ExponentialBuilder::default()
@@ -74,10 +92,21 @@ where
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
+
+            // TODO(enhancement): need to handle panic due to affinity setting
             let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(running_core.len())
                 .enable_all()
+                .on_thread_start(move || {
+                    let mut cpuset = CpuSet::new();
+                    for core in running_core.iter() {
+                        cpuset.set(*core as usize).unwrap();
+                    }
+                    sched_setaffinity(Pid::from_raw(0), &cpuset).unwrap();
+                })
                 .build()
                 .map(Arc::new);
+
             match runtime {
                 Ok(runtime) => {
                     runtime_tx.send(Ok(runtime.clone())).unwrap();
@@ -157,14 +186,14 @@ where
         Ok(radix)
     }
 
-    pub fn build_device<D, F>(
+    pub fn build_device<V, F>(
         &mut self,
         id: String,
         builder: F,
-    ) -> Result<Arc<D::ControlInterfaceType>, Error>
+    ) -> Result<Arc<V::ControlInterfaceType>, Error>
     where
-        D: Device<P>,
-        F: DeviceFactory<D>,
+        V: Device<D::Packet>,
+        F: DeviceFactory<V>,
     {
         self.rattan.build_device(id, builder)
     }
@@ -179,21 +208,22 @@ where
         self.build_device("left".to_string(), move |rt| {
             let _guard = rt.enter();
             let _ns_guard = NetNsGuard::new(rattan_ns);
-            VirtualEthernet::<P, AfPacketDriver>::new(veth, "left".to_string())
+            VirtualEthernet::<D>::new(veth, "left".to_string())
         })?;
 
         let rattan_ns = self.env.rattan_ns.clone();
         let veth = self.env.right_pair.left.clone();
+
         self.build_device("right".to_string(), move |rt| {
             let _guard = rt.enter();
             let _ns_guard = NetNsGuard::new(rattan_ns);
-            VirtualEthernet::<P, AfPacketDriver>::new(veth, "right".to_string())
+            VirtualEthernet::<D>::new(veth, "right".to_string())
         })?;
 
         Ok(())
     }
 
-    pub fn load_core_config(&mut self, config: RattanCoreConfig<P>) -> Result<(), Error> {
+    pub fn load_core_config(&mut self, config: RattanCoreConfig<D::Packet>) -> Result<(), Error> {
         // build devices
         for (id, device_config) in config.devices {
             match device_config {
@@ -333,9 +363,12 @@ where
     }
 }
 
-impl<P> Drop for RattanRadix<P>
+impl<D> Drop for RattanRadix<D>
 where
-    P: Packet + Sync,
+    D: InterfaceDriver + Send,
+    D::Packet: Packet + Send + Sync,
+    D::Sender: Send + Sync,
+    D::Receiver: Send,
 {
     fn drop(&mut self) {
         debug!("Cancelling RattanRadix");
