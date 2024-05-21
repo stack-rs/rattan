@@ -18,6 +18,7 @@ use rattan::devices::delay::DelayDeviceConfig;
 use rattan::devices::loss::LossDeviceConfig;
 use rattan::devices::StdPacket;
 use rattan::env::{StdNetEnvConfig, StdNetEnvMode};
+use rattan::metal::io::af_packet::AfPacketDriver;
 use rattan::radix::RattanRadix;
 use regex::Regex;
 use tracing::{error, info, instrument, span, warn, Level};
@@ -28,6 +29,8 @@ fn test_http() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
+            client_cores: vec![1],
+            server_cores: vec![3],
         },
         http: HttpConfig {
             enable: true,
@@ -77,7 +80,7 @@ fn test_http() {
         ("down_delay".to_string(), "down_loss".to_string()),
         ("down_loss".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<StdPacket>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 

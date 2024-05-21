@@ -7,10 +7,9 @@ This directory contains artifacts setting up four test machines with equipped af
 | Machine Nickname | Kernel Version | Distribution | Cloud Image |
 | :---: | :---: | :---: | :---: |
 | focal-0505 | 5.4 | Ubuntu 20.04 (focal) | [focal/release-20230209](https://cloud-images.ubuntu.com/releases/focal/release-20230908/ubuntu-20.04-server-cloudimg-amd64-disk-kvm.img) |
-| focal-0510 | 5.10 | Ubuntu 20.04 (focal) | [focal/release-20230209](https://cloud-images.ubuntu.com/releases/focal/release-20230908/ubuntu-20.04-server-cloudimg-amd64-disk-kvm.img) |
 | jammy-0515 | 5.15 | Ubuntu 22.04 (jammy) | [jammy/release-20230302](https://cloud-images.ubuntu.com/releases/22.04/release-20230914/ubuntu-22.04-server-cloudimg-amd64-disk-kvm.img) |
 | jammy-0601 | 6.1 | Ubuntu 22.04 (jammy) | [jammy/release-20230302](https://cloud-images.ubuntu.com/releases/22.04/release-20230914/ubuntu-22.04-server-cloudimg-amd64-disk-kvm.img) |
-| mantic-0606 | 6.6 | Ubuntu 23.10 (mantic) | [mantic/20240209](https://cloud-images.ubuntu.com/releases/mantic/release-20240209/ubuntu-23.10-server-cloudimg-amd64.img) |
+| noble-0606 | 6.6 | Ubuntu 24.04 (noble) | [noble/20240521](https://cloud-images.ubuntu.com/noble/20240521/noble-server-cloudimg-amd64.img) |
 
 # Prepare Virtual Machines
 

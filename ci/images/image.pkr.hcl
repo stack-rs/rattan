@@ -135,11 +135,12 @@ build {
     ]
     inline_shebang = "/bin/bash -e"
     skip_clean = true
+    valid_exit_codes = [0, 123] # it's ok if the kernel is already what we want
   }
   provisioner "shell" {
     inline = [
       "([[ -f /usr/lib/python3.12/EXTERNALLY-MANAGED ]] && sudo rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED) || true",
-      "([[ -f /usr/lib/python3.11/EXTERNALLY-MANAGED ]] && sudo rm -f /usr/lib/python3.11/EXTERNALLY-MANAGED) || true"
+      "([[ -f /usr/lib/python3.11/EXTERNALLY-MANAGED ]] && sudo rm -f /usr/lib/python3.11/EXTERNALLY-MANAGED) || true",
     ]
     inline_shebang = "/bin/bash"
   }

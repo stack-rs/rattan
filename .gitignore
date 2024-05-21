@@ -23,3 +23,8 @@ tmp/
 
 # Ignore VSCode configurations
 .vscode
+
+# Ignore flamegraph artifacts
+perf.data
+perf.data.old
+flamegraph.svg

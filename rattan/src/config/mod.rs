@@ -40,6 +40,21 @@ impl<P: Packet> Default for RattanConfig<P> {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
+#[derive(Clone, Debug, Default)]
+pub struct RattanResourceConfig {
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub memory: Option<usize>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub cpu: Option<Vec<u32>>,
+}
+
+impl RattanResourceConfig {
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
+
 /// Configuration for the Rattan core.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
 #[derive(Clone, Debug)]
@@ -48,6 +63,8 @@ pub struct RattanCoreConfig<P: Packet> {
     pub devices: HashMap<String, DeviceBuildConfig<P>>,
     #[cfg_attr(feature = "serde", serde(default))]
     pub links: HashMap<String, String>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub resource: RattanResourceConfig,
 }
 
 impl<P: Packet> Default for RattanCoreConfig<P> {
@@ -55,6 +72,7 @@ impl<P: Packet> Default for RattanCoreConfig<P> {
         Self {
             devices: HashMap::new(),
             links: HashMap::new(),
+            resource: RattanResourceConfig::new(),
         }
     }
 }
