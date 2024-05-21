@@ -1,0 +1,3 @@
+[submodule "camellia"]
+	path = camellia
+	url = https://github.com/minhuw/camellia
