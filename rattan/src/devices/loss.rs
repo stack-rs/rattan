@@ -181,3 +181,192 @@ where
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use insta::assert_json_snapshot;
+    use itertools::iproduct;
+    use rand::{rngs::StdRng, SeedableRng};
+    use tracing::{span, Level};
+
+    use crate::devices::StdPacket;
+
+    use super::*;
+
+    const LOSS_RATE_ACCURACY_TOLERANCE: f64 = 0.1;
+
+    #[derive(Debug)]
+    struct PacketStatistics {
+        total: i32,
+        lost: i32,
+    }
+
+    impl PacketStatistics {
+        fn new() -> Self {
+            Self { total: 0, lost: 0 }
+        }
+
+        fn get_lost_rate(&self) -> f64 {
+            self.lost as f64 / self.total as f64
+        }
+    }
+
+    fn get_loss_seq(pattern: Vec<f64>, rng_seed: u64) -> Result<Vec<bool>, Error> {
+        let rt = tokio::runtime::Runtime::new()?;
+        let _guard = rt.enter();
+        let pattern_len = pattern.len();
+
+        let mut device: LossDevice<StdPacket, StdRng> =
+            LossDevice::new(pattern, StdRng::seed_from_u64(rng_seed))?;
+        let mut received_packets: Vec<bool> = Vec::with_capacity(100 * pattern_len);
+        let ingress = device.sender();
+        let egress = device.receiver();
+
+        for _ in 0..(100 * pattern_len) {
+            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            ingress.enqueue(test_packet)?;
+            let received = rt.block_on(async { egress.dequeue().await });
+            received_packets.push(received.is_some());
+        }
+        Ok(received_packets)
+    }
+
+    #[test_log::test]
+    fn test_loss_device() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_loss_device").entered();
+        let rt = tokio::runtime::Runtime::new()?;
+        let _guard = rt.enter();
+
+        info!("Creating device with loss [0.1]");
+        let device_config = LossDeviceConfig::new([0.1]);
+        let builder = device_config.into_factory::<StdPacket>();
+        let device = builder(rt.handle())?;
+        let ingress = device.sender();
+        let mut egress = device.into_receiver();
+
+        info!("Testing loss for loss device of loss [0.1]");
+        let mut statistics = PacketStatistics::new();
+
+        for _ in 0..100 {
+            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            ingress.enqueue(test_packet)?;
+            let received = rt.block_on(async { egress.dequeue().await });
+
+            statistics.total += 1;
+            match received {
+                Some(content) => assert!(content.length() == 256),
+                None => statistics.lost += 1,
+            }
+        }
+        let loss_rate = statistics.get_lost_rate();
+        info!("Tested loss: {}", loss_rate);
+        assert!((loss_rate - 0.1).abs() <= LOSS_RATE_ACCURACY_TOLERANCE);
+        Ok(())
+    }
+
+    #[test_log::test]
+    fn test_loss_device_loss_list() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_loss_device_loss_list").entered();
+        let rt = tokio::runtime::Runtime::new()?;
+        let _guard = rt.enter();
+
+        let loss_configs = vec![
+            vec![0.1, 0.3, 0.8, 0.2],
+            vec![0.1, 0.2, 0.8, 0.6, 0.5, 0.1],
+            vec![0.8, 0.2, 0.8],
+        ];
+
+        let seeds: Vec<u64> = vec![42, 721, 2903, 100000];
+
+        for (loss_config, seed) in iproduct!(loss_configs, seeds) {
+            info!(
+                "Testing loss device with config {:?}, rng seed {}",
+                loss_config.clone(),
+                seed
+            );
+            let loss_seq = get_loss_seq(loss_config, seed)?;
+            /* Because tests are run with root privileges, insta review will not have sufficient privilege to update the snapshot file. To update the snapshot, set the environment variable INSTA_UPDATE to always so that insta will update the snapshot file during the test run (but without confirming). */
+            assert_json_snapshot!(loss_seq)
+        }
+        Ok(())
+    }
+
+    #[test_log::test]
+    fn test_loss_device_config_update() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_loss_device_config_update").entered();
+        let rt = tokio::runtime::Runtime::new()?;
+        let _guard = rt.enter();
+
+        info!("Creating device with loss [1.0, 0.0]");
+        let device_config = LossDeviceConfig::new([1.0, 0.0]);
+        let builder = device_config.into_factory::<StdPacket>();
+        let device = builder(rt.handle())?;
+        let config_changer = device.control_interface();
+        let ingress = device.sender();
+        let mut egress = device.into_receiver();
+
+        info!("Sending a packet to transfer to second state");
+        ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+        let received = rt.block_on(async { egress.dequeue().await });
+        assert!(received.is_none());
+
+        info!("Changing the config to [0.0, 1.0]");
+
+        config_changer.set_config(LossDeviceConfig::new([0.0, 1.0]))?;
+
+        // The packet should always be lost
+
+        for _ in 0..100 {
+            ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+            let received = rt.block_on(async { egress.dequeue().await });
+
+            assert!(received.is_none());
+        }
+
+        Ok(())
+    }
+
+    #[test_log::test]
+    fn test_loss_device_config_update_length_change() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_loss_device_config_update_fallback").entered();
+        let rt = tokio::runtime::Runtime::new()?;
+        let _guard = rt.enter();
+
+        info!("Creating device with loss [1.0, 1.0, 0.0]");
+        let device_config = LossDeviceConfig::new([1.0, 1.0, 0.0]);
+        let builder = device_config.into_factory::<StdPacket>();
+        let device = builder(rt.handle())?;
+        let config_changer = device.control_interface();
+        let ingress = device.sender();
+        let mut egress = device.into_receiver();
+
+        info!("Sending 2 packet to transfer to 3rd state");
+        for _ in 0..2 {
+            ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+            let received = rt.block_on(async { egress.dequeue().await });
+            assert!(received.is_none());
+        }
+
+        info!("Changing config to [0.0, 1.0]");
+        config_changer.set_config(LossDeviceConfig::new([0.0, 1.0]))?;
+
+        // Now the loss rate should fall back to the last available, 1.0
+        for _ in 0..100 {
+            ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+            let received = rt.block_on(async { egress.dequeue().await });
+            assert!(received.is_none());
+        }
+
+        info!("Changing config to [0.0, 0.0, 1.0]");
+        config_changer.set_config(LossDeviceConfig::new([0.0, 0.0, 1.0]))?;
+
+        // Now the lost packet is well over 3, thus the loss rate would still be 1
+        for _ in 0..100 {
+            ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+            let received = rt.block_on(async { egress.dequeue().await });
+            assert!(received.is_none());
+        }
+
+        Ok(())
+    }
+}

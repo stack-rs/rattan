@@ -176,3 +176,137 @@ where
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+    use tracing::{span, Level};
+
+    use crate::devices::StdPacket;
+
+    use super::*;
+
+    // The tolerance of the accuracy of the delays, in ms
+    const DELAY_ACCURACY_TOLERANCE: f64 = 1.0;
+    // List of delay times to be tested
+    const DELAY_TEST_TIME: [u64; 8] = [0, 2, 5, 10, 20, 50, 100, 500];
+
+    #[test_log::test]
+    fn test_delay_device() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_delay_device").entered();
+        for testing_delay in DELAY_TEST_TIME {
+            let rt = tokio::runtime::Runtime::new()?;
+
+            let _guard = rt.enter();
+
+            info!("Creating device with {}ms delay", testing_delay);
+            let device_config = DelayDeviceConfig::new(Duration::from_millis(testing_delay));
+            let builder = device_config.into_factory::<StdPacket>();
+            let device = builder(rt.handle())?;
+            let ingress = device.sender();
+            let mut egress = device.into_receiver();
+
+            info!("Testing delay time for {}ms delay device", testing_delay);
+            let mut delays: Vec<f64> = Vec::new();
+
+            for _ in 0..10 {
+                let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+                let start = Instant::now();
+                ingress.enqueue(test_packet)?;
+                let received = rt.block_on(async { egress.dequeue().await });
+
+                // Use mircro second to get precision up to 0.001ms
+                let duration = start.elapsed().as_micros() as f64 / 1000.0;
+
+                delays.push(duration);
+
+                // Should never loss packet
+                assert!(received.is_some());
+
+                let received = received.unwrap();
+
+                // The length should be correct
+                assert!(received.length() == 256);
+            }
+
+            info!(
+                "Tested delays for {}ms delay device: {:?}",
+                testing_delay, delays
+            );
+
+            let average_delay = delays.iter().sum::<f64>() / 10.0;
+            debug!("Delays: {:?}", delays);
+            info!(
+                "Average delay: {:.3}ms, error {:.1}ms",
+                average_delay,
+                (average_delay - testing_delay as f64).abs()
+            );
+            // Check the delay time
+            assert!((average_delay - testing_delay as f64) <= DELAY_ACCURACY_TOLERANCE);
+        }
+
+        Ok(())
+    }
+
+    #[test_log::test]
+    fn test_delay_device_config_update() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_delay_device_config_update").entered();
+        let rt = tokio::runtime::Runtime::new()?;
+
+        let _guard = rt.enter();
+
+        info!("Creating device with 10ms delay");
+        let device_config = DelayDeviceConfig::new(Duration::from_millis(10));
+        let builder = device_config.into_factory::<StdPacket>();
+        let device = builder(rt.handle())?;
+        let config_changer = device.control_interface();
+        let ingress = device.sender();
+        let mut egress = device.into_receiver();
+
+        //Test whether the packet will wait longer if the config is updated
+        let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+
+        let start = Instant::now();
+        ingress.enqueue(test_packet)?;
+
+        // Wait for 5ms, then change the config to let the delay be longer
+        std::thread::sleep(Duration::from_millis(5));
+        config_changer.set_config(DelayDeviceConfig::new(Duration::from_millis(20)))?;
+
+        let received = rt.block_on(async { egress.dequeue().await });
+
+        let duration = start.elapsed().as_micros() as f64 / 1000.0;
+
+        info!("Delay after update: {}ms", duration);
+
+        assert!(received.is_some());
+        let received = received.unwrap();
+        assert!(received.length() == 256);
+
+        assert!((duration - 20.0).abs() <= DELAY_ACCURACY_TOLERANCE);
+
+        // Test whether the packet will be returned immediately when the new delay is less than the already passed time
+        let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+
+        let start = Instant::now();
+        ingress.enqueue(test_packet)?;
+
+        // Wait for 15ms, then change the config back to 10ms
+        std::thread::sleep(Duration::from_millis(15));
+        config_changer.set_config(DelayDeviceConfig::new(Duration::from_millis(10)))?;
+
+        let received = rt.block_on(async { egress.dequeue().await });
+
+        let duration = start.elapsed().as_micros() as f64 / 1000.0;
+
+        info!("Delay after update: {}ms", duration);
+
+        assert!(received.is_some());
+        let received = received.unwrap();
+        assert!(received.length() == 256);
+
+        assert!((duration - 15.0).abs() <= DELAY_ACCURACY_TOLERANCE);
+
+        Ok(())
+    }
+}

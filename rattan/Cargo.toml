@@ -44,6 +44,8 @@ tracing = "0.1.37"
 [dev-dependencies]
 criterion = "0.5.1"
 ctrlc = "3.2.5"
+insta = { version = "1.39.0", features = ["json"] }
+itertools = "0.13.0"
 netns-rs = "0.1.0"
 regex = "1.7.3"
 reqwest = { version = "0.11.16", default-features = false, features = [
