@@ -15,6 +15,7 @@
         "ghcr.io/devcontainers/features/docker-in-docker:2": {}
     },
 	"runArgs": [ "--cap-add=NET_ADMIN", "--cap-add=NET_RAW", "--cap-add=SYS_PTRACE", "--cap-add=SYS_ADMIN", "--security-opt", "apparmor=unconfined", "--ulimit", "nofile=1048576:1048576" ],
+    "mounts": ["source=/sys/fs/bpf,target=/sys/fs/bpf,type=bind"],
     "customizations": {
         "vscode": {
             "extensions": [

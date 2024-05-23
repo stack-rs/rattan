@@ -8,7 +8,7 @@ use rattan::{
         bandwidth::{queue::InfiniteQueueConfig, BwDeviceConfig},
         StdPacket,
     },
-    env::{StdNetEnvConfig, StdNetEnvMode},
+    env::{IODriver, StdNetEnvConfig, StdNetEnvMode},
     radix::RattanRadix,
 };
 use regex::Regex;
@@ -18,6 +18,7 @@ fn main() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
+            driver: IODriver::Xdp,
         },
         ..Default::default()
     };

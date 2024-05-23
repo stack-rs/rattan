@@ -114,9 +114,19 @@ pub enum StdNetEnvMode {
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Default)]
+pub enum IODriver {
+    #[default]
+    Packet,
+    Xdp,
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Default)]
 pub struct StdNetEnvConfig {
     #[cfg_attr(feature = "serde", serde(default))]
     pub mode: StdNetEnvMode,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub driver: IODriver,
 }
 
 pub struct StdNetEnv {

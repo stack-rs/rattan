@@ -14,8 +14,9 @@ use crate::{
     control::{RattanOp, RattanOpEndpoint, RattanOpResult},
     core::{DeviceFactory, RattanCore},
     devices::{external::VirtualEthernet, Device, Packet},
-    env::{get_std_env, StdNetEnv},
+    env::{get_std_env, IODriver, StdNetEnv},
     error::Error,
+    metal::io::af_xdp::XDPDriver,
     metal::{io::af_packet::AfPacketDriver, netns::NetNsGuard},
 };
 
@@ -175,7 +176,7 @@ where
             #[cfg(feature = "http")]
             http_thread_handle,
         };
-        radix.init_veth()?; // build veth pair at the beginning
+        radix.init_veth(&config.env.driver)?; // build veth pair at the beginning
         radix.load_core_config(config.core)?;
         Ok(radix)
     }
@@ -196,22 +197,44 @@ where
         self.rattan.link_device(rx_id, tx_id);
     }
 
-    pub fn init_veth(&mut self) -> Result<(), Error> {
+    pub fn init_veth(&mut self, driver: &IODriver) -> Result<(), Error> {
         let rattan_ns = self.env.rattan_ns.clone();
         let veth = self.env.left_pair.right.clone();
-        self.build_deivce("left".to_string(), move |rt| {
-            let _guard = rt.enter();
-            let _ns_guard = NetNsGuard::new(rattan_ns);
-            VirtualEthernet::<P, AfPacketDriver>::new(veth)
-        })?;
+        match driver {
+            IODriver::Packet => {
+                self.build_deivce("left".to_string(), move |rt| {
+                    let _guard = rt.enter();
+                    let _ns_guard = NetNsGuard::new(rattan_ns);
+                    VirtualEthernet::<P, AfPacketDriver>::new(veth)
+                })?;
+            }
+            IODriver::Xdp => {
+                self.build_deivce("left".to_string(), move |rt| {
+                    let _guard = rt.enter();
+                    let _ns_guard = NetNsGuard::new(rattan_ns);
+                    VirtualEthernet::<P, XDPDriver>::new(veth)
+                })?;
+            }
+        }
 
         let rattan_ns = self.env.rattan_ns.clone();
         let veth = self.env.right_pair.left.clone();
-        self.build_deivce("right".to_string(), move |rt| {
-            let _guard = rt.enter();
-            let _ns_guard = NetNsGuard::new(rattan_ns);
-            VirtualEthernet::<P, AfPacketDriver>::new(veth)
-        })?;
+        match driver {
+            IODriver::Packet => {
+                self.build_deivce("right".to_string(), move |rt| {
+                    let _guard = rt.enter();
+                    let _ns_guard = NetNsGuard::new(rattan_ns);
+                    VirtualEthernet::<P, AfPacketDriver>::new(veth)
+                })?;
+            }
+            IODriver::Xdp => {
+                self.build_deivce("right".to_string(), move |rt| {
+                    let _guard = rt.enter();
+                    let _ns_guard = NetNsGuard::new(rattan_ns);
+                    VirtualEthernet::<P, XDPDriver>::new(veth)
+                })?;
+            }
+        }
 
         Ok(())
     }
