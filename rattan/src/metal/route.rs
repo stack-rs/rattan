@@ -159,7 +159,7 @@ pub fn add_route_with_netns<
                 .output()
                 .map(|output| {
                     String::from_utf8_lossy(&output.stdout).to_string()
-                        + &String::from_utf8_lossy(&output.stderr).to_string()
+                        + String::from_utf8_lossy(&output.stderr).as_ref()
                 })
                 .unwrap_or_else(|e| e.to_string());
             println!("ip route: {}", output);
@@ -194,7 +194,7 @@ pub fn add_arp_entry_with_netns(
                 .output()
                 .map(|output| {
                     String::from_utf8_lossy(&output.stdout).to_string()
-                        + &String::from_utf8_lossy(&output.stderr).to_string()
+                        + String::from_utf8_lossy(&output.stderr).as_ref()
                 })
                 .unwrap_or_else(|e| e.to_string());
             println!("arp -n: {}", output);

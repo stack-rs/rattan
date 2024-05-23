@@ -14,7 +14,6 @@ axum-macros = { version = "0.3.7", optional = true }
 backon = "0.4.4"
 bandwidth = "0.3.0"
 camellia = { path = "../camellia/camellia" }
-core_affinity = "0.8.1"
 ctrlc = "3.2.5"
 etherparse = "0.14.3"
 futures = "0.3.26"

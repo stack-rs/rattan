@@ -1,6 +1,10 @@
 use std::{net::IpAddr, sync::Arc, thread};
 
 use backon::{BlockingRetryable, ExponentialBuilder};
+use nix::{
+    sched::{sched_setaffinity, CpuSet},
+    unistd::Pid,
+};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, span, warn, Level};
@@ -51,6 +55,14 @@ where
                 e
             })
         };
+        let running_core = config
+            .core
+            .resource
+            .cpu
+            .clone()
+            .or_else(|| Some(vec![1]))
+            .unwrap();
+
         let env = build_env
             .retry(
                 &ExponentialBuilder::default()
@@ -74,10 +86,20 @@ where
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
+
+            // TODO(enhancement): need to handle panic due to affinity setting
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
+                .on_thread_start(move || {
+                    let mut cpuset = CpuSet::new();
+                    for core in running_core.iter() {
+                        cpuset.set(*core as usize).unwrap();
+                    }
+                    sched_setaffinity(Pid::from_raw(0), &cpuset).unwrap();
+                })
                 .build()
                 .map(Arc::new);
+
             match runtime {
                 Ok(runtime) => {
                     runtime_tx.send(Ok(runtime.clone())).unwrap();

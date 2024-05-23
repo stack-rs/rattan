@@ -64,6 +64,9 @@ fn main() {
         ("down_delay".to_string(), "down_loss".to_string()),
         ("down_loss".to_string(), "left".to_string()),
     ]);
+
+    config.core.resource.cpu = Some(vec![2]);
+
     let mut radix = RattanRadix::<StdPacket>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
@@ -72,8 +75,8 @@ fn main() {
     {
         let right_handle = radix
             .right_spawn(|| {
-                let mut iperf_server = std::process::Command::new("iperf3")
-                    .args(["-s", "-p", "9000", "-1"])
+                let mut iperf_server = std::process::Command::new("taskset")
+                    .args(["-c", "1", "iperf3", "-s", "-p", "9000", "-1"])
                     .stdout(std::process::Stdio::null())
                     .spawn()
                     .unwrap();
@@ -86,8 +89,11 @@ fn main() {
 
         let left_handle = radix
             .left_spawn(|| {
-                let client_handle = std::process::Command::new("iperf3")
+                let client_handle = std::process::Command::new("taskset")
                     .args([
+                        "-c",
+                        "3",
+                        "iperf3",
                         "-c",
                         "192.168.12.1",
                         "-p",
