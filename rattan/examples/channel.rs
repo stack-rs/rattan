@@ -14,11 +14,29 @@ use rattan::{
 use regex::Regex;
 use std::{collections::HashMap, thread::sleep, time::Duration};
 
+use clap::Parser;
+
+/// Search for a pattern in a file and display the lines that contain it.
+#[derive(Parser)]
+struct Cli {
+    #[clap(long, action)]
+    xdp: bool,
+}
+
 fn main() {
+    let args = Cli::parse();
+    let driver = if args.xdp {
+        IODriver::Xdp
+    } else {
+        IODriver::Packet
+    };
+
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
-            driver: IODriver::Xdp,
+            driver,
+            client_cores: vec![1],
+            server_cores: vec![3],
         },
         ..Default::default()
     };

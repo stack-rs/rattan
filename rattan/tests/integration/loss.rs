@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use rattan::config::{DeviceBuildConfig, LossDeviceBuildConfig, RattanConfig};
 use rattan::control::RattanOp;
 use rattan::devices::{loss::LossDeviceConfig, StdPacket};
-use rattan::env::{StdNetEnvConfig, StdNetEnvMode};
+use rattan::env::{IODriver, StdNetEnvConfig, StdNetEnvMode};
 use rattan::radix::RattanRadix;
 use regex::Regex;
 use tracing::{info, instrument, span, Level};
@@ -16,6 +16,9 @@ fn test_loss() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
+            driver: IODriver::Packet,
+            client_cores: vec![1],
+            server_cores: vec![3],
         },
         ..Default::default()
     };

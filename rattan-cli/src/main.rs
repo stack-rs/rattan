@@ -403,6 +403,8 @@ fn main() -> anyhow::Result<()> {
                 env: StdNetEnvConfig {
                     mode: StdNetEnvMode::Compatible,
                     driver: IODriver::Packet,
+                    client_cores: vec![1],
+                    server_cores: vec![3],
                 },
                 #[cfg(feature = "http")]
                 http: http_config,

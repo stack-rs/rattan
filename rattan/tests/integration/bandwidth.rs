@@ -18,7 +18,7 @@ use rattan::devices::{
     },
     ControlInterface, StdPacket,
 };
-use rattan::env::{StdNetEnvConfig, StdNetEnvMode};
+use rattan::env::{IODriver, StdNetEnvConfig, StdNetEnvMode};
 use rattan::radix::RattanRadix;
 use rattan::{
     config::{BwDeviceBuildConfig, DeviceBuildConfig, RattanConfig},
@@ -34,6 +34,9 @@ fn test_bandwidth() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
+            driver: IODriver::Packet,
+            client_cores: vec![1],
+            server_cores: vec![3],
         },
         ..Default::default()
     };
@@ -207,6 +210,9 @@ fn test_droptail_queue() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
+            driver: IODriver::Packet,
+            client_cores: vec![1],
+            server_cores: vec![3],
         },
         ..Default::default()
     };
@@ -374,6 +380,9 @@ fn test_drophead_queue() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
+            driver: IODriver::Packet,
+            client_cores: vec![1],
+            server_cores: vec![3],
         },
         ..Default::default()
     };
@@ -545,6 +554,9 @@ fn test_codel_queue() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
+            driver: IODriver::Packet,
+            client_cores: vec![1],
+            server_cores: vec![3],
         },
         ..Default::default()
     };
@@ -748,6 +760,9 @@ fn test_replay() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
+            driver: IODriver::Packet,
+            client_cores: vec![1],
+            server_cores: vec![3],
         },
         ..Default::default()
     };
