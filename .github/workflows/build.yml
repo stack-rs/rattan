@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodule: "recursive"
+          submodule: recursive
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt install ethtool iputils-ping iperf iperf3 pkg-config m4 clang llvm libelf-dev libpcap-dev gcc-multilib
       - uses: Swatinem/rust-cache@v2
@@ -33,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodule: "recursive"
+          submodule: recursive
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodule: "recursive"
+          submodule: recursive
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -62,5 +62,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodule: "recursive"
+          submodule: recursive
       - uses: actions-rust-lang/audit@v1
