@@ -125,8 +125,6 @@ pub enum IODriver {
 pub struct StdNetEnvConfig {
     #[cfg_attr(feature = "serde", serde(default))]
     pub mode: StdNetEnvMode,
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub driver: IODriver,
     // TODO(minhuw): pretty sure these two configs should not be here
     // but let it be for now
     #[cfg_attr(feature = "serde", serde(default))]

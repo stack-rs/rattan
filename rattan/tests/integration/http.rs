@@ -28,7 +28,6 @@ fn test_http() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
-            driver: IODriver::Packet,
             client_cores: vec![1],
             server_cores: vec![3],
         },

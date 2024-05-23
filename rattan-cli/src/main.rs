@@ -11,7 +11,8 @@ use rattan::devices::bandwidth::queue::{
 };
 use rattan::devices::bandwidth::BwDeviceConfig;
 use rattan::devices::StdPacket;
-use rattan::env::{IODriver, StdNetEnvConfig, StdNetEnvMode};
+use rattan::env::{StdNetEnvConfig, StdNetEnvMode};
+use rattan::metal::io::af_packet::AfPacketDriver;
 use rattan::netem_trace::{Bandwidth, Delay};
 use rattan::radix::RattanRadix;
 use tracing::{debug, error, info, warn};
@@ -402,7 +403,6 @@ fn main() -> anyhow::Result<()> {
             RattanConfig::<StdPacket> {
                 env: StdNetEnvConfig {
                     mode: StdNetEnvMode::Compatible,
-                    driver: IODriver::Packet,
                     client_cores: vec![1],
                     server_cores: vec![3],
                 },
@@ -426,7 +426,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let mut radix = RattanRadix::<StdPacket>::new(config)?;
+    let mut radix = RattanRadix::<AfPacketDriver>::new(config)?;
     radix.spawn_rattan()?;
 
     let rattan_base = radix.right_ip();

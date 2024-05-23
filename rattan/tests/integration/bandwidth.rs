@@ -18,7 +18,8 @@ use rattan::devices::{
     },
     ControlInterface, StdPacket,
 };
-use rattan::env::{IODriver, StdNetEnvConfig, StdNetEnvMode};
+use rattan::env::{StdNetEnvConfig, StdNetEnvMode};
+use rattan::metal::io::af_packet::AfPacketDriver;
 use rattan::radix::RattanRadix;
 use rattan::{
     config::{BwDeviceBuildConfig, DeviceBuildConfig, RattanConfig},
@@ -34,7 +35,6 @@ fn test_bandwidth() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
-            driver: IODriver::Packet,
             client_cores: vec![1],
             server_cores: vec![3],
         },
@@ -62,7 +62,7 @@ fn test_bandwidth() {
         ("right".to_string(), "down_bw".to_string()),
         ("down_bw".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<StdPacket>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
@@ -210,7 +210,6 @@ fn test_droptail_queue() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
-            driver: IODriver::Packet,
             client_cores: vec![1],
             server_cores: vec![3],
         },
@@ -238,7 +237,7 @@ fn test_droptail_queue() {
         ("right".to_string(), "down_bw".to_string()),
         ("down_bw".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<StdPacket>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
@@ -380,7 +379,6 @@ fn test_drophead_queue() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
-            driver: IODriver::Packet,
             client_cores: vec![1],
             server_cores: vec![3],
         },
@@ -408,7 +406,8 @@ fn test_drophead_queue() {
         ("right".to_string(), "down_bw".to_string()),
         ("down_bw".to_string(), "left".to_string()),
     ]);
-    let mut radix: RattanRadix<StdPacket> = RattanRadix::<StdPacket>::new(config).unwrap();
+    let mut radix: RattanRadix<AfPacketDriver> =
+        RattanRadix::<AfPacketDriver>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
@@ -554,7 +553,6 @@ fn test_codel_queue() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
-            driver: IODriver::Packet,
             client_cores: vec![1],
             server_cores: vec![3],
         },
@@ -589,7 +587,7 @@ fn test_codel_queue() {
         ("right".to_string(), "down_bw".to_string()),
         ("down_bw".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<StdPacket>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
@@ -760,7 +758,6 @@ fn test_replay() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
-            driver: IODriver::Packet,
             client_cores: vec![1],
             server_cores: vec![3],
         },
@@ -784,7 +781,7 @@ fn test_replay() {
         ("right".to_string(), "down_bw".to_string()),
         ("down_bw".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<StdPacket>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
     let control_interface = radix
         .build_deivce("up_bw".to_string(), |handle| {
             let _guard = handle.enter();

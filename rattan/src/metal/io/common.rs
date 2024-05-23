@@ -13,26 +13,18 @@ pub enum PacketType {
     _PacketOutgoing = 4,
 }
 
-pub trait InterfaceSender<P>
-where
-    P: Packet,
-{
+pub trait InterfaceSender<P> {
     fn send(&self, packet: P) -> std::io::Result<()>;
 }
 
-pub trait InterfaceReceiver<P>
-where
-    P: Packet,
-{
+pub trait InterfaceReceiver<P> {
     fn receive(&mut self) -> std::io::Result<Option<P>>;
 }
 
-pub trait InterfaceDriver<P>
-where
-    P: Packet,
-{
-    type Sender: InterfaceSender<P>;
-    type Receiver: InterfaceReceiver<P>;
+pub trait InterfaceDriver: Send + 'static {
+    type Packet: Packet + Send;
+    type Sender: InterfaceSender<Self::Packet>;
+    type Receiver: InterfaceReceiver<Self::Packet>;
 
     fn bind_device(device: Arc<VethDevice>) -> Result<Self, MetalError>
     where

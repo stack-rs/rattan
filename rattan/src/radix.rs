@@ -14,10 +14,9 @@ use crate::{
     control::{RattanOp, RattanOpEndpoint, RattanOpResult},
     core::{DeviceFactory, RattanCore},
     devices::{external::VirtualEthernet, Device, Packet},
-    env::{get_std_env, IODriver, StdNetEnv},
+    env::{get_std_env, StdNetEnv},
     error::Error,
-    metal::io::af_xdp::XDPDriver,
-    metal::{io::af_packet::AfPacketDriver, netns::NetNsGuard},
+    metal::{io::common::InterfaceDriver, netns::NetNsGuard},
 };
 
 #[cfg(feature = "http")]
@@ -30,25 +29,31 @@ pub trait Task<R: Send>: FnOnce() -> anyhow::Result<R> + Send {}
 impl<R: Send, T: FnOnce() -> anyhow::Result<R> + Send> Task<R> for T {}
 
 // Manage environment and resources
-pub struct RattanRadix<P>
+pub struct RattanRadix<D>
 where
-    P: Packet + Sync,
+    D: InterfaceDriver + Send,
+    D::Packet: Packet + Send + Sync,
+    D::Sender: Send + Sync,
+    D::Receiver: Send,
 {
     env: StdNetEnv,
     cancel_token: CancellationToken,
 
     rattan_thread_handle: Option<thread::JoinHandle<()>>, // Use option to allow take ownership in drop
     _rattan_runtime: Arc<Runtime>,
-    rattan: RattanCore<P>,
+    rattan: RattanCore<D>,
     #[cfg(feature = "http")]
     http_thread_handle: Option<thread::JoinHandle<anyhow::Result<()>>>,
 }
 
-impl<P> RattanRadix<P>
+impl<D> RattanRadix<D>
 where
-    P: Packet + Sync,
+    D: InterfaceDriver,
+    D::Packet: Packet + Send + Sync,
+    D::Sender: Send + Sync,
+    D::Receiver: Send,
 {
-    pub fn new(config: RattanConfig<P>) -> Result<Self, Error> {
+    pub fn new(config: RattanConfig<D::Packet>) -> Result<Self, Error> {
         info!("New RattanRadix");
         let build_env = || {
             get_std_env(&config.env).map_err(|e| {
@@ -176,19 +181,19 @@ where
             #[cfg(feature = "http")]
             http_thread_handle,
         };
-        radix.init_veth(&config.env.driver)?; // build veth pair at the beginning
+        radix.init_veth()?; // build veth pair at the beginning
         radix.load_core_config(config.core)?;
         Ok(radix)
     }
 
-    pub fn build_deivce<D, F>(
+    pub fn build_deivce<V, F>(
         &mut self,
         id: String,
         builder: F,
-    ) -> Result<Arc<D::ControlInterfaceType>, Error>
+    ) -> Result<Arc<V::ControlInterfaceType>, Error>
     where
-        D: Device<P>,
-        F: DeviceFactory<D>,
+        V: Device<D::Packet>,
+        F: DeviceFactory<V>,
     {
         self.rattan.build_deivce(id, builder)
     }
@@ -197,49 +202,28 @@ where
         self.rattan.link_device(rx_id, tx_id);
     }
 
-    pub fn init_veth(&mut self, driver: &IODriver) -> Result<(), Error> {
+    pub fn init_veth(&mut self) -> Result<(), Error> {
         let rattan_ns = self.env.rattan_ns.clone();
         let veth = self.env.left_pair.right.clone();
-        match driver {
-            IODriver::Packet => {
-                self.build_deivce("left".to_string(), move |rt| {
-                    let _guard = rt.enter();
-                    let _ns_guard = NetNsGuard::new(rattan_ns);
-                    VirtualEthernet::<P, AfPacketDriver>::new(veth)
-                })?;
-            }
-            IODriver::Xdp => {
-                self.build_deivce("left".to_string(), move |rt| {
-                    let _guard = rt.enter();
-                    let _ns_guard = NetNsGuard::new(rattan_ns);
-                    VirtualEthernet::<P, XDPDriver>::new(veth)
-                })?;
-            }
-        }
+        self.build_deivce("left".to_string(), move |rt| {
+            let _guard = rt.enter();
+            let _ns_guard = NetNsGuard::new(rattan_ns);
+            VirtualEthernet::<D>::new(veth)
+        })?;
 
         let rattan_ns = self.env.rattan_ns.clone();
         let veth = self.env.right_pair.left.clone();
-        match driver {
-            IODriver::Packet => {
-                self.build_deivce("right".to_string(), move |rt| {
-                    let _guard = rt.enter();
-                    let _ns_guard = NetNsGuard::new(rattan_ns);
-                    VirtualEthernet::<P, AfPacketDriver>::new(veth)
-                })?;
-            }
-            IODriver::Xdp => {
-                self.build_deivce("right".to_string(), move |rt| {
-                    let _guard = rt.enter();
-                    let _ns_guard = NetNsGuard::new(rattan_ns);
-                    VirtualEthernet::<P, XDPDriver>::new(veth)
-                })?;
-            }
-        }
+
+        self.build_deivce("right".to_string(), move |rt| {
+            let _guard = rt.enter();
+            let _ns_guard = NetNsGuard::new(rattan_ns);
+            VirtualEthernet::<D>::new(veth)
+        })?;
 
         Ok(())
     }
 
-    pub fn load_core_config(&mut self, config: RattanCoreConfig<P>) -> Result<(), Error> {
+    pub fn load_core_config(&mut self, config: RattanCoreConfig<D::Packet>) -> Result<(), Error> {
         // build devices
         for (id, device_config) in config.devices {
             match device_config {
@@ -373,9 +357,12 @@ where
     }
 }
 
-impl<P> Drop for RattanRadix<P>
+impl<D> Drop for RattanRadix<D>
 where
-    P: Packet + Sync,
+    D: InterfaceDriver + Send,
+    D::Packet: Packet + Send + Sync,
+    D::Sender: Send + Sync,
+    D::Receiver: Send,
 {
     fn drop(&mut self) {
         debug!("Cancelling RattanRadix");
@@ -384,7 +371,7 @@ where
         {
             debug!("Wait for http thread to finish");
             if let Some(http_thread_handle) = self.http_thread_handle.take() {
-                if let Err(_) = http_thread_handle.join().unwrap() {
+                if http_thread_handle.join().unwrap().is_err() {
                     error!("HTTP thread exited due to error");
                 }
             }

@@ -3,7 +3,8 @@
 use rattan::config::{DelayDeviceBuildConfig, DeviceBuildConfig, RattanConfig};
 use rattan::control::RattanOp;
 use rattan::devices::{delay::DelayDeviceConfig, StdPacket};
-use rattan::env::{IODriver, StdNetEnvConfig, StdNetEnvMode};
+use rattan::env::{StdNetEnvConfig, StdNetEnvMode};
+use rattan::metal::io::af_packet::AfPacketDriver;
 use rattan::radix::RattanRadix;
 use regex::Regex;
 use std::collections::HashMap;
@@ -16,7 +17,6 @@ fn test_delay() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
-            driver: IODriver::Packet,
             client_cores: vec![1],
             server_cores: vec![3],
         },
@@ -36,7 +36,7 @@ fn test_delay() {
         ("right".to_string(), "down_delay".to_string()),
         ("down_delay".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<StdPacket>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 

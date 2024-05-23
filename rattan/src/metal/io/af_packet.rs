@@ -10,7 +10,7 @@ use nix::{
 };
 use tracing::{debug, error, trace, warn};
 
-use crate::devices::Packet;
+use crate::devices::{Packet, StdPacket};
 
 use super::common::PacketType;
 use crate::metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender};
@@ -142,12 +142,11 @@ pub struct AfPacketDriver {
     _device: Arc<VethDevice>,
 }
 
-impl<P> InterfaceDriver<P> for AfPacketDriver
-where
-    P: Packet,
-{
+impl InterfaceDriver for AfPacketDriver {
+    type Packet = StdPacket;
     type Sender = AfPacketSender;
     type Receiver = AfPacketReceiver;
+
     fn bind_device(device: Arc<VethDevice>) -> Result<Self, MetalError> {
         debug!(?device, "bind device to AF_PACKET driver");
         let mut times = 3;

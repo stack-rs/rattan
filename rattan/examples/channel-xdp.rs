@@ -4,12 +4,9 @@ use rattan::{
         BwDeviceBuildConfig, DelayDeviceBuildConfig, DeviceBuildConfig, LossDeviceBuildConfig,
         RattanConfig,
     },
-    devices::{
-        bandwidth::{queue::InfiniteQueueConfig, BwDeviceConfig},
-        StdPacket,
-    },
+    devices::bandwidth::{queue::InfiniteQueueConfig, BwDeviceConfig},
     env::{StdNetEnvConfig, StdNetEnvMode},
-    metal::io::af_packet::AfPacketDriver,
+    metal::io::af_xdp::{XDPDriver, XDPPacket},
     radix::RattanRadix,
 };
 use regex::Regex;
@@ -25,7 +22,7 @@ struct Cli {
 }
 
 fn main() {
-    let mut config = RattanConfig::<StdPacket> {
+    let mut config = RattanConfig::<XDPPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
@@ -79,7 +76,7 @@ fn main() {
 
     config.core.resource.cpu = Some(vec![2]);
 
-    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
+    let mut radix = RattanRadix::<XDPDriver>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 

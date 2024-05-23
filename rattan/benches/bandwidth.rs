@@ -7,15 +7,15 @@ use rattan::{
         bandwidth::{queue::InfiniteQueueConfig, BwDeviceConfig},
         StdPacket,
     },
-    env::{IODriver, StdNetEnvConfig, StdNetEnvMode},
+    env::{StdNetEnvConfig, StdNetEnvMode},
+    metal::io::af_packet::AfPacketDriver,
     radix::RattanRadix,
 };
 
-fn prepare_env() -> RattanRadix<StdPacket> {
+fn prepare_env() -> RattanRadix<AfPacketDriver> {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
-            driver: IODriver::Packet,
             client_cores: vec![1],
             server_cores: vec![3],
         },
@@ -43,13 +43,13 @@ fn prepare_env() -> RattanRadix<StdPacket> {
         ("right".to_string(), "down_bw".to_string()),
         ("down_bw".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<StdPacket>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
     radix
 }
 
-fn run_iperf(radix: &mut RattanRadix<StdPacket>) {
+fn run_iperf(radix: &mut RattanRadix<AfPacketDriver>) {
     let right_handle = radix
         .right_spawn(|| {
             let mut iperf_server = std::process::Command::new("iperf3")

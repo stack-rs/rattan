@@ -9,7 +9,7 @@ use crate::{
 
 /// External devices are all devices not created by Rattan.
 /// Network interfaces, physical or virtual, are examples of external devices.
-use std::{marker::PhantomData, sync::Arc};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 #[cfg(feature = "serde")]
@@ -19,19 +19,19 @@ use tracing::{debug, error, instrument};
 
 use super::{ControlInterface, Egress, Ingress};
 
-pub struct VirtualEthernetIngress<P, D>
+pub struct VirtualEthernetIngress<D>
 where
-    P: Packet + Send + Sync,
-    D: InterfaceDriver<P> + Send + Sync,
+    D: InterfaceDriver,
+    D::Packet: Packet + Send + Sync,
     D::Sender: Send + Sync,
 {
     sender: Arc<D::Sender>,
 }
 
-impl<P, D> Clone for VirtualEthernetIngress<P, D>
+impl<D> Clone for VirtualEthernetIngress<D>
 where
-    P: Packet + Send + Sync,
-    D: InterfaceDriver<P> + Send + Sync,
+    D: InterfaceDriver + Send + Sync,
+    D::Packet: Packet + Send + Sync,
     D::Sender: Send + Sync,
 {
     fn clone(&self) -> Self {
@@ -41,35 +41,34 @@ where
     }
 }
 
-impl<P, D> Ingress<P> for VirtualEthernetIngress<P, D>
+impl<D> Ingress<D::Packet> for VirtualEthernetIngress<D>
 where
-    P: Packet + Send + Sync,
-    D: InterfaceDriver<P> + Send + Sync,
+    D: InterfaceDriver,
+    D::Packet: Packet + Send + Sync,
     D::Sender: Send + Sync,
 {
-    fn enqueue(&self, packet: P) -> Result<(), Error> {
+    fn enqueue(&self, packet: D::Packet) -> Result<(), Error> {
         self.sender.as_ref().send(packet).map_err(|e| e.into())
     }
 }
 
-pub struct VirtualEthernetEgress<P, D>
+pub struct VirtualEthernetEgress<D>
 where
-    P: Packet + Send + Sync,
-    D: InterfaceDriver<P> + Send + Sync,
+    D: InterfaceDriver,
+    D::Packet: Packet + Send + Sync,
 {
     notify: AsyncFd<i32>,
     driver: D,
-    phantom: PhantomData<P>,
 }
 
 #[async_trait]
-impl<P, D> Egress<P> for VirtualEthernetEgress<P, D>
+impl<D> Egress<D::Packet> for VirtualEthernetEgress<D>
 where
-    P: Packet + Send + Sync,
-    D: InterfaceDriver<P> + Send + Sync,
+    D: InterfaceDriver,
     D::Receiver: Send,
+    D::Packet: Packet + Send + Sync,
 {
-    async fn dequeue(&mut self) -> Option<P> {
+    async fn dequeue(&mut self) -> Option<D::Packet> {
         loop {
             let mut _guard = self.notify.readable().await.unwrap();
             match _guard.try_io(|_fd| self.driver.receiver().receive()) {
@@ -98,23 +97,23 @@ impl ControlInterface for VirtualEthernetControlInterface {
     }
 }
 
-pub struct VirtualEthernet<P: Packet, D: InterfaceDriver<P>>
+pub struct VirtualEthernet<D: InterfaceDriver>
 where
-    P: Packet + Send + Sync,
-    D: InterfaceDriver<P> + Send + Sync,
+    D: InterfaceDriver + Send,
+    D::Packet: Packet + Send + Sync,
     D::Sender: Send + Sync,
     D::Receiver: Send,
 {
     _device: Arc<VethDevice>,
-    ingress: Arc<VirtualEthernetIngress<P, D>>,
-    egress: VirtualEthernetEgress<P, D>,
+    ingress: Arc<VirtualEthernetIngress<D>>,
+    egress: VirtualEthernetEgress<D>,
     control_interface: Arc<VirtualEthernetControlInterface>,
 }
 
-impl<P: Packet, D: InterfaceDriver<P>> VirtualEthernet<P, D>
+impl<D: InterfaceDriver> VirtualEthernet<D>
 where
-    P: Packet + Send + Sync,
-    D: InterfaceDriver<P> + Send + Sync,
+    D: InterfaceDriver + Send,
+    D::Packet: Packet + Send + Sync,
     D::Sender: Send + Sync,
     D::Receiver: Send,
 {
@@ -127,11 +126,7 @@ where
         Ok(Self {
             _device: device,
             ingress: Arc::new(VirtualEthernetIngress { sender: sender_end }),
-            egress: VirtualEthernetEgress {
-                notify,
-                driver,
-                phantom: PhantomData,
-            },
+            egress: VirtualEthernetEgress { notify, driver },
             control_interface: Arc::new(VirtualEthernetControlInterface {
                 _config: VirtualEthernetConfig {},
             }),
@@ -139,15 +134,15 @@ where
     }
 }
 
-impl<P, D> Device<P> for VirtualEthernet<P, D>
+impl<D> Device<D::Packet> for VirtualEthernet<D>
 where
-    P: Packet + Send + Sync + 'static,
-    D: InterfaceDriver<P> + Send + Sync + 'static,
+    D: InterfaceDriver + Send + 'static,
+    D::Packet: Packet + Send + Sync + 'static,
     D::Sender: Send + Sync,
     D::Receiver: Send,
 {
-    type IngressType = VirtualEthernetIngress<P, D>;
-    type EgressType = VirtualEthernetEgress<P, D>;
+    type IngressType = VirtualEthernetIngress<D>;
+    type EgressType = VirtualEthernetEgress<D>;
     type ControlInterfaceType = VirtualEthernetControlInterface;
 
     fn sender(&self) -> Arc<Self::IngressType> {

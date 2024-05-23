@@ -13,8 +13,12 @@ pub mod external;
 pub mod loss;
 
 pub trait Packet: Debug + 'static + Send {
-    fn empty(maximum: usize) -> Self;
+    type PacketGenerator;
+    fn empty(maximum: usize, generator: &Self::PacketGenerator) -> Self;
+
+    // fn empty(maximum: usize) -> Self;
     fn from_raw_buffer(buf: &[u8]) -> Self;
+
     // Raw buffer length
     fn length(&self) -> usize;
     // Link layer length, i.e. the length of the Ethernet frame (not including the preamble, SFD, FCS and IPG)
@@ -37,7 +41,9 @@ pub struct StdPacket {
 }
 
 impl Packet for StdPacket {
-    fn empty(maximum: usize) -> Self {
+    type PacketGenerator = ();
+
+    fn empty(maximum: usize, _generator: &Self::PacketGenerator) -> Self {
         Self {
             buf: Vec::with_capacity(maximum),
             timestamp: Instant::now(),

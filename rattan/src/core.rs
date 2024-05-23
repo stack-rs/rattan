@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fmt::Debug,
+    io::ErrorKind,
     sync::{
         atomic::{AtomicU8, Ordering},
         Arc,
@@ -19,6 +20,7 @@ use crate::{
     control::{RattanController, RattanNotify, RattanOp, RattanOpEndpoint, RattanOpResult},
     devices::{Device, Egress, Ingress, Packet},
     error::{Error, RattanCoreError},
+    metal::io::common::InterfaceDriver,
 };
 
 #[cfg(feature = "packet-dump")]
@@ -58,9 +60,10 @@ impl From<u8> for RattanState {
     }
 }
 
-pub struct RattanCore<P>
+pub struct RattanCore<D>
 where
-    P: Packet,
+    D: InterfaceDriver,
+    D::Packet: Packet + 'static,
 {
     // Env
     runtime: Arc<Runtime>,
@@ -69,8 +72,8 @@ where
     op_endpoint: RattanOpEndpoint,
 
     // Build
-    sender: HashMap<String, Arc<dyn Ingress<P>>>,
-    receiver: HashMap<String, Box<dyn Egress<P>>>,
+    sender: HashMap<String, Arc<dyn Ingress<D::Packet>>>,
+    receiver: HashMap<String, Box<dyn Egress<D::Packet>>>,
     router: HashMap<String, String>,
 
     // Runtime
@@ -85,9 +88,10 @@ where
     pcap_writer: Arc<Mutex<PcapNgWriter<Vec<u8>>>>,
 }
 
-impl<P> RattanCore<P>
+impl<D> RattanCore<D>
 where
-    P: Packet + 'static,
+    D: InterfaceDriver,
+    D::Packet: Packet + 'static,
 {
     pub fn new(
         runtime: Arc<Runtime>,
@@ -134,14 +138,14 @@ where
         self.runtime.block_on(self.op_endpoint.exec(op))
     }
 
-    pub fn build_deivce<D, F>(
+    pub fn build_deivce<V, F>(
         &mut self,
         id: String,
         builder: F,
-    ) -> Result<Arc<D::ControlInterfaceType>, Error>
+    ) -> Result<Arc<V::ControlInterfaceType>, Error>
     where
-        D: Device<P>,
-        F: DeviceFactory<D>,
+        V: Device<D::Packet>,
+        F: DeviceFactory<V>,
     {
         info!("Build device \"{}\"", id);
         let device = builder(self.runtime.handle())?;
@@ -158,7 +162,7 @@ where
     fn register_device(
         &mut self,
         id: String,
-        device: impl Device<P>,
+        device: impl Device<D::Packet>,
     ) -> Result<(), RattanCoreError> {
         match self.sender.entry(id.clone()) {
             std::collections::hash_map::Entry::Occupied(_) => {
@@ -303,6 +307,9 @@ where
                                             info!(rx_id, tx_id, "Core router exited since the channel is closed");
                                             return
                                         }
+                                        Err(Error::IoError(e)) if e.kind() == ErrorKind::WouldBlock => {
+                                            debug!(rx_id, tx_id, "Drop packet since the system is busy");
+                                        }
                                         Err(e) => {
                                             error!(rx_id, tx_id, "Error forwarding packet: {:?}", e);
                                             panic!("Error forwarding packet: {:?}", e);
@@ -364,9 +371,10 @@ where
     }
 }
 
-impl<P> Drop for RattanCore<P>
+impl<D> Drop for RattanCore<D>
 where
-    P: Packet,
+    D: InterfaceDriver,
+    D::Packet: Packet + 'static,
 {
     fn drop(&mut self) {
         self.cancel_rattan();
