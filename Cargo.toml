@@ -1,3 +1,7 @@
 [workspace]
 members = ['rattan', 'rattan-cli']
 resolver = "2"
+
+# required for cargo flamegraph
+[profile.release]
+debug = true
