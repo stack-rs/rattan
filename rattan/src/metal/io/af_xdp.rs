@@ -46,6 +46,8 @@ impl InterfaceSender<XDPPacket> for XDPSender {
         self.xdp_socket.lock().unwrap().send(packet.buf).unwrap();
         Ok(())
     }
+
+    fn send_bulk(&self, packets: &[XDPPacket]) -> std::io::Result<usize> {}
 }
 
 pub struct XDPReceiver {
