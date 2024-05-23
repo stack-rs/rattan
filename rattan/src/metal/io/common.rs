@@ -15,12 +15,16 @@ pub enum PacketType {
 
 pub trait InterfaceSender<P> {
     fn send(&self, packet: P) -> std::io::Result<()>;
-    fn send_bulk(&self, packets: &[P]) -> std::io::Result<usize>;
+    fn send_bulk<Iter, T>(&self, packets: Iter) -> std::io::Result<usize>
+    where
+        T: Into<P>,
+        Iter: IntoIterator<Item = T>,
+        Iter::IntoIter: ExactSizeIterator;
 }
 
 pub trait InterfaceReceiver<P> {
     fn receive(&mut self) -> std::io::Result<Option<P>>;
-    fn receive_bulk(&mut self, packets: &mut [P]) -> std::io::Result<usize>;
+    fn receive_bulk(&mut self) -> std::io::Result<Vec<P>>;
 }
 
 pub trait InterfaceDriver: Send + 'static {

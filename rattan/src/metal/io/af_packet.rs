@@ -3,14 +3,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::devices::{Packet, StdPacket};
 use libc::{c_void, size_t, sockaddr, sockaddr_ll, socklen_t};
 use nix::{
     errno::Errno,
     sys::socket::{AddressFamily, SockFlag, SockType},
 };
 use tracing::{debug, error, trace, warn};
-
-use crate::devices::{Packet, StdPacket};
 
 use super::common::PacketType;
 use crate::metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender};
@@ -21,11 +20,8 @@ pub struct AfPacketSender {
     device: Arc<VethDevice>,
 }
 
-impl<P> InterfaceSender<P> for AfPacketSender
-where
-    P: Packet,
-{
-    fn send(&self, mut packet: P) -> std::io::Result<()> {
+impl InterfaceSender<StdPacket> for AfPacketSender {
+    fn send(&self, mut packet: StdPacket) -> std::io::Result<()> {
         let peer_address = { self.device.peer().mac_addr };
 
         let mut target_interface = libc::sockaddr_ll {
@@ -70,17 +66,28 @@ where
         }
         Ok(())
     }
+
+    fn send_bulk<Iter, T>(&self, packets: Iter) -> std::io::Result<usize>
+    where
+        T: Into<StdPacket>,
+        Iter: IntoIterator<Item = T>,
+        Iter::IntoIter: ExactSizeIterator,
+    {
+        let mut count = 0;
+        for packet in packets {
+            self.send(packet.into())?;
+            count += 1;
+        }
+        Ok(count)
+    }
 }
 
 pub struct AfPacketReceiver {
     raw_fd: i32,
 }
 
-impl<P> InterfaceReceiver<P> for AfPacketReceiver
-where
-    P: Packet,
-{
-    fn receive(&mut self) -> std::io::Result<Option<P>> {
+impl InterfaceReceiver<StdPacket> for AfPacketReceiver {
+    fn receive(&mut self) -> std::io::Result<Option<StdPacket>> {
         let mut sockaddr = mem::MaybeUninit::<libc::sockaddr_ll>::uninit();
         let mut len = mem::size_of_val(&sockaddr) as socklen_t;
 
@@ -130,7 +137,15 @@ where
                 addr_ll.sll_pkttype, addr_ll.sll_ifindex,
                 addr_ll.sll_addr[0], addr_ll.sll_addr[1], addr_ll.sll_addr[2], addr_ll.sll_addr[3], addr_ll.sll_addr[4], addr_ll.sll_addr[5]
             );
-            Ok(Some(P::from_raw_buffer(&buf[0..ret])))
+            Ok(Some(StdPacket::from_raw_buffer(&buf[0..ret])))
+        }
+    }
+
+    fn receive_bulk(&mut self) -> std::io::Result<Vec<StdPacket>> {
+        if let Some(x) = self.receive()? {
+            Ok(vec![x])
+        } else {
+            return Ok(vec![]);
         }
     }
 }

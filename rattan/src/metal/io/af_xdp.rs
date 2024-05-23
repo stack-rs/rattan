@@ -1,4 +1,5 @@
 use std::{
+    io::ErrorKind,
     os::fd::{AsFd, AsRawFd},
     sync::{Arc, Mutex},
 };
@@ -47,7 +48,36 @@ impl InterfaceSender<XDPPacket> for XDPSender {
         Ok(())
     }
 
-    fn send_bulk(&self, packets: &[XDPPacket]) -> std::io::Result<usize> {}
+    fn send_bulk<Iter, T>(&self, packets: Iter) -> std::io::Result<usize>
+    where
+        T: Into<XDPPacket>,
+        Iter: IntoIterator<Item = T>,
+        Iter::IntoIter: ExactSizeIterator,
+    {
+        let packets = packets.into_iter().map(|packet| {
+            let mut packet: XDPPacket = packet.into();
+            let mut ether = packet.ether_hdr().unwrap();
+            ether.source.copy_from_slice(&self.device.mac_addr.bytes());
+            ether
+                .destination
+                .copy_from_slice(&self.device.peer().mac_addr.bytes());
+
+            let buf = packet.as_raw_buffer();
+            ether.write_to_slice(buf).unwrap();
+            packet.buf
+        });
+
+        let len = packets.len();
+
+        let remaining = self
+            .xdp_socket
+            .lock()
+            .unwrap()
+            .send_bulk(packets)
+            .map_err(|_| std::io::Error::new(ErrorKind::Other, "camellia error"))?;
+
+        return Ok(len - remaining.len());
+    }
 }
 
 pub struct XDPReceiver {
@@ -60,9 +90,25 @@ impl InterfaceReceiver<XDPPacket> for XDPReceiver {
             camellia::umem::frame::RxFrame<Arc<Mutex<camellia::umem::shared::SharedAccessor>>>,
         > = self.xdp_socket.lock().unwrap().recv().unwrap();
         if let Some(p) = packet {
-            return Ok(Some(XDPPacket::from_frame(p.into())));
+            Ok(Some(XDPPacket::from_frame(p.into())))
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "no packet",
+            ))
         }
-        Ok(None)
+    }
+
+    fn receive_bulk(&mut self) -> std::io::Result<Vec<XDPPacket>> {
+        let packets: Vec<
+            camellia::umem::frame::RxFrame<Arc<Mutex<camellia::umem::shared::SharedAccessor>>>,
+        > = self.xdp_socket.lock().unwrap().recv_bulk(32).unwrap();
+
+        Ok(packets
+            .into_iter()
+            .map(|x| AppFrame(x.0))
+            .map(XDPPacket::from_frame)
+            .collect())
     }
 }
 
