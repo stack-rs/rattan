@@ -26,4 +26,5 @@ tmp/
 
 # Ignore flamegraph artifacts
 perf.data
+perf.data.old
 flamegraph.svg

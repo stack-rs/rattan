@@ -89,6 +89,7 @@ where
 
             // TODO(enhancement): need to handle panic due to affinity setting
             let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(running_core.len())
                 .enable_all()
                 .on_thread_start(move || {
                     let mut cpuset = CpuSet::new();
