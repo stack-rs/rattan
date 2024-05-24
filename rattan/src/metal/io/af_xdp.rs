@@ -1,9 +1,3 @@
-use std::{
-    io::ErrorKind,
-    os::fd::{AsFd, AsRawFd},
-    sync::{Arc, Mutex},
-};
-
 use camellia::{
     socket::af_xdp::{XskSocket, XskSocketBuilder},
     umem::{
@@ -14,7 +8,16 @@ use camellia::{
 };
 use etherparse::{Ethernet2Header, Ipv4Header};
 use once_cell::sync::Lazy;
-use tokio::time::Instant;
+use std::time::Duration;
+use std::{
+    io::ErrorKind,
+    os::fd::{AsFd, AsRawFd},
+    sync::{Arc, Mutex},
+};
+use tokio::{
+    runtime::Handle,
+    time::{sleep, Instant},
+};
 use tracing::debug;
 
 static UMEM: Lazy<Arc<Mutex<UMem>>> = Lazy::new(|| {
@@ -31,10 +34,27 @@ type XDPSocketRef = Arc<Mutex<XskSocket<SharedAccessorRef>>>;
 pub struct XDPSender {
     xdp_socket: XDPSocketRef,
     device: Arc<VethDevice>,
+    buffer: Vec<XDPPacket>,
 }
 
-impl InterfaceSender<XDPPacket> for XDPSender {
-    fn send(&self, mut packet: XDPPacket) -> std::io::Result<()> {
+type XDPSenderRef = Mutex<XDPSender>;
+
+impl XDPSender {
+    pub fn new(xdp_socket: XDPSocketRef, device: Arc<VethDevice>) -> XDPSender {
+        XDPSender {
+            xdp_socket,
+            device,
+            buffer: vec![],
+        }
+    }
+
+    pub fn flush_buffer(&mut self) {
+        let mut buffer = vec![];
+        std::mem::swap(&mut buffer, &mut self.buffer);
+        let _ = self.send_bulk(buffer.into_iter());
+    }
+
+    fn send(&mut self, mut packet: XDPPacket) -> std::io::Result<()> {
         let mut ether = packet.ether_hdr().unwrap();
         ether.source.copy_from_slice(&self.device.mac_addr.bytes());
         ether
@@ -44,7 +64,12 @@ impl InterfaceSender<XDPPacket> for XDPSender {
         let buf = packet.as_raw_buffer();
         ether.write_to_slice(buf).unwrap();
 
-        self.xdp_socket.lock().unwrap().send(packet.buf).unwrap();
+        if self.buffer.len() > 32 {
+            self.flush_buffer();
+        } else {
+            self.buffer.push(packet);
+        }
+
         Ok(())
     }
 
@@ -80,29 +105,48 @@ impl InterfaceSender<XDPPacket> for XDPSender {
     }
 }
 
+impl InterfaceSender<XDPPacket> for XDPSenderRef {
+    fn send(&self, packet: XDPPacket) -> std::io::Result<()> {
+        self.lock().unwrap().send(packet)
+    }
+
+    fn send_bulk<Iter, T>(&self, packets: Iter) -> std::io::Result<usize>
+    where
+        T: Into<XDPPacket>,
+        Iter: IntoIterator<Item = T>,
+        Iter::IntoIter: ExactSizeIterator,
+    {
+        self.lock().unwrap().send_bulk(packets)
+    }
+}
+
 pub struct XDPReceiver {
     xdp_socket: Arc<Mutex<XskSocket<SharedAccessorRef>>>,
+    buffer: Vec<XDPPacket>,
 }
 
 impl InterfaceReceiver<XDPPacket> for XDPReceiver {
     fn receive(&mut self) -> std::io::Result<Option<XDPPacket>> {
-        let packet: Option<
-            camellia::umem::frame::RxFrame<Arc<Mutex<camellia::umem::shared::SharedAccessor>>>,
-        > = self.xdp_socket.lock().unwrap().recv().unwrap();
-        if let Some(p) = packet {
-            Ok(Some(XDPPacket::from_frame(p.into())))
-        } else {
+        if let Some(p) = self.buffer.pop() {
+            return Ok(Some(p));
+        }
+        let packet = self.receive_bulk()?;
+        self.buffer.extend(packet);
+
+        if self.buffer.len() == 0 {
             Err(std::io::Error::new(
                 std::io::ErrorKind::WouldBlock,
                 "no packet",
             ))
+        } else {
+            Ok(self.buffer.pop())
         }
     }
 
     fn receive_bulk(&mut self) -> std::io::Result<Vec<XDPPacket>> {
         let packets: Vec<
             camellia::umem::frame::RxFrame<Arc<Mutex<camellia::umem::shared::SharedAccessor>>>,
-        > = self.xdp_socket.lock().unwrap().recv_bulk(32).unwrap();
+        > = self.xdp_socket.lock().unwrap().recv_bulk(64).unwrap();
 
         Ok(packets
             .into_iter()
@@ -113,15 +157,24 @@ impl InterfaceReceiver<XDPPacket> for XDPReceiver {
 }
 
 pub struct XDPDriver {
-    sender: Arc<XDPSender>,
+    sender: Arc<XDPSenderRef>,
     receiver: XDPReceiver,
     xdp_socket: Arc<Mutex<XskSocket<SharedAccessorRef>>>,
     _device: Arc<VethDevice>,
 }
 
+impl XDPDriver {
+    async fn flush_buffer(sender: Arc<XDPSenderRef>) {
+        loop {
+            sleep(Duration::from_millis(10)).await;
+            sender.lock().unwrap().flush_buffer();
+        }
+    }
+}
+
 impl InterfaceDriver for XDPDriver {
     type Packet = XDPPacket;
-    type Sender = XDPSender;
+    type Sender = XDPSenderRef;
     type Receiver = XDPReceiver;
 
     fn bind_device(device: Arc<VethDevice>) -> Result<Self, crate::metal::error::MetalError>
@@ -139,17 +192,23 @@ impl InterfaceDriver for XDPDriver {
                 .build_shared()?,
         ));
 
-        Ok(XDPDriver {
-            sender: Arc::new(XDPSender {
+        let driver = XDPDriver {
+            sender: Arc::new(Mutex::new(XDPSender {
                 xdp_socket: xdp_socket.clone(),
                 device: device.clone(),
-            }),
+                buffer: vec![],
+            })),
             receiver: XDPReceiver {
                 xdp_socket: xdp_socket.clone(),
+                buffer: vec![],
             },
             xdp_socket,
             _device: device,
-        })
+        };
+
+        tokio::spawn(XDPDriver::flush_buffer(driver.sender.clone()));
+
+        Ok(driver)
     }
 
     fn raw_fd(&self) -> i32 {
