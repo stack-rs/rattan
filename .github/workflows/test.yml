@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodule: recursive
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get install -y iproute2 ethtool iputils-ping iperf3 datamash bc
       - name: Install nextest

@@ -7,7 +7,13 @@ High Performance Modular Transport Channel Emulator Ready for Post-Gigabit Era.
 
 ## Development
 
-## Flamegraph
+### Example
+```shell
+cargo run --example channel --release # AF_PACKET version
+cargo run --example channel-xdp --release --features="camellia" # AF_XDP version
+```
+
+### Flamegraph
 
 ```shell
 cargo install flamegraph
