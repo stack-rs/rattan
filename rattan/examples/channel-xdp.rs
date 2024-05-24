@@ -25,7 +25,7 @@ fn main() {
     let mut config = RattanConfig::<XDPPacket> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
-            client_cores: vec![1],
+            client_cores: vec![0],
             server_cores: vec![3],
         },
         ..Default::default()
@@ -74,7 +74,7 @@ fn main() {
         ("down_loss".to_string(), "left".to_string()),
     ]);
 
-    config.core.resource.cpu = Some(vec![2]);
+    config.core.resource.cpu = Some(vec![1, 2]);
 
     let mut radix = RattanRadix::<XDPDriver>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
@@ -85,7 +85,7 @@ fn main() {
         let right_handle = radix
             .right_spawn(|| {
                 let mut iperf_server = std::process::Command::new("taskset")
-                    .args(["-c", "1", "iperf3", "-s", "-p", "9000", "-1"])
+                    .args(["-c", "0", "iperf3", "-s", "-p", "9000", "-1"])
                     .stdout(std::process::Stdio::null())
                     .spawn()
                     .unwrap();
