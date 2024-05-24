@@ -1,3 +1,4 @@
+#[cfg(feature = "camellia")]
 use camellia::error::CamelliaError;
 
 #[derive(Debug, thiserror::Error)]
@@ -6,7 +7,8 @@ pub enum MetalError {
     SystemError(#[from] nix::errno::Errno),
     #[error("Encounter IO error, {0}")]
     IoError(#[from] std::io::Error),
-    #[error("Encounter XDP error, {0}")]
+    #[cfg_attr(feature = "camellia", error("Encounter XDP error, {0}"))]
+    #[cfg(feature = "camellia")]
     XDPError(#[from] CamelliaError),
     #[error("Encounter Rtnetlink error, {0}")]
     RtnetlinkError(#[from] rtnetlink::Error),
