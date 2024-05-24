@@ -1,5 +1,5 @@
 <domain type='kvm'>
-    <name>mantic-6.6</name>
+    <name>noble-6.6</name>
     <uuid>548a2c5f-0ac5-48dc-90c2-962a0c125c94</uuid>
     <os>
         <type>hvm</type>
@@ -17,7 +17,7 @@
     <devices>
         <disk type='volume' device='disk'>
             <driver name='qemu' type='qcow2'/>
-            <source pool='default' volume='mantic-6.6'/>
+            <source pool='default' volume='noble-6.6'/>
             <target dev='hda'/>
         </disk>
         <serial type='pty'>

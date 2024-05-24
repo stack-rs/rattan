@@ -8,7 +8,7 @@ variable "base_images" {
   default = {
     "focal" = "https://cloud-images.ubuntu.com/releases/focal/release-20230908/ubuntu-20.04-server-cloudimg-amd64-disk-kvm.img"
     "jammy" = "https://cloud-images.ubuntu.com/releases/22.04/release-20230914/ubuntu-22.04-server-cloudimg-amd64-disk-kvm.img"
-    "mantic" = "https://cloud-images.ubuntu.com/releases/mantic/release-20240209/ubuntu-23.10-server-cloudimg-amd64.img"
+    "noble" = "https://cloud-images.ubuntu.com/noble/20240521/noble-server-cloudimg-amd64.img"
   }
 }
 
@@ -17,7 +17,7 @@ variable "base_images_checksum" {
   default = {
     "focal" = "9dfe9ba2f0c16fc7b6e0aa36dda6f201fdd2e64985980aad892115d902545c73"
     "jammy" = "c5eed826009c9f671bc5f7c9d5d63861aa2afe91aeff1c0d3a4cb5b28b2e35d6"
-    "mantic" = "2f9d9925e4784e582e34b108c94e6ffe07323c703185bab315ee57e0fc40f67b"
+    "noble" = "3d44c2029bdcda95538bff0db1eed393f5a115ead27f8c986ae335a7b5398c84"
   }
 }
 

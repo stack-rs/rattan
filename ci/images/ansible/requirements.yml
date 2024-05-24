@@ -2,3 +2,6 @@
 roles:
   -  geerlingguy.docker
   -  geerlingguy.pip
+collections:
+  - name: ansible.posix
+  - name: community.docker
