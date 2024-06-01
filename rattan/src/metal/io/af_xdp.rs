@@ -10,6 +10,7 @@ use etherparse::{Ethernet2Header, Ipv4Header};
 use once_cell::sync::Lazy;
 use std::time::Duration;
 use std::{
+    collections::VecDeque,
     io::ErrorKind,
     os::fd::{AsFd, AsRawFd},
     sync::Arc,
@@ -71,12 +72,12 @@ impl InterfaceSender<XDPPacket> for XDPSender {
 
 pub struct XDPReceiver {
     xdp_socket: Arc<Mutex<XskSocket<SharedAccessorRef>>>,
-    buffer: Vec<XDPPacket>,
+    buffer: VecDeque<XDPPacket>,
 }
 
 impl InterfaceReceiver<XDPPacket> for XDPReceiver {
     fn receive(&mut self) -> std::io::Result<Option<XDPPacket>> {
-        if let Some(p) = self.buffer.pop() {
+        if let Some(p) = self.buffer.pop_front() {
             return Ok(Some(p));
         }
         let packet = self.receive_bulk()?;
@@ -88,7 +89,7 @@ impl InterfaceReceiver<XDPPacket> for XDPReceiver {
                 "no packet",
             ))
         } else {
-            Ok(self.buffer.pop())
+            Ok(self.buffer.pop_front())
         }
     }
 
@@ -218,7 +219,7 @@ impl InterfaceDriver for XDPDriver {
             sender: Arc::new(XDPSender { sender }),
             receiver: XDPReceiver {
                 xdp_socket: xdp_socket.clone(),
-                buffer: vec![],
+                buffer: vec![].into(),
             },
             xdp_socket,
         })
