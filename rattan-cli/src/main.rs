@@ -1,6 +1,10 @@
 use std::process::Stdio;
 
 use clap::{Parser, ValueEnum};
+use figment::{
+    providers::{Env, Format, Toml},
+    Figment,
+};
 use paste::paste;
 use rattan::config::{
     BwDeviceBuildConfig, BwReplayCLIConfig, BwReplayDeviceBuildConfig, DelayDeviceBuildConfig,
@@ -232,10 +236,11 @@ fn main() -> anyhow::Result<()> {
     let config = match opts.config {
         Some(config_file) => {
             info!("Loading config from {}", config_file);
-            let content = config::Config::builder()
-                .add_source(config::File::with_name(&config_file))
-                .build()?;
-            let config: RattanConfig<StdPacket> = content.try_deserialize()?;
+            let config: RattanConfig<StdPacket> = Figment::new()
+                .merge(Toml::file(&config_file))
+                .merge(Env::prefixed("RATTAN_"))
+                .extract()?;
+
             config
         }
         None => {
