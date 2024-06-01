@@ -179,7 +179,7 @@ where
         self.build_deivce("left".to_string(), move |rt| {
             let _guard = rt.enter();
             let _ns_guard = NetNsGuard::new(rattan_ns);
-            VirtualEthernet::<P, AfPacketDriver>::new(veth)
+            VirtualEthernet::<P, AfPacketDriver>::new(veth, "left".to_string())
         })?;
 
         let rattan_ns = self.env.rattan_ns.clone();
@@ -187,7 +187,7 @@ where
         self.build_deivce("right".to_string(), move |rt| {
             let _guard = rt.enter();
             let _ns_guard = NetNsGuard::new(rattan_ns);
-            VirtualEthernet::<P, AfPacketDriver>::new(veth)
+            VirtualEthernet::<P, AfPacketDriver>::new(veth, "right".to_string())
         })?;
 
         Ok(())
