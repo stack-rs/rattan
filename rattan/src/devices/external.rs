@@ -25,6 +25,7 @@ where
     D::Sender: Send + Sync,
 {
     sender: Arc<D::Sender>,
+    id: Arc<String>,
 }
 
 impl<P, D> Clone for VirtualEthernetIngress<P, D>
@@ -36,6 +37,7 @@ where
     fn clone(&self) -> Self {
         Self {
             sender: self.sender.clone(),
+            id: self.id.clone(),
         }
     }
 }
@@ -47,6 +49,8 @@ where
     D::Sender: Send + Sync,
 {
     fn enqueue(&self, packet: P) -> Result<(), Error> {
+        let ts = get_clock_ns();
+        tracing::info!(target: "veth::ingress::packet", "At {} veth {} ingress enqueue pkt length {}", ts, self.id, packet.length());
         self.sender.as_ref().send(packet).map_err(|e| e.into())
     }
 }
@@ -59,6 +63,7 @@ where
     notify: AsyncFd<i32>,
     driver: D,
     phantom: PhantomData<P>,
+    id: String,
 }
 
 #[async_trait]
@@ -73,13 +78,25 @@ where
             let mut _guard = self.notify.readable().await.unwrap();
             match _guard.try_io(|_fd| self.driver.receiver().receive()) {
                 Ok(packet) => match packet {
-                    Ok(p) => return p,
+                    Ok(p) => {
+                        if let Some(ref p) = p {
+                            let ts = get_clock_ns();
+                            tracing::info!(target: "veth::egress::packet", "At {} veth {} egress dequeue pkt length {}", ts, self.id, p.length());
+                        }
+                        return p;
+                    }
                     Err(e) => error!("recv error: {}", e),
                 },
                 Err(_would_block) => continue,
             }
         }
     }
+}
+
+fn get_clock_ns() -> i64 {
+    nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC)
+        .map(|ts| ts.tv_sec() * 1_000_000_000 + ts.tv_nsec())
+        .unwrap_or(0)
 }
 
 #[cfg_attr(feature = "serde", derive(Deserialize))]
@@ -118,18 +135,22 @@ where
     D::Receiver: Send,
 {
     #[instrument(skip_all, name="VirtualEthernet", fields(name = device.name))]
-    pub fn new(device: Arc<VethDevice>) -> Result<Self, Error> {
+    pub fn new(device: Arc<VethDevice>, id: String) -> Result<Self, Error> {
         debug!("New VirtualEthernet");
         let driver = D::bind_device(device.clone())?;
         let notify = AsyncFd::new(driver.raw_fd())?;
         let sender_end = driver.sender();
         Ok(Self {
             _device: device,
-            ingress: Arc::new(VirtualEthernetIngress { sender: sender_end }),
+            ingress: Arc::new(VirtualEthernetIngress {
+                sender: sender_end,
+                id: Arc::new(id.clone()),
+            }),
             egress: VirtualEthernetEgress {
                 notify,
                 driver,
                 phantom: PhantomData,
+                id,
             },
             control_interface: Arc::new(VirtualEthernetControlInterface {
                 _config: VirtualEthernetConfig {},

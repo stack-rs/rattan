@@ -15,6 +15,8 @@ use rattan::env::{StdNetEnvConfig, StdNetEnvMode};
 use rattan::netem_trace::{Bandwidth, Delay};
 use rattan::radix::RattanRadix;
 use tracing::{debug, error, info, warn};
+use tracing_subscriber::filter::FilterFn;
+use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[cfg(feature = "http")]
@@ -99,7 +101,15 @@ pub struct CommandArgs {
     #[arg(long, value_name = "JSON", requires = "downlink-queue")]
     downlink_queue_args: Option<String>,
 
+    /// Enable packet logging
+    #[arg(long)]
+    packet_log: bool,
+    /// Packet log path, default to $CACHE_DIR/rattan/packet.log
+    #[arg(long, value_name = "Log File", requires = "packet-log")]
+    packet_log_path: Option<String>,
+
     /// Command to run
+    #[arg(last = true)]
     command: Vec<String>,
 }
 
@@ -161,19 +171,63 @@ macro_rules! bwreplay_q_args_into_config {
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-
     let opts = CommandArgs::parse();
     debug!("{:?}", opts);
     // if opts.docker {
     //     docker::docker_main(opts).unwrap();
     //     return;
     // }
+    let subscriber =
+        tracing_subscriber::registry().with(tracing_subscriber::fmt::layer().with_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
+        ));
+    let _guard: Option<_> = if opts.packet_log {
+        if let Some((log_dir, file_name_prefix)) = opts
+            .packet_log_path
+            .and_then(|path| {
+                let path = std::path::PathBuf::from(path);
+                let file_name_prefix = path.file_name().and_then(|f| f.to_str());
+                let log_dir = path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .and_then(|p| file_name_prefix.map(|f| (p, f.to_string())));
+                log_dir
+            })
+            .or_else(|| {
+                dirs::cache_dir()
+                    .map(|mut p| {
+                        p.push("rattan");
+                        p
+                    })
+                    .map(|log_dir| (log_dir, "packet.log".to_string()))
+            })
+        {
+            std::fs::create_dir_all(&log_dir)?;
+            let file_logger = tracing_appender::rolling::daily(log_dir, file_name_prefix);
+            let (non_blocking, guard) = tracing_appender::non_blocking(file_logger);
+            let log_filter = FilterFn::new(|metadata| {
+                // Only enable spans or events with the target "interesting_things"
+                metadata.target().ends_with("packet")
+            });
+            let env_filter = tracing_subscriber::EnvFilter::try_from_env("RATTAN_PACKET_LOG")
+                .unwrap_or_else(|_| "info".into());
+            subscriber
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(non_blocking)
+                        .with_filter(log_filter)
+                        .with_filter(env_filter),
+                )
+                .init();
+            Some(guard)
+        } else {
+            subscriber.init();
+            None
+        }
+    } else {
+        subscriber.init();
+        None
+    };
 
     let config = match opts.config {
         Some(config_file) => {
