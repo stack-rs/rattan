@@ -30,12 +30,13 @@ pub trait InterfaceReceiver<P> {
 pub trait InterfaceDriver: Send + 'static {
     type Packet: Packet + Send;
     type Sender: InterfaceSender<Self::Packet>;
-    type Receiver: InterfaceReceiver<Self::Packet>;
+    type Receiver: InterfaceReceiver<Self::Packet> + Send;
 
-    fn bind_device(device: Arc<VethDevice>) -> Result<Self, MetalError>
+    fn bind_device(device: Arc<VethDevice>) -> Result<Vec<Self>, MetalError>
     where
         Self: Sized;
     fn raw_fd(&self) -> i32;
     fn sender(&self) -> Arc<Self::Sender>;
     fn receiver(&mut self) -> &mut Self::Receiver;
+    fn into_receiver(self) -> Self::Receiver;
 }

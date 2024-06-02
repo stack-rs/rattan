@@ -145,7 +145,7 @@ impl InterfaceReceiver<StdPacket> for AfPacketReceiver {
         if let Some(x) = self.receive()? {
             Ok(vec![x])
         } else {
-            return Ok(vec![]);
+            Ok(vec![])
         }
     }
 }
@@ -162,7 +162,7 @@ impl InterfaceDriver for AfPacketDriver {
     type Sender = AfPacketSender;
     type Receiver = AfPacketReceiver;
 
-    fn bind_device(device: Arc<VethDevice>) -> Result<Self, MetalError> {
+    fn bind_device(device: Arc<VethDevice>) -> Result<Vec<Self>, MetalError> {
         debug!(?device, "bind device to AF_PACKET driver");
         let mut times = 3;
         let mut raw_fd;
@@ -227,7 +227,7 @@ impl InterfaceDriver for AfPacketDriver {
             warn!("bind device success after {} times", 3 - times);
         }
 
-        Ok(Self {
+        Ok(vec![Self {
             sender: Arc::new(AfPacketSender {
                 raw_fd: Mutex::new(raw_fd),
                 device: device.clone(),
@@ -235,7 +235,7 @@ impl InterfaceDriver for AfPacketDriver {
             receiver: AfPacketReceiver { raw_fd },
             raw_fd,
             _device: device,
-        })
+        }])
     }
 
     fn raw_fd(&self) -> i32 {
@@ -248,6 +248,10 @@ impl InterfaceDriver for AfPacketDriver {
 
     fn receiver(&mut self) -> &mut Self::Receiver {
         &mut self.receiver
+    }
+
+    fn into_receiver(self) -> Self::Receiver {
+        self.receiver
     }
 }
 

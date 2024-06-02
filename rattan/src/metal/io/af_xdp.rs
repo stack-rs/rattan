@@ -83,7 +83,7 @@ impl InterfaceReceiver<XDPPacket> for XDPReceiver {
         let packet = self.receive_bulk()?;
         self.buffer.extend(packet);
 
-        if self.buffer.len() == 0 {
+        if self.buffer.is_empty() {
             Err(std::io::Error::new(
                 std::io::ErrorKind::WouldBlock,
                 "no packet",
@@ -98,7 +98,7 @@ impl InterfaceReceiver<XDPPacket> for XDPReceiver {
             Ok(mut xdp_socket) => {
                 let packets = xdp_socket.recv_bulk(64).unwrap();
 
-                if packets.len() == 0 {
+                if packets.is_empty() {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::WouldBlock,
                         "no packet",
@@ -183,7 +183,7 @@ impl XDPDriver {
             .send_bulk(packets)
             .map_err(|_| std::io::Error::new(ErrorKind::Other, "camellia error"))?;
 
-        return Ok(len - remaining.len());
+        Ok(len - remaining.len())
     }
 }
 
@@ -192,7 +192,7 @@ impl InterfaceDriver for XDPDriver {
     type Sender = XDPSender;
     type Receiver = XDPReceiver;
 
-    fn bind_device(device: Arc<VethDevice>) -> Result<Self, crate::metal::error::MetalError>
+    fn bind_device(device: Arc<VethDevice>) -> Result<Vec<Self>, crate::metal::error::MetalError>
     where
         Self: Sized,
     {
@@ -215,14 +215,14 @@ impl InterfaceDriver for XDPDriver {
             device.clone(),
         ));
 
-        Ok(XDPDriver {
+        Ok(vec![XDPDriver {
             sender: Arc::new(XDPSender { sender }),
             receiver: XDPReceiver {
                 xdp_socket: xdp_socket.clone(),
                 buffer: vec![].into(),
             },
             xdp_socket,
-        })
+        }])
     }
 
     fn raw_fd(&self) -> i32 {
@@ -235,6 +235,10 @@ impl InterfaceDriver for XDPDriver {
 
     fn receiver(&mut self) -> &mut Self::Receiver {
         &mut self.receiver
+    }
+
+    fn into_receiver(self) -> Self::Receiver {
+        self.receiver
     }
 }
 

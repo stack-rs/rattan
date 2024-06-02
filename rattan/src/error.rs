@@ -90,6 +90,8 @@ pub enum VethError {
 pub enum TokioRuntimeError {
     #[error("Failed to build runtime, {0}")]
     CreateError(#[from] std::io::Error),
+    #[error("Failed to enqueue mpsc, {0}")]
+    MpscError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
