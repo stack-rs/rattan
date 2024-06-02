@@ -1,6 +1,6 @@
 use std::process::Stdio;
 
-use clap::{Parser, ValueEnum};
+use clap::{command, Args, Parser, Subcommand, ValueEnum};
 use figment::{
     providers::{Env, Format, Toml},
     Figment,
@@ -31,7 +31,9 @@ use rattan::control::http::HttpConfig;
 // const CONFIG_PORT_BASE: u16 = 8086;
 
 #[derive(Debug, Parser, Clone)]
-pub struct CommandArgs {
+#[command(rename_all = "kebab-case")]
+#[command(propagate_version = true)]
+pub struct Arguments {
     // Verbose debug output
     // #[arg(short, long)]
     // verbose: bool,
@@ -42,9 +44,8 @@ pub struct CommandArgs {
     #[arg(short, long, value_name = "Config File")]
     config: Option<String>,
 
-    /// Only generate config and exit
-    #[arg(long)]
-    gen_config: bool,
+    #[command(subcommand)]
+    subcommand: Option<CliCommand>,
 
     #[cfg(feature = "http")]
     /// Enable HTTP control server
@@ -56,53 +57,55 @@ pub struct CommandArgs {
     port: Option<u16>,
 
     /// Uplink packet loss
-    #[arg(long, value_name = "Loss")]
+    #[arg(long, global = true, value_name = "Loss")]
     uplink_loss: Option<f64>,
     /// Downlink packet loss
-    #[arg(long, value_name = "Loss")]
+    #[arg(long, global = true, value_name = "Loss")]
     downlink_loss: Option<f64>,
 
     /// Uplink delay
-    #[arg(long, value_name = "Delay", value_parser = humantime::parse_duration)]
+    #[arg(long, global = true, value_name = "Delay", value_parser = humantime::parse_duration)]
     uplink_delay: Option<Delay>,
     /// Downlink delay
-    #[arg(long, value_name = "Delay", value_parser = humantime::parse_duration)]
+    #[arg(long, global = true, value_name = "Delay", value_parser = humantime::parse_duration)]
     downlink_delay: Option<Delay>,
 
     /// Uplink bandwidth
-    #[arg(long, value_name = "Bandwidth", group = "uplink-bw")]
+    #[arg(long, global = true, value_name = "Bandwidth", group = "uplink-bw")]
     uplink_bandwidth: Option<u64>,
     /// Uplink trace file
-    #[arg(long, value_name = "Trace File", group = "uplink-bw")]
+    #[arg(long, global = true, value_name = "Trace File", group = "uplink-bw")]
     uplink_trace: Option<String>,
     /// Uplink queue type
     #[arg(
         long,
+        global = true,
         value_name = "Queue Type",
         group = "uplink-queue",
         requires = "uplink-bw"
     )]
     uplink_queue: Option<QueueType>,
     /// Uplink queue arguments
-    #[arg(long, value_name = "JSON", requires = "uplink-queue")]
+    #[arg(long, global = true, value_name = "JSON", requires = "uplink-queue")]
     uplink_queue_args: Option<String>,
 
     /// Downlink bandwidth
-    #[arg(long, value_name = "Bandwidth", group = "downlink-bw")]
+    #[arg(long, global = true, value_name = "Bandwidth", group = "downlink-bw")]
     downlink_bandwidth: Option<u64>,
     /// Downlink trace file
-    #[arg(long, value_name = "Trace File", group = "downlink-bw")]
+    #[arg(long, global = true, value_name = "Trace File", group = "downlink-bw")]
     downlink_trace: Option<String>,
     /// Downlink queue type
     #[arg(
         long,
+        global = true,
         value_name = "Queue Type",
         group = "downlink-queue",
         requires = "downlink-bw"
     )]
     downlink_queue: Option<QueueType>,
     /// Downlink queue arguments
-    #[arg(long, value_name = "JSON", requires = "downlink-queue")]
+    #[arg(long, global = true, value_name = "JSON", requires = "downlink-queue")]
     downlink_queue_args: Option<String>,
 
     /// Enable packet logging
@@ -115,6 +118,20 @@ pub struct CommandArgs {
     /// Command to run
     #[arg(last = true)]
     command: Vec<String>,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum CliCommand {
+    /// Generate the config.
+    Generate(GenerateArgs),
+}
+
+#[derive(Args, Debug, Default, Clone)]
+#[command(rename_all = "kebab-case")]
+pub struct GenerateArgs {
+    /// The output file path of the config. Default to stdout.
+    #[arg(short, long)]
+    pub output: Option<String>,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -175,7 +192,7 @@ macro_rules! bwreplay_q_args_into_config {
 }
 
 fn main() -> anyhow::Result<()> {
-    let opts = CommandArgs::parse();
+    let opts = Arguments::parse();
     debug!("{:?}", opts);
     // if opts.docker {
     //     docker::docker_main(opts).unwrap();
@@ -476,10 +493,18 @@ fn main() -> anyhow::Result<()> {
         warn!("No links specified in config");
     }
 
-    if opts.gen_config {
-        let toml_string = toml::to_string_pretty(&config)?;
-        println!("{}", toml_string);
-        return Ok(());
+    if let Some(cmd) = opts.subcommand {
+        match cmd {
+            CliCommand::Generate(args) => {
+                let toml_string = toml::to_string_pretty(&config)?;
+                if let Some(output) = args.output {
+                    std::fs::write(output, toml_string)?;
+                } else {
+                    println!("{}", toml_string);
+                }
+                return Ok(());
+            }
+        }
     }
 
     let mut radix = RattanRadix::<StdPacket>::new(config)?;
