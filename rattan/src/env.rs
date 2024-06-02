@@ -242,7 +242,7 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     {
         // TODO(haixuan): could you please replace this with Netlink version when
         // time is appropriate?
-        let _ns_guard = NetNsGuard::new(veth_pair_client.left.namespace.clone())?;
+        let _ns_guard: NetNsGuard = NetNsGuard::new(veth_pair_client.left.namespace.clone())?;
         std::process::Command::new("tc")
             .args([
                 "qdisc",
@@ -253,6 +253,20 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
                 "handle",
                 "1:",
                 "fq",
+            ])
+            .spawn()
+            .unwrap()
+            .wait()
+            .unwrap();
+
+        std::process::Command::new("ethtool")
+            .args([
+                "-L",
+                veth_pair_client.left.name.as_str(),
+                "rx",
+                "2",
+                "tx",
+                "2",
             ])
             .spawn()
             .unwrap()
@@ -304,7 +318,52 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
             .wait()
             .unwrap();
 
+        std::process::Command::new("ethtool")
+            .args([
+                "-L",
+                veth_pair_server.right.name.as_str(),
+                "rx",
+                "2",
+                "tx",
+                "2",
+            ])
+            .spawn()
+            .unwrap()
+            .wait()
+            .unwrap();
         set_rps_cores(veth_pair_server.right.name.as_str(), &config.server_cores);
+    }
+
+    {
+        let _ns_guard: NetNsGuard = NetNsGuard::new(veth_pair_client.right.namespace.clone())?;
+
+        std::process::Command::new("ethtool")
+            .args([
+                "-L",
+                veth_pair_client.right.name.as_str(),
+                "rx",
+                "2",
+                "tx",
+                "2",
+            ])
+            .spawn()
+            .unwrap()
+            .wait()
+            .unwrap();
+
+        std::process::Command::new("ethtool")
+            .args([
+                "-L",
+                veth_pair_server.left.name.as_str(),
+                "rx",
+                "2",
+                "tx",
+                "2",
+            ])
+            .spawn()
+            .unwrap()
+            .wait()
+            .unwrap();
     }
 
     // Set the default route of left and right namespaces

@@ -4,6 +4,7 @@ use libc::{c_void, size_t, sockaddr, sockaddr_ll, socklen_t};
 use nix::errno::Errno;
 use nix::sys::epoll::{epoll_create, epoll_ctl, epoll_wait, EpollEvent, EpollFlags};
 use nix::sys::socket::{AddressFamily, SockType};
+use rattan::config::RattanResourceConfig;
 use rattan::env::{get_std_env, StdNetEnvConfig};
 use rattan::metal::veth::{MacAddr, VethDevice};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -145,7 +146,11 @@ enum PacketType {
 #[test]
 #[ignore]
 fn af_packet_test() -> anyhow::Result<()> {
-    let stdenv = get_std_env(&StdNetEnvConfig::default()).unwrap();
+    let stdenv = get_std_env(
+        &StdNetEnvConfig::default(),
+        &RattanResourceConfig::default(),
+    )
+    .unwrap();
 
     // step into rattan namespace
     {

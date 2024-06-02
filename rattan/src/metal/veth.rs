@@ -433,6 +433,28 @@ impl VethPairBuilder {
 
 impl Drop for VethPair {
     fn drop(&mut self) {
+        {
+            let _guard = self.left.namespace.enter().unwrap();
+
+            Command::new("ethtool")
+                .arg("-S")
+                .arg(&self.left.name)
+                .spawn()
+                .unwrap()
+                .wait()
+                .unwrap();
+        }
+        {
+            let _guard = self.right.namespace.enter().unwrap();
+
+            Command::new("ethtool")
+                .arg("-S")
+                .arg(&self.right.name)
+                .spawn()
+                .unwrap()
+                .wait()
+                .unwrap();
+        }
         let left = self.left.clone();
         let left_name = left.name.clone();
         let right = self.right.clone();

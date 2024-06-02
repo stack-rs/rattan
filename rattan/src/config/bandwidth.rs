@@ -1,6 +1,5 @@
-use std::io::BufRead;
-
 use netem_trace::{model::BwTraceConfig, BwTrace};
+use std::io::BufRead;
 use tracing::{debug, error};
 
 use crate::{

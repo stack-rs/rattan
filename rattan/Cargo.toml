@@ -47,6 +47,7 @@ tokio-timerfd = "0.2.0"
 tokio-util = "0.7.7"
 tracing = "0.1.37"
 tempfile = "3.10.1"
+crc32fast = "1.4.2"
 
 [dev-dependencies]
 criterion = "0.5.1"
@@ -66,7 +67,7 @@ name = "bandwidth"
 harness = false
 
 [features]
-default = []
+default = ["camellia"]
 http = ["serde", "dep:axum", "dep:axum-macros"]
 packet-dump = ["dep:pcap-file"]
 serde = [

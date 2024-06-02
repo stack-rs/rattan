@@ -8,13 +8,16 @@ use crate::{
         veth::VethDevice,
     },
 };
-use std::sync::Arc;
-
 use async_trait::async_trait;
+use nix::{
+    sched::{sched_setaffinity, CpuSet},
+    unistd::Pid,
+};
 #[cfg(feature = "serde")]
 use serde::Deserialize;
-use tokio::io::unix::AsyncFd;
-use tracing::{debug, error, instrument};
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, instrument};
 
 use super::{ControlInterface, Egress, Ingress};
 
@@ -51,11 +54,11 @@ where
         mut receiver: tokio::sync::mpsc::Receiver<D::Packet>,
         senders: Vec<tokio::sync::mpsc::Sender<D::Packet>>,
     ) {
-        let mut index: usize = 0;
         loop {
             if let Some(packet) = receiver.recv().await {
-                let _ = senders[index % senders.len()].send(packet).await;
-                index += 1;
+                let _ = senders[(packet.flow_hash() as usize) % senders.len()]
+                    .send(packet)
+                    .await;
             }
         }
     }
@@ -102,6 +105,17 @@ where
     D::Packet: Packet + Send + Sync,
 {
     receiver: tokio::sync::mpsc::Receiver<D::Packet>,
+    token: CancellationToken,
+}
+
+impl<D> Drop for VirtualEthernetEgress<D>
+where
+    D: InterfaceDriver,
+    D::Packet: Packet + Send + Sync,
+{
+    fn drop(&mut self) {
+        self.token.cancel();
+    }
 }
 
 impl<D> VirtualEthernetEgress<D>
@@ -109,33 +123,42 @@ where
     D: InterfaceDriver,
     D::Packet: Packet + Send + Sync,
 {
-    pub fn new(driver: Vec<D>) -> Result<Self, Error> {
+    pub fn new(driver: Vec<D>, core: u32) -> Result<Self, Error> {
         let (tx, rx) = tokio::sync::mpsc::channel(1024);
 
-        for d in driver.into_iter() {
-            let notify = AsyncFd::new(d.raw_fd())?;
-            tokio::spawn(Self::recv(notify, d.into_receiver(), tx.clone()));
-        }
+        let receivers = driver
+            .into_iter()
+            .map(|d| (d.raw_fd(), d.into_receiver()))
+            .collect();
 
-        Ok(Self { receiver: rx })
+        let token = CancellationToken::new();
+        let cloned_token = token.clone();
+
+        tokio::task::spawn_blocking(move || {
+            Self::busy_polling_recv(receivers, tx, cloned_token, core);
+        });
+
+        Ok(Self {
+            receiver: rx,
+            token,
+        })
     }
 
-    async fn recv(
-        notify: AsyncFd<i32>,
-        mut receiver: D::Receiver,
+    fn busy_polling_recv(
+        mut receivers: Vec<(i32, D::Receiver)>,
         sender: tokio::sync::mpsc::Sender<D::Packet>,
+        token: CancellationToken,
+        core: u32,
     ) {
-        loop {
-            let mut _guard = notify.readable().await.unwrap();
-            match _guard.try_io(|_fd| receiver.receive()) {
-                Ok(packet) => match packet {
-                    Ok(Some(p)) => {
-                        let _ = sender.send(p).await;
-                    }
-                    Err(e) => error!("recv error: {}", e),
-                    _ => {}
-                },
-                Err(_would_block) => continue,
+        let mut cpuset = CpuSet::new();
+        cpuset.set(core as usize).unwrap();
+        sched_setaffinity(Pid::from_raw(0), &cpuset).unwrap();
+
+        while !token.is_cancelled() {
+            for (_, receiver) in receivers.iter_mut() {
+                if let Ok(Some(packet)) = receiver.receive() {
+                    let _ = sender.blocking_send(packet);
+                }
             }
         }
     }
@@ -149,7 +172,7 @@ where
     D::Packet: Packet + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<D::Packet> {
-        return self.receiver.recv().await;
+        self.receiver.recv().await
     }
 }
 
@@ -189,14 +212,14 @@ where
     D::Receiver: Send,
 {
     #[instrument(skip_all, name="VirtualEthernet", fields(name = device.name))]
-    pub fn new(device: Arc<VethDevice>) -> Result<Self, Error> {
+    pub fn new(device: Arc<VethDevice>, core: u32) -> Result<Self, Error> {
         debug!("New VirtualEthernet");
         let driver = D::bind_device(device.clone())?;
         let dev_senders = driver.iter().map(|d| d.sender()).collect();
         Ok(Self {
             _device: device,
             ingress: Arc::new(VirtualEthernetIngress::new(dev_senders)),
-            egress: VirtualEthernetEgress::new(driver)?,
+            egress: VirtualEthernetEgress::new(driver, core)?,
             control_interface: Arc::new(VirtualEthernetControlInterface {
                 _config: VirtualEthernetConfig {},
             }),

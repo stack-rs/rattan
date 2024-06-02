@@ -208,7 +208,7 @@ where
         self.build_deivce("left".to_string(), move |rt| {
             let _guard = rt.enter();
             let _ns_guard = NetNsGuard::new(rattan_ns);
-            VirtualEthernet::<D>::new(veth)
+            VirtualEthernet::<D>::new(veth, 4)
         })?;
 
         let rattan_ns = self.env.rattan_ns.clone();
@@ -217,7 +217,7 @@ where
         self.build_deivce("right".to_string(), move |rt| {
             let _guard = rt.enter();
             let _ns_guard = NetNsGuard::new(rattan_ns);
-            VirtualEthernet::<D>::new(veth)
+            VirtualEthernet::<D>::new(veth, 5)
         })?;
 
         Ok(())

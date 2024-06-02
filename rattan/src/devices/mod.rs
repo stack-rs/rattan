@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use crc32fast::Hasher;
 use etherparse::{Ethernet2Header, Ipv4Header};
 #[cfg(feature = "serde")]
 use serde::Deserialize;
@@ -29,6 +30,10 @@ pub trait Packet: Debug + 'static + Send {
     fn as_raw_buffer(&mut self) -> &mut [u8];
     fn ether_hdr(&self) -> Option<Ethernet2Header>;
     fn ip_hdr(&self) -> Option<Ipv4Header>;
+    fn tcp_hdr(&self) -> Option<etherparse::TcpHeader>;
+    fn udp_hdr(&self) -> Option<etherparse::UdpHeader>;
+
+    fn flow_hash(&self) -> u32;
 
     fn get_timestamp(&self) -> Instant;
     fn set_timestamp(&mut self, timestamp: Instant);
@@ -85,6 +90,47 @@ impl Packet for StdPacket {
             }
         }
         None
+    }
+
+    fn tcp_hdr(&self) -> Option<etherparse::TcpHeader> {
+        if let Ok(result) = etherparse::Ethernet2Header::from_slice(self.buf.as_slice()) {
+            if let Ok(ip_hdr) = etherparse::Ipv4Header::from_slice(result.1) {
+                if let Ok(tcp_hdr) = etherparse::TcpHeader::from_slice(ip_hdr.1) {
+                    return Some(tcp_hdr.0);
+                }
+            }
+        }
+        None
+    }
+
+    fn udp_hdr(&self) -> Option<etherparse::UdpHeader> {
+        if let Ok(result) = etherparse::Ethernet2Header::from_slice(self.buf.as_slice()) {
+            if let Ok(ip_hdr) = etherparse::Ipv4Header::from_slice(result.1) {
+                if let Ok(udp_hdr) = etherparse::UdpHeader::from_slice(ip_hdr.1) {
+                    return Some(udp_hdr.0);
+                }
+            }
+        }
+        None
+    }
+
+    fn flow_hash(&self) -> u32 {
+        let mut hasher = Hasher::new();
+        if let Some(ip) = self.ip_hdr() {
+            hasher.update(&ip.source);
+            hasher.update(&ip.destination);
+            hasher.update(&[ip.protocol.0]);
+            if let Some(tcp) = self.tcp_hdr() {
+                hasher.update(&tcp.source_port.to_be_bytes());
+                hasher.update(&tcp.destination_port.to_be_bytes());
+                return hasher.finalize();
+            } else if let Some(udp) = self.udp_hdr() {
+                hasher.update(&udp.source_port.to_be_bytes());
+                hasher.update(&udp.destination_port.to_be_bytes());
+                return hasher.finalize();
+            }
+        }
+        0
     }
 
     fn ether_hdr(&self) -> Option<Ethernet2Header> {

@@ -9,7 +9,6 @@ use rattan::{
     metal::io::af_xdp::{XDPDriver, XDPPacket},
     radix::RattanRadix,
 };
-use regex::Regex;
 use std::{collections::HashMap, thread::sleep, time::Duration};
 
 use clap::Parser;
@@ -26,7 +25,7 @@ fn main() {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![0],
-            server_cores: vec![3],
+            server_cores: vec![3, 7],
         },
         ..Default::default()
     };
@@ -74,7 +73,7 @@ fn main() {
         ("down_loss".to_string(), "left".to_string()),
     ]);
 
-    config.core.resource.cpu = Some(vec![1, 2]);
+    config.core.resource.cpu = Some(vec![1, 2, 6]);
 
     let mut radix = RattanRadix::<XDPDriver>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
@@ -86,7 +85,7 @@ fn main() {
             .right_spawn(|| {
                 let mut iperf_server = std::process::Command::new("taskset")
                     .args(["-c", "0", "iperf3", "-s", "-p", "9000", "-1"])
-                    .stdout(std::process::Stdio::null())
+                    // .stdout(std::process::Stdio::null())
                     .spawn()
                     .unwrap();
                 iperf_server.wait().unwrap();
@@ -101,16 +100,18 @@ fn main() {
                 let client_handle = std::process::Command::new("taskset")
                     .args([
                         "-c",
-                        "3",
+                        "3,7",
                         "iperf3",
                         "-c",
                         "192.168.12.1",
                         "-p",
                         "9000",
+                        // "-P",
+                        // "4",
                         "--cport",
                         "10000",
                         "-t",
-                        "10",
+                        "20",
                         "-J",
                         "-R",
                         "-C",
@@ -126,23 +127,21 @@ fn main() {
         let output = left_handle.join().unwrap().unwrap().unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
         let stderr = String::from_utf8(output.stderr).unwrap();
+
         right_handle.join().unwrap().unwrap();
         if !stderr.is_empty() {
             eprintln!("{}", stderr);
         }
 
-        let re = Regex::new(r#""bits_per_second":\s*(\d+)"#).unwrap();
-        let mut bandwidth = re
-            .captures_iter(&stdout)
-            .flat_map(|cap| cap[1].parse::<u64>())
-            .step_by(2)
-            .take(10)
-            .collect::<Vec<_>>();
+        let iperf_result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
-        assert!(!bandwidth.is_empty());
+        let bandwidth = iperf_result["end"]["sum_received"]["bits_per_second"]
+            .as_f64()
+            .unwrap();
 
-        bandwidth.drain(0..4);
-        let bitrate = bandwidth.iter().sum::<u64>() / bandwidth.len() as u64;
-        println!("bitrate: {:?}", Bandwidth::from_bps(bitrate));
+        println!(
+            "bitrate: {:?}",
+            Bandwidth::from_bps(bandwidth.round() as u64)
+        );
     }
 }

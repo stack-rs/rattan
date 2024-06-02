@@ -6,6 +6,7 @@ use camellia::{
         shared::SharedAccessorRef,
     },
 };
+use crc32fast::Hasher;
 use etherparse::{Ethernet2Header, Ipv4Header};
 use once_cell::sync::Lazy;
 use std::time::Duration;
@@ -62,7 +63,7 @@ impl InterfaceSender<XDPPacket> for XDPSender {
         // maybe we should distinguish between partial success and total failure
         for packet in packets {
             self.sender
-                .blocking_send(packet)
+                .try_send(packet)
                 .map_err(|_| std::io::Error::new(ErrorKind::Other, "send error"))?;
         }
 
@@ -196,33 +197,39 @@ impl InterfaceDriver for XDPDriver {
     where
         Self: Sized,
     {
-        debug!(?device, "bind device to AF_PACKET driver");
+        debug!(?device, "bind device to AF_XDP driver");
 
-        let xdp_socket = Arc::new(Mutex::new(
-            XskSocketBuilder::<SharedAccessorRef>::new()
-                .ifname(&device.name)
-                .queue_index(0)
-                .with_umem(UMEM.clone())
-                .enable_cooperate_schedule()
-                .build_shared()?,
-        ));
+        let mut drivers = vec![];
 
-        let (sender, receiver) = tokio::sync::mpsc::channel(64);
+        for i in 0..2 {
+            let xdp_socket = Arc::new(Mutex::new(
+                XskSocketBuilder::<SharedAccessorRef>::new()
+                    .ifname(&device.name)
+                    .queue_index(i)
+                    .with_umem(UMEM.clone())
+                    .enable_cooperate_schedule()
+                    .build_shared()?,
+            ));
 
-        tokio::spawn(XDPDriver::buffered_send(
-            receiver,
-            xdp_socket.clone(),
-            device.clone(),
-        ));
+            let (sender, receiver) = tokio::sync::mpsc::channel(1024);
 
-        Ok(vec![XDPDriver {
-            sender: Arc::new(XDPSender { sender }),
-            receiver: XDPReceiver {
-                xdp_socket: xdp_socket.clone(),
-                buffer: vec![].into(),
-            },
-            xdp_socket,
-        }])
+            tokio::spawn(XDPDriver::buffered_send(
+                receiver,
+                xdp_socket.clone(),
+                device.clone(),
+            ));
+
+            drivers.push(XDPDriver {
+                sender: Arc::new(XDPSender::new(sender)),
+                receiver: XDPReceiver {
+                    xdp_socket: xdp_socket.clone(),
+                    buffer: vec![].into(),
+                },
+                xdp_socket,
+            });
+        }
+
+        Ok(drivers)
     }
 
     fn raw_fd(&self) -> i32 {
@@ -300,6 +307,47 @@ impl Packet for XDPPacket {
 
     fn ether_hdr(&self) -> Option<Ethernet2Header> {
         etherparse::Ethernet2Header::from_slice(self.as_slice()).map_or(None, |x| Some(x.0))
+    }
+
+    fn tcp_hdr(&self) -> Option<etherparse::TcpHeader> {
+        if let Ok(result) = etherparse::Ethernet2Header::from_slice(self.as_slice()) {
+            if let Ok(ip_hdr) = etherparse::Ipv4Header::from_slice(result.1) {
+                if let Ok(tcp_hdr) = etherparse::TcpHeader::from_slice(ip_hdr.1) {
+                    return Some(tcp_hdr.0);
+                }
+            }
+        }
+        None
+    }
+
+    fn udp_hdr(&self) -> Option<etherparse::UdpHeader> {
+        if let Ok(result) = etherparse::Ethernet2Header::from_slice(self.as_slice()) {
+            if let Ok(ip_hdr) = etherparse::Ipv4Header::from_slice(result.1) {
+                if let Ok(udp_hdr) = etherparse::UdpHeader::from_slice(ip_hdr.1) {
+                    return Some(udp_hdr.0);
+                }
+            }
+        }
+        None
+    }
+
+    fn flow_hash(&self) -> u32 {
+        let mut hasher = Hasher::new();
+        if let Some(ip) = self.ip_hdr() {
+            hasher.update(&ip.source);
+            hasher.update(&ip.destination);
+            hasher.update(&[ip.protocol.0]);
+            if let Some(tcp) = self.tcp_hdr() {
+                hasher.update(&tcp.source_port.to_be_bytes());
+                hasher.update(&tcp.destination_port.to_be_bytes());
+                return hasher.finalize();
+            } else if let Some(udp) = self.udp_hdr() {
+                hasher.update(&udp.source_port.to_be_bytes());
+                hasher.update(&udp.destination_port.to_be_bytes());
+                return hasher.finalize();
+            }
+        }
+        0
     }
 
     fn get_timestamp(&self) -> Instant {
