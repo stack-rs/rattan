@@ -33,10 +33,11 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - uses: giraffate/clippy-action@v1
-        with:
-          reporter: 'github-pr-review'
-          clippy_flags: --workspace --all-features
+      - run: cargo clippy --workspace --all-features --tests -- -Dwarnings
+      # - uses: giraffate/clippy-action@v1
+      #   with:
+      #     reporter: 'github-pr-review'
+      #     clippy_flags: --workspace --all-features --tests
 
   fmt:
     name: cargo fmt
