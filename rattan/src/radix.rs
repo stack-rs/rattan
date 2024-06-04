@@ -338,7 +338,7 @@ where
         {
             debug!("Wait for http thread to finish");
             if let Some(http_thread_handle) = self.http_thread_handle.take() {
-                if let Err(_) = http_thread_handle.join().unwrap() {
+                if http_thread_handle.join().unwrap().is_err() {
                     error!("HTTP thread exited due to error");
                 }
             }
