@@ -203,10 +203,10 @@ fn af_packet_test() -> anyhow::Result<()> {
         .expect("unable to install ctrl+c handler");
 
         while running.load(Ordering::Acquire) {
-            let num_events = epoll_wait(epoll_fd, &mut events, timeout_ms).unwrap();
+            let _num_events = epoll_wait(epoll_fd, &mut events, timeout_ms).unwrap();
 
-            for i in 0..num_events {
-                let fd = events[i].data() as i32;
+            for event in events {
+                let fd = event.data() as i32;
                 let (read, addr) = recv_from_dev(fd, &mut buf).expect("fail to recv");
                 let addr = addr.unwrap();
 

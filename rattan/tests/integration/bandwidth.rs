@@ -315,8 +315,8 @@ fn test_droptail_queue() {
                 }
                 info!(?recv_indexs);
                 assert!(recv_indexs.len() == 14);
-                for i in 0..12 {
-                    assert!(recv_indexs[i] == i as u8);
+                for (i, recv_index) in recv_indexs.iter().enumerate().take(12) {
+                    assert!(*recv_index == i as u8);
                 }
                 assert!(19 <= recv_indexs[12] && recv_indexs[12] <= 20);
                 assert!(27 <= recv_indexs[13] && recv_indexs[13] <= 30);
@@ -353,8 +353,8 @@ fn test_droptail_queue() {
                 }
                 info!(?recv_indexs);
                 assert!(recv_indexs.len() == 14);
-                for i in 0..12 {
-                    assert!(recv_indexs[i] == i as u8);
+                for (i, recv_index) in recv_indexs.iter().enumerate().take(12) {
+                    assert!(*recv_index == i as u8);
                 }
                 assert!(19 <= recv_indexs[12] && recv_indexs[12] <= 20);
                 assert!(27 <= recv_indexs[13] && recv_indexs[13] <= 30);
@@ -486,8 +486,8 @@ fn test_drophead_queue() {
                 assert!(recv_indexs[1] == 1);
                 assert!(8 <= recv_indexs[2] && recv_indexs[2] <= 10);
                 assert!(17 <= recv_indexs[3] && recv_indexs[3] <= 19);
-                for i in 4..14 {
-                    assert!(recv_indexs[i] == 16 + i as u8);
+                for (i, recv_index) in recv_indexs.iter().enumerate().take(14).skip(4) {
+                    assert!(*recv_index == 16 + i as u8);
                 }
 
                 info!("Test DropHeadQueue (500 Bytes limit)");
@@ -526,8 +526,8 @@ fn test_drophead_queue() {
                 assert!(recv_indexs[1] == 1);
                 assert!(8 <= recv_indexs[2] && recv_indexs[2] <= 10);
                 assert!(17 <= recv_indexs[3] && recv_indexs[3] <= 19);
-                for i in 4..14 {
-                    assert!(recv_indexs[i] == 16 + i as u8);
+                for (i, recv_index) in recv_indexs.iter().enumerate().take(14).skip(4) {
+                    assert!(*recv_index == 16 + i as u8);
                 }
                 Ok(())
             })
