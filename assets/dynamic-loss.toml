@@ -1,0 +1,12 @@
+[RepeatedLossPatternConfig]
+count = 0
+
+[[RepeatedLossPatternConfig.pattern]]
+[RepeatedLossPatternConfig.pattern.StaticLossConfig]
+loss = [0.0]
+duration = "1s"
+
+[[RepeatedLossPatternConfig.pattern]]
+[RepeatedLossPatternConfig.pattern.StaticLossConfig]
+loss = [0.5]
+duration = "1s"

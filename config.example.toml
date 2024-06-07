@@ -163,6 +163,20 @@ type = "DelayReplay"
 # For example, the following trace will switch between 10ms and 50ms delays at 1-second intervals and the trace will repeat forever.
 trace = "./assets/dynamic-delay.json"
 
+# Loss Replay Device Example
+[devices.up_4]
+type = "LossReplay"
+
+# Loss trace
+#
+# Should specify the loss trace file in JSON or TOML format.
+# The parser will automatically detect the format by the file extension.
+#
+# The Loss trace is formated as LossTraceConfig in `netem-trace` crate.
+# Refer to: <https://docs.rs/netem-trace/latest/netem_trace/>
+# For example, the following trace will switch between 0.0 and 0.5 loss rates at 1-second intervals and the trace will repeat forever.
+trace = "./assets/dynamic-loss.toml"
+
 # BwReplay Device Example
 [devices.down_1]
 type = "BwReplay"

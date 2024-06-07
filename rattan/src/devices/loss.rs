@@ -1,14 +1,18 @@
 use crate::devices::{Device, Packet};
 use crate::error::Error;
+use crate::metal::timer::Timer;
 use crate::utils::sync::AtomicRawCell;
 use async_trait::async_trait;
-use netem_trace::LossPattern;
+use netem_trace::model::LossTraceConfig;
+use netem_trace::{LossPattern, LossTrace};
 use rand::Rng;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 use tracing::{debug, info};
 
 use super::{ControlInterface, Egress, Ingress};
@@ -172,6 +176,222 @@ where
                 rng,
             },
             control_interface: Arc::new(LossDeviceControlInterface { pattern }),
+        })
+    }
+}
+
+type LossReplayDeviceIngress<P> = LossDeviceIngress<P>;
+
+pub struct LossReplayDeviceEgress<P, R>
+where
+    P: Packet,
+    R: Rng,
+{
+    egress: mpsc::UnboundedReceiver<P>,
+    trace: Box<dyn LossTrace>,
+    current_loss_pattern: LossPattern,
+    next_change: Instant,
+    config_rx: mpsc::UnboundedReceiver<LossReplayDeviceConfig>,
+    change_timer: Timer,
+    /// How many packets have been lost consecutively
+    prev_loss: usize,
+    rng: R,
+    state: AtomicI32,
+}
+
+impl<P, R> LossReplayDeviceEgress<P, R>
+where
+    P: Packet + Send + Sync,
+    R: Rng + Send + Sync,
+{
+    fn change_loss(&mut self, loss: LossPattern, change_time: Instant) {
+        tracing::trace!(
+            "Changing loss pattern to {:?} (should at {:?} ago)",
+            loss,
+            change_time.elapsed()
+        );
+        tracing::trace!(
+            before = ?self.current_loss_pattern,
+            after = ?loss,
+            "Set inner loss pattern:"
+        );
+        self.current_loss_pattern = loss;
+    }
+
+    fn set_config(&mut self, config: LossReplayDeviceConfig) {
+        tracing::debug!("Set inner trace config");
+        self.trace = config.trace_config.into_model();
+        let now = Instant::now();
+        if self.next_change(now).is_none() {
+            tracing::warn!("Setting null trace");
+            self.next_change = now;
+            // set state to 0 to indicate the trace goes to end and the device will drop all packets
+            self.change_state(0);
+        }
+    }
+
+    fn next_change(&mut self, change_time: Instant) -> Option<()> {
+        self.trace.next_loss().map(|(loss, duration)| {
+            tracing::trace!(
+                "Loss pattern changed to {:?}, next change after {:?}",
+                loss,
+                change_time + duration - Instant::now()
+            );
+            self.change_loss(loss, change_time);
+            self.next_change = change_time + duration;
+        })
+    }
+}
+
+#[async_trait]
+impl<P, R> Egress<P> for LossReplayDeviceEgress<P, R>
+where
+    P: Packet + Send + Sync,
+    R: Rng + Send + Sync,
+{
+    async fn dequeue(&mut self) -> Option<P> {
+        let packet = loop {
+            tokio::select! {
+                biased;
+                Some(config) = self.config_rx.recv() => {
+                    self.set_config(config);
+                }
+                _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
+                    if self.next_change(self.next_change).is_none() {
+                        debug!("Trace goes to end");
+                        self.egress.close();
+                        return None;
+                    }
+                }
+                packet = self.egress.recv() => if let Some(packet) = packet { break packet }
+            }
+        };
+        match self.state.load(std::sync::atomic::Ordering::Acquire) {
+            0 => {
+                return None;
+            }
+            1 => {
+                return Some(packet);
+            }
+            _ => {}
+        }
+        let loss_rate = match self.current_loss_pattern.get(self.prev_loss) {
+            Some(&loss_rate) => loss_rate,
+            None => *self.current_loss_pattern.last().unwrap_or(&0.0),
+        };
+        let rand_num = self.rng.gen_range(0.0..1.0);
+        if rand_num < loss_rate {
+            self.prev_loss += 1;
+            None
+        } else {
+            self.prev_loss = 0;
+            Some(packet)
+        }
+    }
+
+    fn reset(&mut self) {
+        self.prev_loss = 0;
+        self.next_change = Instant::now();
+    }
+
+    fn change_state(&self, state: i32) {
+        self.state
+            .store(state, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct LossReplayDeviceConfig {
+    pub trace_config: Box<dyn LossTraceConfig>,
+}
+
+impl Clone for LossReplayDeviceConfig {
+    fn clone(&self) -> Self {
+        Self {
+            trace_config: self.trace_config.clone(),
+        }
+    }
+}
+
+impl LossReplayDeviceConfig {
+    pub fn new<T: Into<Box<dyn LossTraceConfig>>>(trace_config: T) -> Self {
+        Self {
+            trace_config: trace_config.into(),
+        }
+    }
+}
+
+pub struct LossReplayDeviceControlInterface {
+    config_tx: mpsc::UnboundedSender<LossReplayDeviceConfig>,
+}
+
+impl ControlInterface for LossReplayDeviceControlInterface {
+    type Config = LossReplayDeviceConfig;
+
+    fn set_config(&self, config: Self::Config) -> Result<(), Error> {
+        info!("Setting loss replay config");
+        self.config_tx
+            .send(config)
+            .map_err(|_| Error::ConfigError("Control channel is closed.".to_string()))?;
+        Ok(())
+    }
+}
+
+pub struct LossReplayDevice<P: Packet, R: Rng> {
+    ingress: Arc<LossReplayDeviceIngress<P>>,
+    egress: LossReplayDeviceEgress<P, R>,
+    control_interface: Arc<LossReplayDeviceControlInterface>,
+}
+
+impl<P, R> Device<P> for LossReplayDevice<P, R>
+where
+    P: Packet + Send + Sync + 'static,
+    R: Rng + Send + Sync + 'static,
+{
+    type IngressType = LossReplayDeviceIngress<P>;
+    type EgressType = LossReplayDeviceEgress<P, R>;
+    type ControlInterfaceType = LossReplayDeviceControlInterface;
+
+    fn sender(&self) -> Arc<Self::IngressType> {
+        self.ingress.clone()
+    }
+
+    fn receiver(&mut self) -> &mut Self::EgressType {
+        &mut self.egress
+    }
+
+    fn into_receiver(self) -> Self::EgressType {
+        self.egress
+    }
+
+    fn control_interface(&self) -> Arc<Self::ControlInterfaceType> {
+        self.control_interface.clone()
+    }
+}
+
+impl<P, R> LossReplayDevice<P, R>
+where
+    P: Packet,
+    R: Rng,
+{
+    pub fn new(trace: Box<dyn LossTrace>, rng: R) -> Result<LossReplayDevice<P, R>, Error> {
+        let (rx, tx) = mpsc::unbounded_channel();
+        let (config_tx, config_rx) = mpsc::unbounded_channel();
+        let current_loss_pattern = vec![1.0];
+        Ok(LossReplayDevice {
+            ingress: Arc::new(LossReplayDeviceIngress { ingress: rx }),
+            egress: LossReplayDeviceEgress {
+                egress: tx,
+                trace,
+                current_loss_pattern,
+                next_change: Instant::now(),
+                config_rx,
+                change_timer: Timer::new()?,
+                prev_loss: 0,
+                rng,
+                state: AtomicI32::new(0),
+            },
+            control_interface: Arc::new(LossReplayDeviceControlInterface { config_tx }),
         })
     }
 }
