@@ -69,6 +69,7 @@ pub enum DeviceBuildConfig<P: Packet> {
     Bw(BwDeviceBuildConfig<P>),
     BwReplay(BwReplayDeviceBuildConfig<P>),
     Delay(DelayDeviceBuildConfig),
+    DelayReplay(DelayReplayDeviceBuildConfig),
     Loss(LossDeviceBuildConfig),
     Custom,
 }

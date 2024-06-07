@@ -2,10 +2,12 @@ use crate::devices::{Device, Packet};
 use crate::error::Error;
 use crate::metal::timer::Timer;
 use async_trait::async_trait;
-use netem_trace::Delay;
+use netem_trace::model::DelayTraceConfig;
+use netem_trace::{Delay, DelayTrace};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
@@ -173,6 +175,237 @@ where
                 timer: Timer::new()?,
             },
             control_interface: Arc::new(DelayDeviceControlInterface { config_tx }),
+        })
+    }
+}
+
+type DelayReplayDeviceIngress<P> = DelayDeviceIngress<P>;
+
+pub struct DelayReplayDeviceEgress<P>
+where
+    P: Packet,
+{
+    egress: mpsc::UnboundedReceiver<P>,
+    trace: Box<dyn DelayTrace>,
+    current_delay: Delay,
+    next_available: Instant,
+    next_change: Instant,
+    config_rx: mpsc::UnboundedReceiver<DelayReplayDeviceConfig>,
+    send_timer: Timer,
+    change_timer: Timer,
+    state: AtomicI32,
+}
+
+impl<P> DelayReplayDeviceEgress<P>
+where
+    P: Packet + Send + Sync,
+{
+    fn change_delay(&mut self, delay: Delay, change_time: Instant) {
+        tracing::trace!(
+            "Changing delay to {:?} (should at {:?} ago)",
+            delay,
+            change_time.elapsed()
+        );
+        tracing::trace!(
+            "Previous next_available distance: {:?}",
+            self.next_available - change_time
+        );
+        self.next_available += delay;
+        self.next_available -= self.current_delay;
+        tracing::trace!(
+            before = ?self.current_delay,
+            after = ?delay,
+            "Set inner delay:"
+        );
+        tracing::trace!(
+            "Now next_available distance: {:?}",
+            self.next_available - change_time,
+        );
+        self.current_delay = delay;
+    }
+
+    fn set_config(&mut self, config: DelayReplayDeviceConfig) {
+        tracing::debug!("Set inner trace config");
+        self.trace = config.trace_config.into_model();
+        let now = Instant::now();
+        if self.next_change(now).is_none() {
+            // handle null trace outside this function
+            tracing::warn!("Setting null trace");
+            self.next_change = now;
+            // set state to 0 to indicate the trace goes to end and the device will drop all packets
+            self.change_state(0);
+        }
+    }
+
+    // Return the next change time or **None** if the trace goes to end
+    fn next_change(&mut self, change_time: Instant) -> Option<()> {
+        self.trace.next_delay().map(|(delay, duration)| {
+            self.change_delay(delay, change_time);
+            self.next_change = change_time + duration;
+            tracing::trace!(
+                "Delay changed to {:?}, next change after {:?}",
+                delay,
+                self.next_change - Instant::now()
+            );
+        })
+    }
+}
+
+#[async_trait]
+impl<P> Egress<P> for DelayReplayDeviceEgress<P>
+where
+    P: Packet + Send + Sync,
+{
+    async fn dequeue(&mut self) -> Option<P> {
+        let packet = loop {
+            tokio::select! {
+                biased;
+                Some(config) = self.config_rx.recv() => {
+                    self.set_config(config);
+                }
+                _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
+                    if self.next_change(self.next_change).is_none() {
+                        debug!("Trace goes to end");
+                        self.egress.close();
+                        return None;
+                    }
+                }
+                packet = self.egress.recv() => if let Some(packet) = packet { break packet }
+            }
+        };
+        match self.state.load(std::sync::atomic::Ordering::Acquire) {
+            0 => {
+                return None;
+            }
+            1 => {
+                return Some(packet);
+            }
+            _ => {}
+        }
+        self.next_available = packet.get_timestamp() + self.current_delay;
+        loop {
+            tokio::select! {
+                biased;
+                Some(config) = self.config_rx.recv() => {
+                    self.set_config(config);
+                }
+                _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
+                    if self.next_change(self.next_change).is_none() {
+                        debug!("Trace goes to end");
+                        self.egress.close();
+                        return None;
+                    }
+                }
+                _ = self.send_timer.sleep(self.next_available - Instant::now()) => {
+                    break;
+                }
+            }
+        }
+        Some(packet)
+    }
+
+    // This must be called before any dequeue
+    fn reset(&mut self) {
+        self.next_available = Instant::now();
+        self.next_change = Instant::now();
+    }
+
+    fn change_state(&self, state: i32) {
+        self.state
+            .store(state, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct DelayReplayDeviceConfig {
+    pub trace_config: Box<dyn DelayTraceConfig>,
+}
+
+impl Clone for DelayReplayDeviceConfig {
+    fn clone(&self) -> Self {
+        Self {
+            trace_config: self.trace_config.clone(),
+        }
+    }
+}
+
+impl DelayReplayDeviceConfig {
+    pub fn new<T: Into<Box<dyn DelayTraceConfig>>>(trace_config: T) -> Self {
+        Self {
+            trace_config: trace_config.into(),
+        }
+    }
+}
+
+pub struct DelayReplayDeviceControlInterface {
+    config_tx: mpsc::UnboundedSender<DelayReplayDeviceConfig>,
+}
+
+impl ControlInterface for DelayReplayDeviceControlInterface {
+    type Config = DelayReplayDeviceConfig;
+
+    fn set_config(&self, config: Self::Config) -> Result<(), Error> {
+        info!("Setting delay replay config");
+        self.config_tx
+            .send(config)
+            .map_err(|_| Error::ConfigError("Control channel is closed.".to_string()))?;
+        Ok(())
+    }
+}
+
+pub struct DelayReplayDevice<P: Packet> {
+    ingress: Arc<DelayReplayDeviceIngress<P>>,
+    egress: DelayReplayDeviceEgress<P>,
+    control_interface: Arc<DelayReplayDeviceControlInterface>,
+}
+
+impl<P> Device<P> for DelayReplayDevice<P>
+where
+    P: Packet + Send + Sync + 'static,
+{
+    type IngressType = DelayReplayDeviceIngress<P>;
+    type EgressType = DelayReplayDeviceEgress<P>;
+    type ControlInterfaceType = DelayReplayDeviceControlInterface;
+
+    fn sender(&self) -> Arc<Self::IngressType> {
+        self.ingress.clone()
+    }
+
+    fn receiver(&mut self) -> &mut Self::EgressType {
+        &mut self.egress
+    }
+
+    fn into_receiver(self) -> Self::EgressType {
+        self.egress
+    }
+
+    fn control_interface(&self) -> Arc<Self::ControlInterfaceType> {
+        self.control_interface.clone()
+    }
+}
+
+impl<P> DelayReplayDevice<P>
+where
+    P: Packet,
+{
+    pub fn new(trace: Box<dyn DelayTrace>) -> Result<DelayReplayDevice<P>, Error> {
+        tracing::debug!("New DelayReplayDevice");
+        let (rx, tx) = mpsc::unbounded_channel();
+        let (config_tx, config_rx) = mpsc::unbounded_channel();
+        Ok(DelayReplayDevice {
+            ingress: Arc::new(DelayReplayDeviceIngress { ingress: rx }),
+            egress: DelayReplayDeviceEgress {
+                egress: tx,
+                trace,
+                current_delay: Delay::ZERO,
+                next_available: Instant::now(),
+                next_change: Instant::now(),
+                config_rx,
+                send_timer: Timer::new()?,
+                change_timer: Timer::new()?,
+                state: AtomicI32::new(0),
+            },
+            control_interface: Arc::new(DelayReplayDeviceControlInterface { config_tx }),
         })
     }
 }
