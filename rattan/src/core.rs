@@ -261,6 +261,7 @@ where
                                 match notify {
                                     Ok(RattanNotify::Start) => {
                                         rx.reset(); // Reset the device
+                                        rx.change_state(2);
                                         break;
                                     }
                                     Err(_) => {

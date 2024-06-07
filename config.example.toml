@@ -149,6 +149,19 @@ type = "Delay"
 # Default: "0ms"
 delay = "10ms"
 
+# Delay Replay Device Example
+[devices.up_3]
+type = "DelayReplay"
+
+# Delay trace
+#
+# Should specify the delay trace file in JSON or TOML format.
+# The parser will automatically detect the format by the file extension.
+#
+# The Delay trace is formated as DelayTraceConfig in `netem-trace` crate.
+# Refer to: <https://docs.rs/netem-trace/latest/netem_trace/>
+# For example, the following trace will switch between 10ms and 50ms delays at 1-second intervals and the trace will repeat forever.
+trace = "./assets/dynamic-delay.json"
 
 # BwReplay Device Example
 [devices.down_1]

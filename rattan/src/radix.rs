@@ -228,6 +228,9 @@ where
                 DeviceBuildConfig::Delay(config) => {
                     self.build_device(id, config.into_factory())?;
                 }
+                DeviceBuildConfig::DelayReplay(config) => {
+                    self.build_device(id, config.into_factory())?;
+                }
                 DeviceBuildConfig::Loss(config) => {
                     self.build_device(id, config.into_factory())?;
                 }

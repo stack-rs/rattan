@@ -13,6 +13,7 @@ axum = { version = "0.6.16", optional = true }
 backon = "0.4.4"
 bandwidth = "0.3.0"
 etherparse = "0.13.0"
+figment = { version = "0.10", features = ["toml", "env", "json"] }
 futures = "0.3.26"
 humantime-serde = { version = "1.1.1", optional = true }
 ipnet = "2.8.0"
