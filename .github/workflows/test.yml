@@ -39,7 +39,7 @@ jobs:
           /bin/bash ./ci/scripts/verify.sh
           cd ./ci/scripts/ && tar -czf cache/verify_log.tar.gz cache/*.log
       - name: Archive verification results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: verification_${{ matrix.kernel }}
           path: |
