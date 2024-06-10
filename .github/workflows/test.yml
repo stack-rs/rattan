@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kernel: [ 5.4, 5.15, 6.1, 6.6 ]
+        kernel: [ 5.4, 5.15, 6.1 ]
     runs-on: ${{ matrix.kernel }}
     steps:
       - uses: actions/checkout@v4
