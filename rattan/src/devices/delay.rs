@@ -412,6 +412,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use netem_trace::model::{RepeatedDelayPatternConfig, StaticDelayConfig};
     use std::time::{Duration, Instant};
     use tracing::{span, Level};
 
@@ -540,6 +541,173 @@ mod tests {
 
         assert!((duration - 15.0).abs() <= DELAY_ACCURACY_TOLERANCE);
 
+        Ok(())
+    }
+
+    #[test_log::test]
+    fn test_replay_delay_device() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_replay_delay_device").entered();
+        let rt = tokio::runtime::Runtime::new()?;
+
+        let _guard = rt.enter();
+
+        let pattern = vec![
+            Box::new(
+                StaticDelayConfig::new()
+                    .delay(Delay::from_millis(10))
+                    .duration(Duration::from_secs(1)),
+            ) as Box<dyn DelayTraceConfig>,
+            Box::new(
+                StaticDelayConfig::new()
+                    .delay(Delay::from_millis(50))
+                    .duration(Duration::from_secs(1)),
+            ) as Box<dyn DelayTraceConfig>,
+        ];
+        let delay_trace_config =
+            Box::new(RepeatedDelayPatternConfig::new().pattern(pattern).count(0))
+                as Box<dyn DelayTraceConfig>;
+        let delay_trace = delay_trace_config.into_model();
+        let device = DelayReplayDevice::new(delay_trace)?;
+        let ingress = device.sender();
+        let mut egress = device.into_receiver();
+        egress.reset();
+        egress.change_state(2);
+        let start_time = tokio::time::Instant::now();
+        let mut delays: Vec<f64> = Vec::new();
+        for interval in [1100, 2100, 3100, 0] {
+            for _ in 0..10 {
+                let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+                let start = Instant::now();
+                ingress.enqueue(test_packet)?;
+                let received = rt.block_on(async { egress.dequeue().await });
+
+                // Use mircro second to get precision up to 0.001ms
+                let duration = start.elapsed().as_micros() as f64 / 1000.0;
+
+                delays.push(duration);
+
+                // Should never loss packet
+                assert!(received.is_some());
+
+                let received = received.unwrap();
+
+                // The length should be correct
+                assert!(received.length() == 256);
+            }
+            rt.block_on(async {
+                tokio::time::sleep_until(start_time + Duration::from_millis(interval)).await;
+            })
+        }
+        assert_eq!(delays.len(), 40);
+        for (idx, calibrated_delay) in vec![10, 50, 10, 50].into_iter().enumerate() {
+            let average_delay = delays[(idx * 10)..(10 + idx * 10)].iter().sum::<f64>() / 10.0;
+            debug!("Delays: {:?}", delays);
+            info!(
+                "Average delay: {:.3}ms, error {:.1}ms",
+                average_delay,
+                (average_delay - calibrated_delay as f64).abs()
+            );
+            // Check the delay time
+            assert!((average_delay - calibrated_delay as f64) <= DELAY_ACCURACY_TOLERANCE);
+        }
+        Ok(())
+    }
+
+    #[test_log::test]
+    fn test_replay_delay_device_change_state() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_replay_delay_device").entered();
+        let rt = tokio::runtime::Runtime::new()?;
+
+        let _guard = rt.enter();
+
+        let pattern = vec![
+            Box::new(
+                StaticDelayConfig::new()
+                    .delay(Delay::from_millis(10))
+                    .duration(Duration::from_secs(1)),
+            ) as Box<dyn DelayTraceConfig>,
+            Box::new(
+                StaticDelayConfig::new()
+                    .delay(Delay::from_millis(50))
+                    .duration(Duration::from_secs(1)),
+            ) as Box<dyn DelayTraceConfig>,
+        ];
+        let delay_trace_config =
+            Box::new(RepeatedDelayPatternConfig::new().pattern(pattern).count(0))
+                as Box<dyn DelayTraceConfig>;
+        let delay_trace = delay_trace_config.into_model();
+        let device = DelayReplayDevice::new(delay_trace)?;
+        let ingress = device.sender();
+        let mut egress = device.into_receiver();
+        egress.reset();
+        let start_time = tokio::time::Instant::now();
+        for _ in 0..10 {
+            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            ingress.enqueue(test_packet)?;
+            let received = rt.block_on(async { egress.dequeue().await });
+            // Should drop all packets
+            assert!(received.is_none());
+        }
+        egress.change_state(1);
+        let mut delays: Vec<f64> = Vec::new();
+        rt.block_on(async {
+            tokio::time::sleep_until(start_time + Duration::from_millis(1100)).await;
+        });
+        for _ in 0..10 {
+            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let start = Instant::now();
+            ingress.enqueue(test_packet)?;
+            let received = rt.block_on(async { egress.dequeue().await });
+
+            // Use mircro second to get precision up to 0.001ms
+            let duration = start.elapsed().as_micros() as f64 / 1000.0;
+
+            delays.push(duration);
+
+            // Should never loss packet
+            assert!(received.is_some());
+
+            let received = received.unwrap();
+
+            // The length should be correct
+            assert!(received.length() == 256);
+        }
+        for interval in [2100, 3100] {
+            rt.block_on(async {
+                tokio::time::sleep_until(start_time + Duration::from_millis(interval)).await;
+            });
+            for _ in 0..10 {
+                let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+                let start = Instant::now();
+                ingress.enqueue(test_packet)?;
+                let received = rt.block_on(async { egress.dequeue().await });
+
+                // Use mircro second to get precision up to 0.001ms
+                let duration = start.elapsed().as_micros() as f64 / 1000.0;
+
+                delays.push(duration);
+
+                // Should never loss packet
+                assert!(received.is_some());
+
+                let received = received.unwrap();
+
+                // The length should be correct
+                assert!(received.length() == 256);
+            }
+        }
+        assert_eq!(delays.len(), 30);
+        for (idx, calibrated_delay) in vec![0, 10, 50].into_iter().enumerate() {
+            let average_delay = delays[(idx * 10)..(10 + idx * 10)].iter().sum::<f64>() / 10.0;
+            debug!("Delays: {:?}", delays);
+            info!(
+                "Average delay: {:.3}ms, error {:.1}ms",
+                average_delay,
+                (average_delay - calibrated_delay as f64).abs()
+            );
+            // Check the delay time
+            assert!((average_delay - calibrated_delay as f64) <= DELAY_ACCURACY_TOLERANCE);
+        }
         Ok(())
     }
 }
