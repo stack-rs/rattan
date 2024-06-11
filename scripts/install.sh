@@ -3,7 +3,7 @@ myname=${0##*/}
 
 set -e
 
-install() {
+install_rattan() {
     local binary_path=${1:-"rattan-cli"}
     install_binary $binary_path
     config_networkd
@@ -68,4 +68,4 @@ done
 
 set -- "${POSITIONAL_ARGS[@]}" # restore positional parameters
 
-install "$@"
+install_rattan "$@"
