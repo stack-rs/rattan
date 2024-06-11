@@ -175,7 +175,7 @@ impl RattanController {
             #[cfg(feature = "serde")]
             RattanOp::ConfigDevice(id, payload) => match self.control_interfaces.get(&id) {
                 Some(control_interface) => control_interface.config_device(payload),
-                None => Err(RattanCoreError::UnknowIdError(id).into()),
+                None => Err(RattanCoreError::UnknownIdError(id).into()),
             }
             .map(|_| RattanOpResult::ConfigDevice),
         }

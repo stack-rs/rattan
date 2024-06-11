@@ -134,7 +134,7 @@ where
         self.runtime.block_on(self.op_endpoint.exec(op))
     }
 
-    pub fn build_deivce<D, F>(
+    pub fn build_device<D, F>(
         &mut self,
         id: String,
         builder: F,
@@ -233,23 +233,23 @@ where
             let rx_id = rx_id.clone();
             let tx_id = tx_id.clone();
             let mut rx = self.receiver.remove(&rx_id).ok_or_else(|| {
-                error!("Unknow receiver ID: {}", rx_id);
-                RattanCoreError::UnknowIdError(rx_id.clone())
+                error!("Unknown receiver ID: {}", rx_id);
+                RattanCoreError::UnknownIdError(rx_id.clone())
             })?;
             let tx = self
                 .sender
                 .get(&tx_id)
                 .ok_or_else(|| {
-                    error!("Unknow sender ID: {}", tx_id);
-                    RattanCoreError::UnknowIdError(tx_id.clone())
+                    error!("Unknown sender ID: {}", tx_id);
+                    RattanCoreError::UnknownIdError(tx_id.clone())
                 })?
                 .clone();
             #[cfg(feature = "packet-dump")]
             let pcap_writer = self.pcap_writer.clone();
             #[cfg(feature = "packet-dump")]
             let interface_id = *self.interface_id.get(&rx_id).ok_or_else(|| {
-                error!("Unknow interface ID: {}", rx_id);
-                RattanCoreError::UnknowIdError(rx_id.clone())
+                error!("Unknown interface ID: {}", rx_id);
+                RattanCoreError::UnknownIdError(rx_id.clone())
             })?;
 
             self.rattan_handles.push(self.runtime.spawn(

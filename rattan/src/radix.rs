@@ -157,7 +157,7 @@ where
         Ok(radix)
     }
 
-    pub fn build_deivce<D, F>(
+    pub fn build_device<D, F>(
         &mut self,
         id: String,
         builder: F,
@@ -166,7 +166,7 @@ where
         D: Device<P>,
         F: DeviceFactory<D>,
     {
-        self.rattan.build_deivce(id, builder)
+        self.rattan.build_device(id, builder)
     }
 
     pub fn link_device(&mut self, rx_id: String, tx_id: String) {
@@ -176,7 +176,7 @@ where
     pub fn init_veth(&mut self) -> Result<(), Error> {
         let rattan_ns = self.env.rattan_ns.clone();
         let veth = self.env.left_pair.right.clone();
-        self.build_deivce("left".to_string(), move |rt| {
+        self.build_device("left".to_string(), move |rt| {
             let _guard = rt.enter();
             let _ns_guard = NetNsGuard::new(rattan_ns);
             VirtualEthernet::<P, AfPacketDriver>::new(veth, "left".to_string())
@@ -184,7 +184,7 @@ where
 
         let rattan_ns = self.env.rattan_ns.clone();
         let veth = self.env.right_pair.left.clone();
-        self.build_deivce("right".to_string(), move |rt| {
+        self.build_device("right".to_string(), move |rt| {
             let _guard = rt.enter();
             let _ns_guard = NetNsGuard::new(rattan_ns);
             VirtualEthernet::<P, AfPacketDriver>::new(veth, "right".to_string())
@@ -199,37 +199,37 @@ where
             match device_config {
                 DeviceBuildConfig::Bw(bw_config) => match bw_config {
                     crate::config::BwDeviceBuildConfig::Infinite(config) => {
-                        self.build_deivce(id, config.into_factory())?;
+                        self.build_device(id, config.into_factory())?;
                     }
                     crate::config::BwDeviceBuildConfig::DropTail(config) => {
-                        self.build_deivce(id, config.into_factory())?;
+                        self.build_device(id, config.into_factory())?;
                     }
                     crate::config::BwDeviceBuildConfig::DropHead(config) => {
-                        self.build_deivce(id, config.into_factory())?;
+                        self.build_device(id, config.into_factory())?;
                     }
                     crate::config::BwDeviceBuildConfig::CoDel(config) => {
-                        self.build_deivce(id, config.into_factory())?;
+                        self.build_device(id, config.into_factory())?;
                     }
                 },
                 DeviceBuildConfig::BwReplay(bw_replay_config) => match bw_replay_config {
                     crate::config::BwReplayDeviceBuildConfig::Infinite(config) => {
-                        self.build_deivce(id, config.into_factory())?;
+                        self.build_device(id, config.into_factory())?;
                     }
                     crate::config::BwReplayDeviceBuildConfig::DropTail(config) => {
-                        self.build_deivce(id, config.into_factory())?;
+                        self.build_device(id, config.into_factory())?;
                     }
                     crate::config::BwReplayDeviceBuildConfig::DropHead(config) => {
-                        self.build_deivce(id, config.into_factory())?;
+                        self.build_device(id, config.into_factory())?;
                     }
                     crate::config::BwReplayDeviceBuildConfig::CoDel(config) => {
-                        self.build_deivce(id, config.into_factory())?;
+                        self.build_device(id, config.into_factory())?;
                     }
                 },
                 DeviceBuildConfig::Delay(config) => {
-                    self.build_deivce(id, config.into_factory())?;
+                    self.build_device(id, config.into_factory())?;
                 }
                 DeviceBuildConfig::Loss(config) => {
-                    self.build_deivce(id, config.into_factory())?;
+                    self.build_device(id, config.into_factory())?;
                 }
                 DeviceBuildConfig::Custom => {
                     debug!("Skip build custom device: {}", id);
