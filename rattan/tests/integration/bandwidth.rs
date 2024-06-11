@@ -771,7 +771,7 @@ fn test_replay() {
     ]);
     let mut radix = RattanRadix::<StdPacket>::new(config).unwrap();
     let control_interface = radix
-        .build_deivce("up_bw".to_string(), |handle| {
+        .build_device("up_bw".to_string(), |handle| {
             let _guard = handle.enter();
             let trace = RepeatedBwPatternConfig::new()
                 .pattern(vec![Box::new(StaticBwConfig {

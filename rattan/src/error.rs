@@ -100,8 +100,8 @@ pub enum RattanCoreError {
     AddDeviceError(String),
     #[error("Failed to send notify, {0}")]
     SendNotifyError(String),
-    #[error("Unknow interface ID \"{0}\"")]
-    UnknowIdError(String),
+    #[error("Unknown interface ID \"{0}\"")]
+    UnknownIdError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -129,7 +129,7 @@ impl axum::response::IntoResponse for Error {
             Error::MetalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::TokioRuntimeError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::RattanRadixError(_) => StatusCode::BAD_REQUEST,
-            Error::RattanCoreError(RattanCoreError::UnknowIdError(_)) => StatusCode::NOT_FOUND,
+            Error::RattanCoreError(RattanCoreError::UnknownIdError(_)) => StatusCode::NOT_FOUND,
             Error::RattanCoreError(_) => StatusCode::BAD_REQUEST,
             Error::RattanOpError(_) => StatusCode::BAD_REQUEST,
             Error::ConfigError(_) => StatusCode::BAD_REQUEST,
