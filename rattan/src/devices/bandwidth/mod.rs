@@ -432,16 +432,16 @@ where
     }
 
     // Return the next change time or **None** if the trace goes to end
-    fn next_change(&mut self, change_time: Instant) -> Option<Instant> {
+    fn next_change(&mut self, change_time: Instant) -> Option<()> {
         let next_bw = self.trace.next_bw();
         next_bw.map(|(bandwidth, duration)| {
             self.change_bandwidth(bandwidth, change_time);
+            self.next_change = change_time + duration;
             trace!(
                 "Bandwidth changed to {:?}, next change after {:?}",
                 bandwidth,
                 change_time + duration - Instant::now()
             );
-            change_time + duration
         })
     }
 }
@@ -461,15 +461,10 @@ where
                     self.set_config(config);
                 }
                 _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
-                    match self.next_change(self.next_change) {
-                        Some(next_change) => {
-                            self.next_change = next_change;
-                        }
-                        None => {
-                            debug!("Trace goes to end");
-                            self.egress.close();
-                            return None;
-                        }
+                    if self.next_change(self.next_change).is_none() {
+                        debug!("Trace goes to end");
+                        self.egress.close();
+                        return None;
                     }
                 }
                 _ = self.send_timer.sleep(self.next_available - Instant::now()) => {
@@ -491,15 +486,10 @@ where
                     self.set_config(config);
                 }
                 _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
-                    match self.next_change(self.next_change) {
-                        Some(next_change) => {
-                            self.next_change = next_change;
-                        }
-                        None => {
-                            debug!("Trace goes to end");
-                            self.egress.close();
-                            return None;
-                        }
+                    if self.next_change(self.next_change).is_none() {
+                        debug!("Trace goes to end");
+                        self.egress.close();
+                        return None;
                     }
                 }
                 recv_packet = self.egress.recv() => {
