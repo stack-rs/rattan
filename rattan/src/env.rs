@@ -278,10 +278,10 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         }
     }
 
-    // Set the default neighbours of left and right namespaces
-    info!("Set default neighbours");
+    // Set the default neighbors of left and right namespaces
+    info!("Set default neighbors");
 
-    debug!("Set default neighbours for client namespace");
+    debug!("Set default neighbors for client namespace");
     add_arp_entry_with_netns(
         veth_pair_server.right.ip_addr.0,
         veth_pair_server.right.mac_addr,
@@ -289,7 +289,7 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         client_netns.clone(),
     )?;
 
-    debug!("Set default neighbours for server namespace");
+    debug!("Set default neighbors for server namespace");
     add_arp_entry_with_netns(
         veth_pair_client.left.ip_addr.0,
         veth_pair_client.left.mac_addr,

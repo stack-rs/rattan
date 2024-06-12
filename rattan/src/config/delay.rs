@@ -53,6 +53,7 @@ impl DelayReplayDeviceBuildConfig {
             file_path
         )))
     }
+
     pub fn into_factory<P: Packet>(self) -> impl DeviceFactory<delay::DelayReplayDevice<P>> {
         move |handle| {
             let _guard = handle.enter();

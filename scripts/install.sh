@@ -5,12 +5,12 @@ set -e
 
 install_rattan() {
     local binary_path=${1:-"rattan-cli"}
-    install_binary $binary_path
+    install_binary "$binary_path"
     config_networkd
 }
 
 install_binary() {
-    sudo install -m 755 $1 /usr/local/bin/rattan-cli
+    sudo install -m 755 "$1" /usr/local/bin/rattan-cli
     sudo setcap 'cap_dac_override,cap_dac_read_search,cap_sys_ptrace,cap_net_admin,cap_sys_admin,cap_net_raw+ep' /usr/local/bin/rattan-cli
 }
 

@@ -309,17 +309,17 @@ fn test_droptail_queue() {
                     sleep(next_time - Instant::now());
                 }
                 sleep(Duration::from_millis(200));
-                let mut recv_indexs = Vec::new();
+                let mut recv_indexes = Vec::new();
                 while let Ok((index, _size, _timestamp)) = msg_rx.try_recv() {
-                    recv_indexs.push(index);
+                    recv_indexes.push(index);
                 }
-                info!(?recv_indexs);
-                assert!(recv_indexs.len() == 14);
-                for (i, recv_index) in recv_indexs.iter().enumerate().take(12) {
+                info!(?recv_indexes);
+                assert!(recv_indexes.len() == 14);
+                for (i, recv_index) in recv_indexes.iter().enumerate().take(12) {
                     assert!(*recv_index == i as u8);
                 }
-                assert!(19 <= recv_indexs[12] && recv_indexs[12] <= 20);
-                assert!(27 <= recv_indexs[13] && recv_indexs[13] <= 30);
+                assert!(19 <= recv_indexes[12] && recv_indexes[12] <= 20);
+                assert!(27 <= recv_indexes[13] && recv_indexes[13] <= 30);
 
                 info!("Test DropTailQueue (500 Bytes limit)");
                 info!("Set bandwidth to 40kbps (50B per 10ms)");
@@ -347,17 +347,17 @@ fn test_droptail_queue() {
                     sleep(next_time - Instant::now());
                 }
                 sleep(Duration::from_millis(200));
-                let mut recv_indexs = Vec::new();
+                let mut recv_indexes = Vec::new();
                 while let Ok((index, _size, _timestamp)) = msg_rx.try_recv() {
-                    recv_indexs.push(index);
+                    recv_indexes.push(index);
                 }
-                info!(?recv_indexs);
-                assert!(recv_indexs.len() == 14);
-                for (i, recv_index) in recv_indexs.iter().enumerate().take(12) {
+                info!(?recv_indexes);
+                assert!(recv_indexes.len() == 14);
+                for (i, recv_index) in recv_indexes.iter().enumerate().take(12) {
                     assert!(*recv_index == i as u8);
                 }
-                assert!(19 <= recv_indexs[12] && recv_indexs[12] <= 20);
-                assert!(27 <= recv_indexs[13] && recv_indexs[13] <= 30);
+                assert!(19 <= recv_indexes[12] && recv_indexes[12] <= 20);
+                assert!(27 <= recv_indexes[13] && recv_indexes[13] <= 30);
                 Ok(())
             })
             .unwrap();
@@ -476,17 +476,17 @@ fn test_drophead_queue() {
                     sleep(next_time - Instant::now());
                 }
                 sleep(Duration::from_millis(200));
-                let mut recv_indexs = Vec::new();
+                let mut recv_indexes = Vec::new();
                 while let Ok((index, _size, _timestamp)) = msg_rx.try_recv() {
-                    recv_indexs.push(index);
+                    recv_indexes.push(index);
                 }
-                info!(?recv_indexs);
-                assert!(recv_indexs.len() == 14);
-                assert!(recv_indexs[0] == 0);
-                assert!(recv_indexs[1] == 1);
-                assert!(8 <= recv_indexs[2] && recv_indexs[2] <= 10);
-                assert!(17 <= recv_indexs[3] && recv_indexs[3] <= 19);
-                for (i, recv_index) in recv_indexs.iter().enumerate().take(14).skip(4) {
+                info!(?recv_indexes);
+                assert!(recv_indexes.len() == 14);
+                assert!(recv_indexes[0] == 0);
+                assert!(recv_indexes[1] == 1);
+                assert!(8 <= recv_indexes[2] && recv_indexes[2] <= 10);
+                assert!(17 <= recv_indexes[3] && recv_indexes[3] <= 19);
+                for (i, recv_index) in recv_indexes.iter().enumerate().take(14).skip(4) {
                     assert!(*recv_index == 16 + i as u8);
                 }
 
@@ -516,17 +516,17 @@ fn test_drophead_queue() {
                     sleep(next_time - Instant::now());
                 }
                 sleep(Duration::from_millis(200));
-                let mut recv_indexs = Vec::new();
+                let mut recv_indexes = Vec::new();
                 while let Ok((index, _size, _timestamp)) = msg_rx.try_recv() {
-                    recv_indexs.push(index);
+                    recv_indexes.push(index);
                 }
-                info!(?recv_indexs);
-                assert!(recv_indexs.len() == 14);
-                assert!(recv_indexs[0] == 0);
-                assert!(recv_indexs[1] == 1);
-                assert!(8 <= recv_indexs[2] && recv_indexs[2] <= 10);
-                assert!(17 <= recv_indexs[3] && recv_indexs[3] <= 19);
-                for (i, recv_index) in recv_indexs.iter().enumerate().take(14).skip(4) {
+                info!(?recv_indexes);
+                assert!(recv_indexes.len() == 14);
+                assert!(recv_indexes[0] == 0);
+                assert!(recv_indexes[1] == 1);
+                assert!(8 <= recv_indexes[2] && recv_indexes[2] <= 10);
+                assert!(17 <= recv_indexes[3] && recv_indexes[3] <= 19);
+                for (i, recv_index) in recv_indexes.iter().enumerate().take(14).skip(4) {
                     assert!(*recv_index == 16 + i as u8);
                 }
                 Ok(())
@@ -653,27 +653,27 @@ fn test_codel_queue() {
                     sleep(next_time - Instant::now());
                 }
                 sleep(Duration::from_millis(1000));
-                let mut recv_indexs = Vec::new();
+                let mut recv_indexes = Vec::new();
                 while let Ok((index, _size, _timestamp)) = msg_rx.try_recv() {
-                    recv_indexs.push(index);
+                    recv_indexes.push(index);
                 }
-                info!(?recv_indexs);
-                let mut dropped_indexs = Vec::new();
+                info!(?recv_indexes);
+                let mut dropped_indexes = Vec::new();
                 for i in 0..80 {
-                    if !recv_indexs.contains(&(i as u8)) {
-                        dropped_indexs.push(i as u8);
+                    if !recv_indexes.contains(&(i as u8)) {
+                        dropped_indexes.push(i as u8);
                     }
                 }
-                info!(?dropped_indexs);
+                info!(?dropped_indexes);
                 // A reference result: [18, 30, 38, 45, 51, 57, 62, 67, 72, 76, 77, 78] (len=12)
                 // This result is same with mahimahi
-                assert!(11 <= dropped_indexs.len() && dropped_indexs.len() <= 13);
-                assert!(17 <= dropped_indexs[0] && dropped_indexs[0] <= 19);
-                let pattarn = [12, 8, 7, 6, 6, 5, 5, 4];
-                for i in 0..pattarn.len() {
+                assert!(11 <= dropped_indexes.len() && dropped_indexes.len() <= 13);
+                assert!(17 <= dropped_indexes[0] && dropped_indexes[0] <= 19);
+                let pattern = [12, 8, 7, 6, 6, 5, 5, 4];
+                for i in 0..pattern.len() {
                     assert!(
-                        pattarn[i] - 1 <= dropped_indexs[i + 1] - dropped_indexs[i]
-                            && dropped_indexs[i + 1] - dropped_indexs[i] <= pattarn[i] + 1
+                        pattern[i] - 1 <= dropped_indexes[i + 1] - dropped_indexes[i]
+                            && dropped_indexes[i + 1] - dropped_indexes[i] <= pattern[i] + 1
                     );
                 }
 
@@ -710,26 +710,26 @@ fn test_codel_queue() {
                     sleep(next_time - Instant::now());
                 }
                 sleep(Duration::from_millis(1000));
-                let mut recv_indexs = Vec::new();
+                let mut recv_indexes = Vec::new();
                 while let Ok((index, _size, _timestamp)) = msg_rx.try_recv() {
-                    recv_indexs.push(index);
+                    recv_indexes.push(index);
                 }
-                info!(?recv_indexs);
-                let mut dropped_indexs = Vec::new();
+                info!(?recv_indexes);
+                let mut dropped_indexes = Vec::new();
                 for i in 0..80 {
-                    if !recv_indexs.contains(&(i as u8)) {
-                        dropped_indexs.push(i as u8);
+                    if !recv_indexes.contains(&(i as u8)) {
+                        dropped_indexes.push(i as u8);
                     }
                 }
-                info!(?dropped_indexs);
+                info!(?dropped_indexes);
                 // A reference result: [18, 23, 28, 32, 36, 40, 44, 48, 51, 55, 59, 62, 65, 69, 72, 76, 77, 78] (len=18)
-                assert!(16 <= dropped_indexs.len() && dropped_indexs.len() <= 20);
-                assert!(16 <= dropped_indexs[0] && dropped_indexs[0] <= 20);
-                let pattarn = [5, 5, 4, 4, 4, 4, 3, 4, 4, 3, 3, 4, 3];
-                for i in 0..pattarn.len() {
+                assert!(16 <= dropped_indexes.len() && dropped_indexes.len() <= 20);
+                assert!(16 <= dropped_indexes[0] && dropped_indexes[0] <= 20);
+                let pattern = [5, 5, 4, 4, 4, 4, 3, 4, 4, 3, 3, 4, 3];
+                for i in 0..pattern.len() {
                     assert!(
-                        pattarn[i] - 1 <= dropped_indexs[i + 1] - dropped_indexs[i]
-                            && dropped_indexs[i + 1] - dropped_indexs[i] <= pattarn[i] + 1
+                        pattern[i] - 1 <= dropped_indexes[i + 1] - dropped_indexes[i]
+                            && dropped_indexes[i + 1] - dropped_indexes[i] <= pattern[i] + 1
                     );
                 }
                 Ok(())

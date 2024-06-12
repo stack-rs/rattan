@@ -75,7 +75,7 @@ fn test_delay() {
     {
         let _span = span!(Level::INFO, "ping_with_delay").entered();
         info!(
-            "try to ping with updelay set up delay to 100ms and down delay to 50ms (rtt = 150ms)"
+            "try to ping with up delay set up delay to 100ms and down delay to 50ms (rtt = 150ms)"
         );
         radix
             .op_block_exec(RattanOp::ConfigDevice(

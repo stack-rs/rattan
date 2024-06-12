@@ -449,7 +449,7 @@ mod tests {
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
 
-                // Use mircro second to get precision up to 0.001ms
+                // Use microsecond to get precision up to 0.001ms
                 let duration = start.elapsed().as_micros() as f64 / 1000.0;
 
                 delays.push(duration);
@@ -581,7 +581,7 @@ mod tests {
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
 
-                // Use mircro second to get precision up to 0.001ms
+                // Use microsecond to get precision up to 0.001ms
                 let duration = start.elapsed().as_micros() as f64 / 1000.0;
 
                 delays.push(duration);
@@ -659,7 +659,7 @@ mod tests {
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
 
-            // Use mircro second to get precision up to 0.001ms
+            // Use microsecond to get precision up to 0.001ms
             let duration = start.elapsed().as_micros() as f64 / 1000.0;
 
             delays.push(duration);
@@ -682,7 +682,7 @@ mod tests {
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
 
-                // Use mircro second to get precision up to 0.001ms
+                // Use microsecond to get precision up to 0.001ms
                 let duration = start.elapsed().as_micros() as f64 / 1000.0;
 
                 delays.push(duration);

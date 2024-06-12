@@ -111,6 +111,7 @@ where
     async fn dequeue(&mut self) -> Option<P>;
 
     fn reset(&mut self) {}
+
     /// 0 means drop, 1 means pass-through, 2 means normal operation
     fn change_state(&self, _state: i32) {}
 }

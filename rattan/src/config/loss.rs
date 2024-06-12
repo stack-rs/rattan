@@ -55,6 +55,7 @@ impl LossReplayDeviceBuildConfig {
             file_path
         )))
     }
+
     pub fn into_factory<P: Packet>(self) -> impl DeviceFactory<loss::LossReplayDevice<P, StdRng>> {
         move |handle| {
             let _guard = handle.enter();
