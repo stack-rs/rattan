@@ -429,14 +429,14 @@ mod tests {
     fn test_delay_device() -> Result<(), Error> {
         let _span = span!(Level::INFO, "test_delay_device").entered();
         for testing_delay in DELAY_TEST_TIME {
-            let rt = tokio::runtime::Runtime::new()?;
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
 
             let _guard = rt.enter();
 
             info!("Creating device with {}ms delay", testing_delay);
-            let device_config = DelayDeviceConfig::new(Duration::from_millis(testing_delay));
-            let builder = device_config.into_factory::<StdPacket>();
-            let device = builder(rt.handle())?;
+            let device = DelayDevice::new(Duration::from_millis(testing_delay))?;
             let ingress = device.sender();
             let mut egress = device.into_receiver();
 
@@ -485,14 +485,14 @@ mod tests {
     #[test_log::test]
     fn test_delay_device_config_update() -> Result<(), Error> {
         let _span = span!(Level::INFO, "test_delay_device_config_update").entered();
-        let rt = tokio::runtime::Runtime::new()?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
 
         let _guard = rt.enter();
 
         info!("Creating device with 10ms delay");
-        let device_config = DelayDeviceConfig::new(Duration::from_millis(10));
-        let builder = device_config.into_factory::<StdPacket>();
-        let device = builder(rt.handle())?;
+        let device = DelayDevice::new(Duration::from_millis(10))?;
         let config_changer = device.control_interface();
         let ingress = device.sender();
         let mut egress = device.into_receiver();
@@ -547,7 +547,9 @@ mod tests {
     #[test_log::test]
     fn test_replay_delay_device() -> Result<(), Error> {
         let _span = span!(Level::INFO, "test_replay_delay_device").entered();
-        let rt = tokio::runtime::Runtime::new()?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
 
         let _guard = rt.enter();
 
@@ -616,7 +618,9 @@ mod tests {
     #[test_log::test]
     fn test_replay_delay_device_change_state() -> Result<(), Error> {
         let _span = span!(Level::INFO, "test_replay_delay_device").entered();
-        let rt = tokio::runtime::Runtime::new()?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
 
         let _guard = rt.enter();
 

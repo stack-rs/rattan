@@ -413,8 +413,8 @@ mod tests {
 
     #[derive(Debug)]
     struct PacketStatistics {
-        total: i32,
-        lost: i32,
+        total: u32,
+        lost: u32,
     }
 
     impl PacketStatistics {
@@ -424,6 +424,15 @@ mod tests {
 
         fn get_lost_rate(&self) -> f64 {
             self.lost as f64 / self.total as f64
+        }
+
+        fn recv_loss_packet(&mut self) {
+            self.total += 1;
+            self.lost += 1;
+        }
+
+        fn recv_normal_packet(&mut self) {
+            self.total += 1;
         }
     }
 
@@ -450,13 +459,13 @@ mod tests {
     #[test_log::test]
     fn test_loss_device() -> Result<(), Error> {
         let _span = span!(Level::INFO, "test_loss_device").entered();
-        let rt = tokio::runtime::Runtime::new()?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
         let _guard = rt.enter();
 
         info!("Creating device with loss [0.1]");
-        let device_config = LossDeviceConfig::new([0.1]);
-        let builder = device_config.into_factory::<StdPacket>();
-        let device = builder(rt.handle())?;
+        let device = LossDevice::new([0.1], StdRng::seed_from_u64(42))?;
         let ingress = device.sender();
         let mut egress = device.into_receiver();
 
@@ -468,10 +477,12 @@ mod tests {
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
 
-            statistics.total += 1;
             match received {
-                Some(content) => assert!(content.length() == 256),
-                None => statistics.lost += 1,
+                Some(content) => {
+                    assert!(content.length() == 256);
+                    statistics.recv_normal_packet();
+                }
+                None => statistics.recv_loss_packet(),
             }
         }
         let loss_rate = statistics.get_lost_rate();
@@ -483,7 +494,9 @@ mod tests {
     #[test_log::test]
     fn test_loss_device_loss_list() -> Result<(), Error> {
         let _span = span!(Level::INFO, "test_loss_device_loss_list").entered();
-        let rt = tokio::runtime::Runtime::new()?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
         let _guard = rt.enter();
 
         let loss_configs = vec![
@@ -501,7 +514,9 @@ mod tests {
                 seed
             );
             let loss_seq = get_loss_seq(loss_config, seed)?;
-            /* Because tests are run with root privileges, insta review will not have sufficient privilege to update the snapshot file. To update the snapshot, set the environment variable INSTA_UPDATE to always so that insta will update the snapshot file during the test run (but without confirming). */
+            // Because tests are run with root privileges, insta review will not have sufficient privilege to update the snapshot file.
+            // To update the snapshot, set the environment variable INSTA_UPDATE to always
+            // so that insta will update the snapshot file during the test run (but without confirming).
             assert_json_snapshot!(loss_seq)
         }
         Ok(())
@@ -510,13 +525,13 @@ mod tests {
     #[test_log::test]
     fn test_loss_device_config_update() -> Result<(), Error> {
         let _span = span!(Level::INFO, "test_loss_device_config_update").entered();
-        let rt = tokio::runtime::Runtime::new()?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
         let _guard = rt.enter();
 
         info!("Creating device with loss [1.0, 0.0]");
-        let device_config = LossDeviceConfig::new([1.0, 0.0]);
-        let builder = device_config.into_factory::<StdPacket>();
-        let device = builder(rt.handle())?;
+        let device = LossDevice::new([1.0, 0.0], StdRng::seed_from_u64(42))?;
         let config_changer = device.control_interface();
         let ingress = device.sender();
         let mut egress = device.into_receiver();
@@ -545,13 +560,13 @@ mod tests {
     #[test_log::test]
     fn test_loss_device_config_update_length_change() -> Result<(), Error> {
         let _span = span!(Level::INFO, "test_loss_device_config_update_fallback").entered();
-        let rt = tokio::runtime::Runtime::new()?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
         let _guard = rt.enter();
 
         info!("Creating device with loss [1.0, 1.0, 0.0]");
-        let device_config = LossDeviceConfig::new([1.0, 1.0, 0.0]);
-        let builder = device_config.into_factory::<StdPacket>();
-        let device = builder(rt.handle())?;
+        let device = LossDevice::new([1.0, 1.0, 0.0], StdRng::seed_from_u64(42))?;
         let config_changer = device.control_interface();
         let ingress = device.sender();
         let mut egress = device.into_receiver();
@@ -589,7 +604,9 @@ mod tests {
     #[test_log::test]
     fn test_loss_replay_device() -> Result<(), Error> {
         let _span = span!(Level::INFO, "test_loss_replay_device").entered();
-        let rt = tokio::runtime::Runtime::new()?;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
         let _guard = rt.enter();
 
         let pattern = vec![
