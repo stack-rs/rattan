@@ -5,8 +5,12 @@ packer {
       source  = "github.com/ivoronin/sshkey"
     }
     libvirt = {
-      version = ">= 0.4.5"
+      version = "0.4.5"
       source  = "github.com/thomasklein94/libvirt"
+    }
+    ansible = {
+      version = "~> 1"
+      source = "github.com/hashicorp/ansible"
     }
   }
 }
@@ -36,6 +40,8 @@ source "libvirt" "image" {
 
   volume {
     alias = "artifact"
+    target_dev = "sda"
+    bus        = "sata"
 
     source {
       type = "external"
@@ -48,12 +54,12 @@ source "libvirt" "image" {
     pool       = "default"
     capacity   = "32G"
     size       = "32G"
-    target_dev = "sda"
-    bus        = "sata"
     format     = "qcow2"
   }
 
   volume {
+    target_dev = "sdb"
+    bus        = "sata"
     source {
       type = "cloud-init"
       user_data = format("#cloud-config\n%s", jsonencode({
@@ -101,10 +107,7 @@ source "libvirt" "image" {
         hostname = "${var.release_name}-${var.kernel_version}"
       }))
     }
-
     pool       = "default"
-    target_dev = "sdb"
-    bus        = "sata"
   }
   shutdown_mode = "acpi"
 }
@@ -150,6 +153,6 @@ build {
   provisioner "ansible" {
     playbook_file = "./ansible/configure.yml"
     galaxy_file = "./ansible/requirements.yml"
-    extra_arguments = [ "--extra-vars", "github_access_key=${var.github_access_key} kernel_version=${var.kernel_version} runner_name=${var.release_name}-${var.kernel_version}" ]
+    extra_arguments = [ "--extra-vars", "github_access_key=${var.github_access_key} kernel_version=${var.kernel_version} runner_name=${var.release_name}-${var.kernel_version} tag=ubuntu-${var.release_name}" ]
   }
 }

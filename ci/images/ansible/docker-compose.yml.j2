@@ -1,8 +1,6 @@
-version: '3'
-
 services:
   worker:
-    image: myoung34/github-runner:latest
+    image: myoung34/github-runner:{{ tag }}
     container_name: github-runner
     restart: always
     environment:
@@ -12,6 +10,7 @@ services:
       ACCESS_TOKEN: {{ github_access_key }}
       RUNNER_WORKDIR: /tmp/runner/work
       LABELS: linux,x64,{{ kernel_version }}
+      EPHEMERAL: true
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -24,4 +23,5 @@ services:
       - apparmor=unconfined
     volumes:
       - '/var/run/docker.sock:/var/run/docker.sock'
+      - '/sys/class:/sys/class'
       - '/tmp/runner:/tmp/runner'
