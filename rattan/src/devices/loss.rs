@@ -400,7 +400,9 @@ where
 mod tests {
     use insta::assert_json_snapshot;
     use itertools::iproduct;
+    use netem_trace::model::{RepeatedLossPatternConfig, StaticLossConfig};
     use rand::{rngs::StdRng, SeedableRng};
+    use std::time::Duration;
     use tracing::{span, Level};
 
     use crate::devices::StdPacket;
@@ -581,6 +583,83 @@ mod tests {
             assert!(received.is_none());
         }
 
+        Ok(())
+    }
+
+    #[test_log::test]
+    fn test_loss_replay_device() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_loss_replay_device").entered();
+        let rt = tokio::runtime::Runtime::new()?;
+        let _guard = rt.enter();
+
+        let pattern = vec![
+            Box::new(
+                StaticLossConfig::new()
+                    .loss(vec![0.0])
+                    .duration(Duration::from_secs(1)),
+            ) as Box<dyn LossTraceConfig>,
+            Box::new(
+                StaticLossConfig::new()
+                    .loss(vec![0.5])
+                    .duration(Duration::from_secs(1)),
+            ) as Box<dyn LossTraceConfig>,
+        ];
+        let loss_trace_config = Box::new(RepeatedLossPatternConfig::new().pattern(pattern).count(0))
+            as Box<dyn LossTraceConfig>;
+        let loss_trace = loss_trace_config.into_model();
+
+        let device: LossReplayDevice<StdPacket, StdRng> =
+            LossReplayDevice::new(loss_trace, StdRng::seed_from_u64(42))?;
+        let ingress = device.sender();
+        let mut egress = device.into_receiver();
+        egress.reset();
+        let start_time = tokio::time::Instant::now();
+
+        for _ in 0..100 {
+            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            ingress.enqueue(test_packet)?;
+            let received = rt.block_on(async { egress.dequeue().await });
+            // Should drop all packets
+            assert!(received.is_none());
+        }
+        egress.change_state(1);
+        rt.block_on(async {
+            tokio::time::sleep_until(start_time + Duration::from_millis(10)).await;
+        });
+        for _ in 0..100 {
+            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            ingress.enqueue(test_packet)?;
+            let received = rt.block_on(async { egress.dequeue().await });
+            // Should never loss packet
+            assert!(received.is_some());
+            assert!(received.unwrap().length() == 256)
+        }
+        egress.change_state(2);
+
+        for (interval, calibrated_loss_rate) in [(1100, 0.5), (2100, 0.0)] {
+            rt.block_on(async {
+                tokio::time::sleep_until(start_time + Duration::from_millis(interval)).await;
+            });
+            let mut statistics = PacketStatistics::new();
+
+            for _ in 0..100 {
+                let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+                ingress.enqueue(test_packet)?;
+                let received = rt.block_on(async { egress.dequeue().await });
+
+                statistics.total += 1;
+                match received {
+                    Some(content) => assert!(content.length() == 256),
+                    None => statistics.lost += 1,
+                }
+            }
+            let loss_rate = statistics.get_lost_rate();
+            info!(
+                "Tested loss rate is {} and calibrated loss rate is {}",
+                loss_rate, calibrated_loss_rate
+            );
+            assert!((loss_rate - calibrated_loss_rate).abs() <= LOSS_RATE_ACCURACY_TOLERANCE);
+        }
         Ok(())
     }
 }
