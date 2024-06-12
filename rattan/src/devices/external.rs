@@ -92,7 +92,7 @@ where
 {
     fn enqueue(&self, packet: D::Packet) -> Result<(), Error> {
         let ts = get_clock_ns();
-        tracing::info!(target: "veth::ingress::packet", "At {} veth {} ingress enqueue pkt length {}", ts, self.id, packet.length());
+        tracing::debug!(target: "veth::ingress::packet", "At {} veth {} ingress enqueue pkt length {}", ts, self.id, packet.length());
         Ok(self
             .sender
             .try_send(packet)
@@ -145,7 +145,7 @@ where
                 Ok(packet) => match packet {
                     Ok(Some(p)) => {
                         let ts = get_clock_ns();
-                        tracing::info!(target: "veth::egress::packet", "At {} veth {} egress dequeue pkt length {}", ts, id, p.length());
+                        tracing::debug!(target: "veth::egress::packet", "At {} veth {} egress dequeue pkt length {}", ts, id, p.length());
                         let _ = sender.send(p).await;
                     }
                     Err(e) => error!("recv error: {}", e),

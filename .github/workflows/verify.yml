@@ -1,22 +1,20 @@
-name: Test
+name: Verify
 
 on:
-  push:
-    paths-ignore:
-      - 'documents/**'
-      - '.github/**'
-      - 'assets/**'
+  schedule:
+    - cron: "0 1 * * *"
 # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
 concurrency:
-  group: test-${{ github.ref }}
+  group: verify-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test-all-features:
-    name: cargo test with all features
+    name: verify functionality of rattan
     strategy:
+      max-parallel: 1 # Avoid resource contention
       fail-fast: false
       matrix:
         kernel: [ 5.4, 5.15, 6.8 ]
@@ -35,13 +33,15 @@ jobs:
       - run: wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
       - run: sudo apt-get update && sudo apt-get install libllvm17 llvm-17 llvm-17-runtime clang-17 clang-tools-17 libclang-common-17-dev libclang-17-dev libclang1-17 -y
       - run: sudo ln -sf /usr/bin/clang-17 /usr/bin/clang && sudo ln -sf /usr/bin/llc-17 /usr/bin/llc
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      - run: cargo nextest run --profile ci --all-features --release
-        env:
-          RUST_LOG: 'info'
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: 'sudo -E'
-          # For insta to disable writing new snapshot files and fail on mismatch
-          CI: 'true'
       - run: sudo ./scripts/clean_stdenv.sh -a
-
+      - name: Performance verification
+        run: |
+          /bin/bash ./ci/scripts/verify.sh
+          cd ./ci/scripts/ && tar -czf cache/verify_log.tar.gz cache/*.log
+      - name: Archive verification results
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification_${{ matrix.kernel }}
+          path: |
+            ci/scripts/cache/verify.html
+            ci/scripts/cache/verify_log.tar.gz

@@ -7,6 +7,10 @@ High Performance Modular Transport Channel Emulator Ready for Post-Gigabit Era.
 
 ## Development
 
+### Dependencies
+
+* For tests: `iperf3`, `ethtool` and `iputils-ping`
+
 ### Example
 ```shell
 cargo run --example channel --release # AF_PACKET version
