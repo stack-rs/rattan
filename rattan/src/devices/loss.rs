@@ -13,19 +13,11 @@ use tracing::{debug, info};
 
 use super::{ControlInterface, Egress, Ingress};
 
-#[derive(Debug)]
-struct LossPacket<P>
-where
-    P: Packet,
-{
-    packet: P,
-}
-
 pub struct LossDeviceIngress<P>
 where
     P: Packet,
 {
-    ingress: mpsc::UnboundedSender<LossPacket<P>>,
+    ingress: mpsc::UnboundedSender<P>,
 }
 
 impl<P> Clone for LossDeviceIngress<P>
@@ -43,9 +35,10 @@ impl<P> Ingress<P> for LossDeviceIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, packet: P) -> Result<(), Error> {
+    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
+        packet.set_timestamp(Instant::now());
         self.ingress
-            .send(LossPacket { packet })
+            .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
         Ok(())
     }
@@ -56,7 +49,7 @@ where
     P: Packet,
     R: Rng,
 {
-    egress: mpsc::UnboundedReceiver<LossPacket<P>>,
+    egress: mpsc::UnboundedReceiver<P>,
     pattern: Arc<AtomicRawCell<LossPattern>>,
     inner_pattern: Box<LossPattern>,
     /// How many packets have been lost consecutively
@@ -89,7 +82,7 @@ where
             None
         } else {
             self.prev_loss = 0;
-            Some(packet.packet)
+            Some(packet)
         }
     }
 }
@@ -164,7 +157,8 @@ where
     P: Packet,
     R: Rng,
 {
-    pub fn new(pattern: LossPattern, rng: R) -> Result<LossDevice<P, R>, Error> {
+    pub fn new<L: Into<LossPattern>>(pattern: L, rng: R) -> Result<LossDevice<P, R>, Error> {
+        let pattern = pattern.into();
         debug!(?pattern, "New LossDevice");
         let (rx, tx) = mpsc::unbounded_channel();
         let pattern = Arc::new(AtomicRawCell::new(Box::new(pattern)));
