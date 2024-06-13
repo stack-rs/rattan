@@ -133,7 +133,7 @@ where
 
         #[cfg(feature = "http")]
         let http_thread_handle = if config.http.enable {
-            let http_cancel_token = cancel_token.child_token();
+            let http_cancel_token = cancel_token.clone();
             let op_endpoint = rattan.op_endpoint();
             let http_thread_span = span!(Level::INFO, "http_thread").or_current();
             Some(std::thread::spawn(move || -> anyhow::Result<()> {
@@ -161,6 +161,7 @@ where
                     info!("HTTP server listening on http://{}", address);
                     server.await.map_err(|e| {
                         error!("HTTP Server error: {}", e);
+                        http_cancel_token.cancel();
                         e
                     })
                 })?;
