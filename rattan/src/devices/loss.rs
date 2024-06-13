@@ -59,6 +59,7 @@ where
     /// How many packets have been lost consecutively
     prev_loss: usize,
     rng: R,
+    state: AtomicI32,
 }
 
 #[async_trait]
@@ -72,6 +73,15 @@ where
             Some(packet) => packet,
             None => return None,
         };
+        match self.state.load(std::sync::atomic::Ordering::Acquire) {
+            0 => {
+                return None;
+            }
+            1 => {
+                return Some(packet);
+            }
+            _ => {}
+        }
         if let Some(pattern) = self.pattern.swap_null() {
             self.inner_pattern = pattern;
             debug!(?self.inner_pattern, "Set inner pattern:");
@@ -88,6 +98,11 @@ where
             self.prev_loss = 0;
             Some(packet)
         }
+    }
+
+    fn change_state(&self, state: i32) {
+        self.state
+            .store(state, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -174,6 +189,7 @@ where
                 inner_pattern: Box::default(),
                 prev_loss: 0,
                 rng,
+                state: AtomicI32::new(0),
             },
             control_interface: Arc::new(LossDeviceControlInterface { pattern }),
         })
@@ -446,6 +462,8 @@ mod tests {
         let mut received_packets: Vec<bool> = Vec::with_capacity(100 * pattern_len);
         let ingress = device.sender();
         let egress = device.receiver();
+        egress.reset();
+        egress.change_state(2);
 
         for _ in 0..(100 * pattern_len) {
             let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
@@ -468,6 +486,8 @@ mod tests {
         let device = LossDevice::new([0.1], StdRng::seed_from_u64(42))?;
         let ingress = device.sender();
         let mut egress = device.into_receiver();
+        egress.reset();
+        egress.change_state(2);
 
         info!("Testing loss for loss device of loss [0.1]");
         let mut statistics = PacketStatistics::new();
@@ -535,6 +555,8 @@ mod tests {
         let config_changer = device.control_interface();
         let ingress = device.sender();
         let mut egress = device.into_receiver();
+        egress.reset();
+        egress.change_state(2);
 
         info!("Sending a packet to transfer to second state");
         ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
@@ -570,6 +592,8 @@ mod tests {
         let config_changer = device.control_interface();
         let ingress = device.sender();
         let mut egress = device.into_receiver();
+        egress.reset();
+        egress.change_state(2);
 
         info!("Sending 2 packet to transfer to 3rd state");
         for _ in 0..2 {

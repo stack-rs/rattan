@@ -242,7 +242,7 @@ fn main() -> anyhow::Result<()> {
                 metadata.target().ends_with("packet")
             });
             let env_filter = tracing_subscriber::EnvFilter::try_from_env("RATTAN_PACKET_LOG")
-                .unwrap_or_else(|_| "warn".into());
+                .unwrap_or_else(|_| "info".into());
             subscriber
                 .with(
                     tracing_subscriber::fmt::layer()
