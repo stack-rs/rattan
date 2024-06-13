@@ -21,7 +21,7 @@ fn prepare_env() -> RattanRadix<AfPacketDriver> {
         },
         ..Default::default()
     };
-    config.core.devices.insert(
+    config.devices.insert(
         "up_bw".to_string(),
         DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
             None,
@@ -29,7 +29,7 @@ fn prepare_env() -> RattanRadix<AfPacketDriver> {
             None,
         ))),
     );
-    config.core.devices.insert(
+    config.devices.insert(
         "down_bw".to_string(),
         DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
             None,
@@ -37,7 +37,7 @@ fn prepare_env() -> RattanRadix<AfPacketDriver> {
             None,
         ))),
     );
-    config.core.links = HashMap::from([
+    config.links = HashMap::from([
         ("left".to_string(), "up_bw".to_string()),
         ("up_bw".to_string(), "right".to_string()),
         ("right".to_string(), "down_bw".to_string()),

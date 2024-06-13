@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, span, warn, Level};
 
 use crate::{
-    config::{DeviceBuildConfig, RattanConfig, RattanCoreConfig},
+    config::{DeviceBuildConfig, RattanConfig},
     control::{RattanOp, RattanOpEndpoint, RattanOpResult},
     core::{DeviceFactory, RattanCore},
     devices::{external::VirtualEthernet, Device, Packet},
@@ -62,7 +62,6 @@ where
             })
         };
         let running_core = config
-            .core
             .resource
             .cpu
             .clone()
@@ -183,7 +182,8 @@ where
             http_thread_handle,
         };
         radix.init_veth()?; // build veth pair at the beginning
-        radix.load_core_config(config.core)?;
+        radix.load_devices_config(config.devices)?;
+        radix.link_devices(config.links)?;
         Ok(radix)
     }
 
@@ -224,9 +224,12 @@ where
         Ok(())
     }
 
-    pub fn load_core_config(&mut self, config: RattanCoreConfig<D::Packet>) -> Result<(), Error> {
+    pub fn load_devices_config<I>(&mut self, devices: I) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = (String, DeviceBuildConfig<D::Packet>)>,
+    {
         // build devices
-        for (id, device_config) in config.devices {
+        for (id, device_config) in devices {
             match device_config {
                 DeviceBuildConfig::Bw(bw_config) => match bw_config {
                     crate::config::BwDeviceBuildConfig::Infinite(config) => {
@@ -274,11 +277,16 @@ where
             }
         }
 
-        // link devices
-        for (rx, tx) in config.links {
+        Ok(())
+    }
+
+    pub fn link_devices<I>(&mut self, links: I) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        for (rx, tx) in links {
             self.link_device(rx, tx);
         }
-
         Ok(())
     }
 

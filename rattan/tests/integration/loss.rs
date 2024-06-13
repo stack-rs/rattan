@@ -22,15 +22,15 @@ fn test_loss() {
         },
         ..Default::default()
     };
-    config.core.devices.insert(
+    config.devices.insert(
         "up_loss".to_string(),
         DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([])),
     );
-    config.core.devices.insert(
+    config.devices.insert(
         "down_loss".to_string(),
         DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([])),
     );
-    config.core.links = HashMap::from([
+    config.links = HashMap::from([
         ("left".to_string(), "up_loss".to_string()),
         ("up_loss".to_string(), "right".to_string()),
         ("right".to_string(), "down_loss".to_string()),

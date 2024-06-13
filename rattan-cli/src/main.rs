@@ -1,4 +1,4 @@
-use std::process::Stdio;
+use std::{collections::HashMap, process::Stdio};
 
 use clap::{command, Args, Parser, Subcommand, ValueEnum};
 use figment::{
@@ -7,8 +7,8 @@ use figment::{
 };
 use paste::paste;
 use rattan::config::{
-    BwDeviceBuildConfig, BwReplayCLIConfig, BwReplayDeviceBuildConfig, DelayDeviceBuildConfig,
-    DeviceBuildConfig, LossDeviceBuildConfig, RattanConfig, RattanCoreConfig,
+    BwDeviceBuildConfig, BwReplayDeviceBuildConfig, BwReplayQueueConfig, DelayDeviceBuildConfig,
+    DeviceBuildConfig, LossDeviceBuildConfig, RattanConfig,
 };
 use rattan::devices::bandwidth::queue::{
     CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
@@ -173,14 +173,14 @@ macro_rules! bw_q_args_into_config {
 // $q_args: queue args
 // $mahimahi_trace: mahimahi_trace for BwReplayDevice
 macro_rules! bwreplay_q_args_into_config {
-    ($q_type:ident, $q_args:expr, $mahimahi_trace:expr) => {
+    ($q_type:ident, $q_args:expr, $trace_file:expr) => {
         paste!(
             match serde_json::from_str::<[<$q_type QueueConfig>]> (&$q_args.unwrap_or("{}".to_string())) {
                 Ok(queue_config) => DeviceBuildConfig::BwReplay(BwReplayDeviceBuildConfig::$q_type(
                     if $q_args.is_none() {
-                        BwReplayCLIConfig::new($mahimahi_trace, None, None, None)
+                        BwReplayQueueConfig::new($trace_file, None, None)
                     } else {
-                        BwReplayCLIConfig::new($mahimahi_trace, None, queue_config, None)
+                        BwReplayQueueConfig::new($trace_file, queue_config, None)
                     }
                 )),
                 Err(e) => {
@@ -282,7 +282,8 @@ fn main() -> anyhow::Result<()> {
                 http_config.port = port;
             }
 
-            let mut core_config = RattanCoreConfig::<StdPacket>::default();
+            let mut devices_config = HashMap::<String, DeviceBuildConfig<StdPacket>>::new();
+            let mut links_config = HashMap::<String, String>::new();
             let mut uplink_count = 0;
             let mut downlink_count = 0;
 
@@ -307,19 +308,14 @@ fn main() -> anyhow::Result<()> {
                     }
                 };
                 uplink_count += 1;
-                core_config
-                    .devices
-                    .insert(format!("up_{}", uplink_count), device_config);
+                devices_config.insert(format!("up_{}", uplink_count), device_config);
             } else if let Some(trace_file) = opts.uplink_trace {
                 let device_config = match opts.uplink_queue {
-                    Some(QueueType::Infinite) | None => DeviceBuildConfig::BwReplay(
-                        BwReplayDeviceBuildConfig::Infinite(BwReplayCLIConfig::new(
-                            trace_file,
-                            None,
-                            InfiniteQueueConfig::new(),
-                            None,
-                        )),
-                    ),
+                    Some(QueueType::Infinite) | None => {
+                        DeviceBuildConfig::BwReplay(BwReplayDeviceBuildConfig::Infinite(
+                            BwReplayQueueConfig::new(trace_file, InfiniteQueueConfig::new(), None),
+                        ))
+                    }
                     Some(QueueType::DropTail) => {
                         bwreplay_q_args_into_config!(
                             DropTail,
@@ -343,9 +339,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 };
                 uplink_count += 1;
-                core_config
-                    .devices
-                    .insert(format!("up_{}", uplink_count), device_config);
+                devices_config.insert(format!("up_{}", uplink_count), device_config);
             }
 
             if let Some(bandwidth) = opts.downlink_bandwidth {
@@ -377,19 +371,14 @@ fn main() -> anyhow::Result<()> {
                     }
                 };
                 downlink_count += 1;
-                core_config
-                    .devices
-                    .insert(format!("down_{}", downlink_count), device_config);
+                devices_config.insert(format!("down_{}", downlink_count), device_config);
             } else if let Some(trace_file) = opts.downlink_trace {
                 let device_config = match opts.downlink_queue {
-                    Some(QueueType::Infinite) | None => DeviceBuildConfig::BwReplay(
-                        BwReplayDeviceBuildConfig::Infinite(BwReplayCLIConfig::new(
-                            trace_file,
-                            None,
-                            InfiniteQueueConfig::new(),
-                            None,
-                        )),
-                    ),
+                    Some(QueueType::Infinite) | None => {
+                        DeviceBuildConfig::BwReplay(BwReplayDeviceBuildConfig::Infinite(
+                            BwReplayQueueConfig::new(trace_file, InfiniteQueueConfig::new(), None),
+                        ))
+                    }
                     Some(QueueType::DropTail) => {
                         bwreplay_q_args_into_config!(
                             DropTail,
@@ -413,77 +402,51 @@ fn main() -> anyhow::Result<()> {
                     }
                 };
                 downlink_count += 1;
-                core_config
-                    .devices
-                    .insert(format!("down_{}", downlink_count), device_config);
+                devices_config.insert(format!("down_{}", downlink_count), device_config);
             }
 
             if let Some(delay) = opts.uplink_delay {
                 let device_config = DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(delay));
                 uplink_count += 1;
-                core_config
-                    .devices
-                    .insert(format!("up_{}", uplink_count), device_config);
+                devices_config.insert(format!("up_{}", uplink_count), device_config);
             }
 
             if let Some(delay) = opts.downlink_delay {
                 let device_config = DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(delay));
                 downlink_count += 1;
-                core_config
-                    .devices
-                    .insert(format!("down_{}", downlink_count), device_config);
+                devices_config.insert(format!("down_{}", downlink_count), device_config);
             }
 
             if let Some(loss) = opts.uplink_loss {
                 let device_config = DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([loss]));
                 uplink_count += 1;
-                core_config
-                    .devices
-                    .insert(format!("up_{}", uplink_count), device_config);
+                devices_config.insert(format!("up_{}", uplink_count), device_config);
             }
 
             if let Some(loss) = opts.downlink_loss {
                 let device_config = DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([loss]));
                 downlink_count += 1;
-                core_config
-                    .devices
-                    .insert(format!("down_{}", downlink_count), device_config);
+                devices_config.insert(format!("down_{}", downlink_count), device_config);
             }
 
             for i in 1..uplink_count {
-                core_config
-                    .links
-                    .insert(format!("up_{}", i), format!("up_{}", i + 1));
+                links_config.insert(format!("up_{}", i), format!("up_{}", i + 1));
             }
             for i in 1..downlink_count {
-                core_config
-                    .links
-                    .insert(format!("down_{}", i), format!("down_{}", i + 1));
+                links_config.insert(format!("down_{}", i), format!("down_{}", i + 1));
             }
 
             if uplink_count > 0 {
-                core_config
-                    .links
-                    .insert("left".to_string(), "up_1".to_string());
-                core_config
-                    .links
-                    .insert(format!("up_{}", uplink_count), "right".to_string());
+                links_config.insert("left".to_string(), "up_1".to_string());
+                links_config.insert(format!("up_{}", uplink_count), "right".to_string());
             } else {
-                core_config
-                    .links
-                    .insert("left".to_string(), "right".to_string());
+                links_config.insert("left".to_string(), "right".to_string());
             }
             if downlink_count > 0 {
-                core_config
-                    .links
-                    .insert("right".to_string(), "down_1".to_string());
-                core_config
-                    .links
-                    .insert(format!("down_{}", downlink_count), "left".to_string());
+                links_config.insert("right".to_string(), "down_1".to_string());
+                links_config.insert(format!("down_{}", downlink_count), "left".to_string());
             } else {
-                core_config
-                    .links
-                    .insert("right".to_string(), "left".to_string());
+                links_config.insert("right".to_string(), "left".to_string());
             }
 
             RattanConfig::<StdPacket> {
@@ -494,15 +457,17 @@ fn main() -> anyhow::Result<()> {
                 },
                 #[cfg(feature = "http")]
                 http: http_config,
-                core: core_config,
+                devices: devices_config,
+                links: links_config,
+                resource: Default::default(),
             }
         }
     };
     debug!(?config);
-    if config.core.devices.is_empty() {
+    if config.devices.is_empty() {
         warn!("No devices specified in config");
     }
-    if config.core.links.is_empty() {
+    if config.links.is_empty() {
         warn!("No links specified in config");
     }
 

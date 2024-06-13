@@ -40,7 +40,7 @@ fn test_bandwidth() {
         },
         ..Default::default()
     };
-    config.core.devices.insert(
+    config.devices.insert(
         "up_bw".to_string(),
         DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
             None,
@@ -48,7 +48,7 @@ fn test_bandwidth() {
             None,
         ))),
     );
-    config.core.devices.insert(
+    config.devices.insert(
         "down_bw".to_string(),
         DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
             None,
@@ -56,7 +56,7 @@ fn test_bandwidth() {
             None,
         ))),
     );
-    config.core.links = HashMap::from([
+    config.links = HashMap::from([
         ("left".to_string(), "up_bw".to_string()),
         ("up_bw".to_string(), "right".to_string()),
         ("right".to_string(), "down_bw".to_string()),
@@ -215,7 +215,7 @@ fn test_droptail_queue() {
         },
         ..Default::default()
     };
-    config.core.devices.insert(
+    config.devices.insert(
         "up_bw".to_string(),
         DeviceBuildConfig::Bw(BwDeviceBuildConfig::DropTail(BwDeviceConfig::new(
             None,
@@ -223,7 +223,7 @@ fn test_droptail_queue() {
             None,
         ))),
     );
-    config.core.devices.insert(
+    config.devices.insert(
         "down_bw".to_string(),
         DeviceBuildConfig::Bw(BwDeviceBuildConfig::DropTail(BwDeviceConfig::new(
             None,
@@ -231,7 +231,7 @@ fn test_droptail_queue() {
             None,
         ))),
     );
-    config.core.links = HashMap::from([
+    config.links = HashMap::from([
         ("left".to_string(), "up_bw".to_string()),
         ("up_bw".to_string(), "right".to_string()),
         ("right".to_string(), "down_bw".to_string()),
@@ -384,7 +384,7 @@ fn test_drophead_queue() {
         },
         ..Default::default()
     };
-    config.core.devices.insert(
+    config.devices.insert(
         "up_bw".to_string(),
         DeviceBuildConfig::Bw(BwDeviceBuildConfig::DropHead(BwDeviceConfig::new(
             None,
@@ -392,7 +392,7 @@ fn test_drophead_queue() {
             None,
         ))),
     );
-    config.core.devices.insert(
+    config.devices.insert(
         "down_bw".to_string(),
         DeviceBuildConfig::Bw(BwDeviceBuildConfig::DropHead(BwDeviceConfig::new(
             None,
@@ -400,7 +400,7 @@ fn test_drophead_queue() {
             None,
         ))),
     );
-    config.core.links = HashMap::from([
+    config.links = HashMap::from([
         ("left".to_string(), "up_bw".to_string()),
         ("up_bw".to_string(), "right".to_string()),
         ("right".to_string(), "down_bw".to_string()),
@@ -558,7 +558,7 @@ fn test_codel_queue() {
         },
         ..Default::default()
     };
-    config.core.devices.insert(
+    config.devices.insert(
         "up_bw".to_string(),
         DeviceBuildConfig::Bw(BwDeviceBuildConfig::CoDel(BwDeviceConfig::new(
             None,
@@ -573,7 +573,7 @@ fn test_codel_queue() {
             None,
         ))),
     );
-    config.core.devices.insert(
+    config.devices.insert(
         "down_bw".to_string(),
         DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
             None,
@@ -581,7 +581,7 @@ fn test_codel_queue() {
             None,
         ))),
     );
-    config.core.links = HashMap::from([
+    config.links = HashMap::from([
         ("left".to_string(), "up_bw".to_string()),
         ("up_bw".to_string(), "right".to_string()),
         ("right".to_string(), "down_bw".to_string()),
@@ -764,10 +764,9 @@ fn test_replay() {
         ..Default::default()
     };
     config
-        .core
         .devices
         .insert("up_bw".to_string(), DeviceBuildConfig::Custom);
-    config.core.devices.insert(
+    config.devices.insert(
         "down_bw".to_string(),
         DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
             None,
@@ -775,7 +774,7 @@ fn test_replay() {
             None,
         ))),
     );
-    config.core.links = HashMap::from([
+    config.links = HashMap::from([
         ("left".to_string(), "up_bw".to_string()),
         ("up_bw".to_string(), "right".to_string()),
         ("right".to_string(), "down_bw".to_string()),

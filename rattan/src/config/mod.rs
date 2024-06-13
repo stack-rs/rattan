@@ -25,8 +25,12 @@ pub struct RattanConfig<P: Packet> {
     #[cfg(feature = "http")]
     #[cfg_attr(feature = "http", serde(default))]
     pub http: HttpConfig,
-    #[cfg_attr(feature = "serde", serde(flatten))]
-    pub core: RattanCoreConfig<P>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub devices: HashMap<String, DeviceBuildConfig<P>>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub links: HashMap<String, String>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub resource: RattanResourceConfig,
 }
 
 impl<P: Packet> Default for RattanConfig<P> {
@@ -35,7 +39,9 @@ impl<P: Packet> Default for RattanConfig<P> {
             env: StdNetEnvConfig::default(),
             #[cfg(feature = "http")]
             http: HttpConfig::default(),
-            core: RattanCoreConfig::default(),
+            devices: HashMap::new(),
+            links: HashMap::new(),
+            resource: RattanResourceConfig::new(),
         }
     }
 }
@@ -52,28 +58,6 @@ pub struct RattanResourceConfig {
 impl RattanResourceConfig {
     pub fn new() -> Self {
         Default::default()
-    }
-}
-
-/// Configuration for the Rattan core.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
-#[derive(Clone, Debug)]
-pub struct RattanCoreConfig<P: Packet> {
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub devices: HashMap<String, DeviceBuildConfig<P>>,
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub links: HashMap<String, String>,
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub resource: RattanResourceConfig,
-}
-
-impl<P: Packet> Default for RattanCoreConfig<P> {
-    fn default() -> Self {
-        Self {
-            devices: HashMap::new(),
-            links: HashMap::new(),
-            resource: RattanResourceConfig::new(),
-        }
     }
 }
 
