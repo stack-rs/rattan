@@ -31,7 +31,7 @@ fn main() {
         ..Default::default()
     };
 
-    config.core.devices.insert(
+    config.devices.insert(
         "up_bw".to_string(),
         DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
             None,
@@ -39,7 +39,7 @@ fn main() {
             None,
         ))),
     );
-    config.core.devices.insert(
+    config.devices.insert(
         "down_bw".to_string(),
         DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
             None,
@@ -47,23 +47,23 @@ fn main() {
             None,
         ))),
     );
-    config.core.devices.insert(
+    config.devices.insert(
         "up_delay".to_string(),
         DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(Duration::from_millis(0))),
     );
-    config.core.devices.insert(
+    config.devices.insert(
         "down_delay".to_string(),
         DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(Duration::from_millis(0))),
     );
-    config.core.devices.insert(
+    config.devices.insert(
         "up_loss".to_string(),
         DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([])),
     );
-    config.core.devices.insert(
+    config.devices.insert(
         "down_loss".to_string(),
         DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([])),
     );
-    config.core.links = HashMap::from([
+    config.links = HashMap::from([
         ("left".to_string(), "up_bw".to_string()),
         ("up_bw".to_string(), "up_delay".to_string()),
         ("up_delay".to_string(), "up_loss".to_string()),
@@ -74,7 +74,7 @@ fn main() {
         ("down_loss".to_string(), "left".to_string()),
     ]);
 
-    config.core.resource.cpu = Some(vec![1, 2]);
+    config.resource.cpu = Some(vec![1, 2]);
 
     let mut radix = RattanRadix::<XDPDriver>::new(config).unwrap();
     radix.spawn_rattan().unwrap();

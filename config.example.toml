@@ -183,26 +183,18 @@ type = "BwReplay"
 
 # Bandwitdh trace
 #
-# Ways to specify the bandwidth trace:
-# - `mahimahi_trace`   : Bandwidth trace file (Mahimahi format)
-# - `trace_config_str` : Bandwidth trace in JSON format
+# Should specify the bandwidth trace file either in Mahimahi format, or in JSON or TOML format (netem-trace) .
+# The parser will automatically detect the format by the file extension.
 #
-# **ATTENTION**: These fields are exclusive. One and only one should be specified.
+# Bandwitdh trace in JSON or TOML format (netem-trace format)
+# Formated as BwTraceConfig in `netem-trace` crate.
+# Refer to: <https://docs.rs/netem-trace/latest/netem_trace/>
 #
 # Bandwidth trace file (Mahimahi format)
 # Trace file is in the format of Mahimahi bandwidth trace file.
 # Refer to: <https://github.com/ravinet/mahimahi/tree/master/traces>
-#
-# Bandwitdh trace in JSON format
-# Formated as BwTraceConfig in `netem-trace` crate.
-# Refer to: <https://docs.rs/netem-trace/latest/netem_trace/>
-# For example, the following line means 12Mbps for 5 seconds and 24Mbps for 5 seconds and the trace will repeat forever.
-#
-mahimahi_trace = "./assets/24Mbps.trace"
-# trace_config_str = """{\"RepeatedBwPatternConfig\":{\"pattern\":[{\
-# \"StaticBwConfig\":{\"bw\":{\"gbps\":0,\"bps\":12000000},\"duration\":\"5s\"}},\
-# {\"StaticBwConfig\":{\"bw\":{\"gbps\":0,\"bps\":24000000},\"duration\":\"5s\"}}\
-# ]}}"""
+# For example, the following trace means 24Mbps forever.
+trace = "./assets/24Mbps.trace"
 
 # Queue type
 # Same as Bw device

@@ -22,15 +22,15 @@ fn test_delay() {
         },
         ..Default::default()
     };
-    config.core.devices.insert(
+    config.devices.insert(
         "up_delay".to_string(),
         DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(Duration::from_millis(0))),
     );
-    config.core.devices.insert(
+    config.devices.insert(
         "down_delay".to_string(),
         DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(Duration::from_millis(0))),
     );
-    config.core.links = HashMap::from([
+    config.links = HashMap::from([
         ("left".to_string(), "up_delay".to_string()),
         ("up_delay".to_string(), "right".to_string()),
         ("right".to_string(), "down_delay".to_string()),
