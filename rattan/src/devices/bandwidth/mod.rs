@@ -7,10 +7,11 @@ use netem_trace::{model::BwTraceConfig, Bandwidth, BwTrace, Delay};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace};
 
 use super::{ControlInterface, Egress, Ingress};
 
@@ -93,6 +94,7 @@ where
     next_available: Instant,
     config_rx: mpsc::UnboundedReceiver<BwDeviceConfig<P, Q>>,
     timer: Timer,
+    state: AtomicI32,
 }
 
 impl<P, Q> BwDeviceEgress<P, Q>
@@ -149,14 +151,31 @@ where
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
+                recv_packet = self.egress.recv() => {
+                    match recv_packet {
+                        Some(new_packet) => {
+                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
+                                0 => {
+                                    return None;
+                                }
+                                1 => {
+                                    return Some(new_packet);
+                                }
+                                _ => {
+                                    self.packet_queue.enqueue(new_packet);
+                                }
+                            }
+                        }
+                        None => {
+                            // channel closed
+                            return None;
+                        }
+                    }
+                }
                 _ = self.timer.sleep(self.next_available - Instant::now()) => {
                     break;
                 }
             }
-        }
-        // process the packets received during sleep time
-        while let Ok(new_packet) = self.egress.try_recv() {
-            self.packet_queue.enqueue(new_packet);
         }
 
         let mut packet = self.packet_queue.dequeue();
@@ -170,8 +189,18 @@ where
                 recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            self.packet_queue.enqueue(new_packet);
-                            packet = self.packet_queue.dequeue();
+                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
+                                0 => {
+                                    return None;
+                                }
+                                1 => {
+                                    return Some(new_packet);
+                                }
+                                _ => {
+                                    self.packet_queue.enqueue(new_packet);
+                                    packet = self.packet_queue.dequeue();
+                                }
+                            }
                         }
                         None => {
                             // channel closed
@@ -193,6 +222,11 @@ where
             self.next_available += transfer_time;
         }
         Some(packet)
+    }
+
+    fn change_state(&self, state: i32) {
+        self.state
+            .store(state, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -339,6 +373,7 @@ where
                 next_available: Instant::now(),
                 config_rx,
                 timer: Timer::new()?,
+                state: AtomicI32::new(0),
             },
             control_interface: Arc::new(BwDeviceControlInterface { config_tx }),
         })
@@ -362,6 +397,7 @@ where
     config_rx: mpsc::UnboundedReceiver<BwReplayDeviceConfig<P, Q>>,
     send_timer: Timer,
     change_timer: Timer,
+    state: AtomicI32,
 }
 
 impl<P, Q> BwReplayDeviceEgress<P, Q>
@@ -403,22 +439,12 @@ where
             debug!("Set inner trace config");
             self.trace = trace_config.into_model();
             let now = Instant::now();
-            match self.trace.next_bw() {
-                Some((bandwidth, duration)) => {
-                    self.change_bandwidth(bandwidth, now);
-                    self.next_change = now + duration;
-                    trace!(
-                        "Bandwidth changed to {:?}, next change after {:?}",
-                        bandwidth,
-                        self.next_change - Instant::now()
-                    );
-                }
-                None => {
-                    // handle null trace outside this function
-                    warn!("Setting null trace");
-                    self.change_bandwidth(Bandwidth::from_bps(0), now);
-                    self.next_change = now;
-                }
+            if self.next_change(now).is_none() {
+                // handle null trace outside this function
+                tracing::warn!("Setting null trace");
+                self.next_change = now;
+                // set state to 0 to indicate the trace goes to end and the device will drop all packets
+                self.change_state(0);
             }
         }
         if let Some(queue_config) = config.queue_config {
@@ -440,7 +466,7 @@ where
             trace!(
                 "Bandwidth changed to {:?}, next change after {:?}",
                 bandwidth,
-                change_time + duration - Instant::now()
+                self.next_change - Instant::now()
             );
         })
     }
@@ -467,14 +493,31 @@ where
                         return None;
                     }
                 }
+                recv_packet = self.egress.recv() => {
+                    match recv_packet {
+                        Some(new_packet) => {
+                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
+                                0 => {
+                                    return None;
+                                }
+                                1 => {
+                                    return Some(new_packet);
+                                }
+                                _ => {
+                                    self.packet_queue.enqueue(new_packet);
+                                }
+                            }
+                        }
+                        None => {
+                            // channel closed
+                            return None;
+                        }
+                    }
+                }
                 _ = self.send_timer.sleep(self.next_available - Instant::now()) => {
                     break;
                 }
             }
-        }
-        // process the packets received during sleep time
-        while let Ok(new_packet) = self.egress.try_recv() {
-            self.packet_queue.enqueue(new_packet);
         }
 
         let mut packet = self.packet_queue.dequeue();
@@ -495,8 +538,18 @@ where
                 recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            self.packet_queue.enqueue(new_packet);
-                            packet = self.packet_queue.dequeue();
+                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
+                                0 => {
+                                    return None;
+                                }
+                                1 => {
+                                    return Some(new_packet);
+                                }
+                                _ => {
+                                    self.packet_queue.enqueue(new_packet);
+                                    packet = self.packet_queue.dequeue();
+                                }
+                            }
                         }
                         None => {
                             // channel closed
@@ -524,6 +577,11 @@ where
     fn reset(&mut self) {
         self.next_available = Instant::now();
         self.next_change = Instant::now();
+    }
+
+    fn change_state(&self, state: i32) {
+        self.state
+            .store(state, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -679,6 +737,7 @@ where
                 config_rx,
                 send_timer: Timer::new()?,
                 change_timer: Timer::new()?,
+                state: AtomicI32::new(0),
             },
             control_interface: Arc::new(BwReplayDeviceControlInterface { config_tx }),
         })

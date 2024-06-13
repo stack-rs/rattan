@@ -54,6 +54,7 @@ where
     delay: Delay,
     config_rx: mpsc::UnboundedReceiver<DelayDeviceConfig>,
     timer: Timer,
+    state: AtomicI32,
 }
 
 impl<P> DelayDeviceEgress<P>
@@ -80,6 +81,15 @@ where
             Some(packet) => packet,
             None => return None,
         };
+        match self.state.load(std::sync::atomic::Ordering::Acquire) {
+            0 => {
+                return None;
+            }
+            1 => {
+                return Some(packet);
+            }
+            _ => {}
+        }
         loop {
             tokio::select! {
                 biased;
@@ -92,6 +102,11 @@ where
             }
         }
         Some(packet)
+    }
+
+    fn change_state(&self, state: i32) {
+        self.state
+            .store(state, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -173,6 +188,7 @@ where
                 delay,
                 config_rx,
                 timer: Timer::new()?,
+                state: AtomicI32::new(0),
             },
             control_interface: Arc::new(DelayDeviceControlInterface { config_tx }),
         })
@@ -439,6 +455,8 @@ mod tests {
             let device = DelayDevice::new(Duration::from_millis(testing_delay))?;
             let ingress = device.sender();
             let mut egress = device.into_receiver();
+            egress.reset();
+            egress.change_state(2);
 
             info!("Testing delay time for {}ms delay device", testing_delay);
             let mut delays: Vec<f64> = Vec::new();
@@ -496,6 +514,8 @@ mod tests {
         let config_changer = device.control_interface();
         let ingress = device.sender();
         let mut egress = device.into_receiver();
+        egress.reset();
+        egress.change_state(2);
 
         //Test whether the packet will wait longer if the config is updated
         let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
