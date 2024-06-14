@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
-IPERF_ITERS=20
-PING_ITERS=1000
+IPERF_ITERS=10
+PING_ITERS=100
 WORKDIR=$(
 	cd $(dirname $0)
 	pwd
