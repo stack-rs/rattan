@@ -9,9 +9,7 @@ services:
       RUNNER_SCOPE: org
       ORG_NAME: stack-rs
       ACCESS_TOKEN: {{ github_access_key }}
-      RUNNER_WORKDIR: /tmp/runner/work
       LABELS: linux,x64,{{ kernel_version }}
-      EPHEMERAL: true
     cap_add:
       - NET_ADMIN
       - NET_RAW
