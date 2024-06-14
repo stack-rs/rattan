@@ -3,6 +3,7 @@ services:
     image: myoung34/github-runner:{{ tag }}
     container_name: github-runner
     restart: always
+    privileged: true
     environment:
       RUNNER_NAME: {{ runner_name }}
       RUNNER_SCOPE: org
@@ -24,4 +25,4 @@ services:
     volumes:
       - '/var/run/docker.sock:/var/run/docker.sock'
       - '/sys/class:/sys/class'
-      - '/tmp/runner:/tmp/runner'
+

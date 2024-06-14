@@ -1,0 +1,32 @@
+<domain type='kvm'>
+    <name>noble-6.9</name>
+    <uuid>03a984f8-93cb-43d4-a909-1487da7cbc97</uuid>
+    <os>
+        <type>hvm</type>
+        <boot dev='hd'/>
+        <bios useserial='yes' rebootTimeout='0'/>
+        <bootmenu enable='yes' timeout='3000'/>
+    </os>
+    <vcpu>4</vcpu>
+    <memory unit='GiB'>16</memory>
+    <currentMemory unit='GiB'>16</currentMemory>
+    <cpu mode="host-passthrough" migratable="off">
+    </cpu>
+    <on_reboot>restart</on_reboot>
+    <on_crash>restart</on_crash>
+    <devices>
+        <disk type='volume' device='disk'>
+            <driver name='qemu' type='qcow2'/>
+            <source pool='default' volume='noble-6.9'/>
+            <target dev='hda'/>
+        </disk>
+        <serial type='pty'>
+            <target port='0'/>
+        </serial>
+        <interface type='network'>
+            <source network='default'/>
+            <mac address='52:54:06:09:31:80'/>
+            <model type='virtio'/>
+        </interface>
+    </devices>
+</domain>
