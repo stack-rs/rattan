@@ -31,11 +31,11 @@ calc_color() {
 	max=$2
 	middle=$(echo "scale=4; $max / 2" | bc)
 	# echo "value: $value, max: $max, middle: $middle"
-	if [ $(echo "$value > $max" | bc) -eq 1 ]; then
+	if [[ $(echo "$value > $max" | bc) -eq 1 ]]; then
 		r=255
 		g=0
 		b=0
-	elif [ $(echo "$value > $middle" | bc) -eq 1 ]; then
+	elif [[ $(echo "$value > $middle" | bc) -eq 1 ]]; then
 		r=255
 		if [ $(echo "$middle == 0" | bc) -eq 1 ]; then
 			g=0
