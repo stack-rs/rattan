@@ -20,13 +20,15 @@ use crate::{
 };
 
 #[cfg(feature = "http")]
-use crate::control::http::HttpControlEndpoint;
+use crate::{control::http::HttpControlEndpoint, error::HttpServerError};
 #[cfg(feature = "http")]
 use std::net::{Ipv4Addr, SocketAddr};
 
-pub trait Task<R: Send>: FnOnce() -> anyhow::Result<R> + Send {}
+pub type TaskResult<R> = Result<R, Box<dyn std::error::Error + Send + Sync>>;
 
-impl<R: Send, T: FnOnce() -> anyhow::Result<R> + Send> Task<R> for T {}
+pub trait Task<R: Send>: FnOnce() -> TaskResult<R> + Send {}
+
+impl<R: Send, T: FnOnce() -> TaskResult<R> + Send> Task<R> for T {}
 
 // Manage environment and resources
 pub struct RattanRadix<D>
@@ -43,7 +45,7 @@ where
     _rattan_runtime: Arc<Runtime>,
     rattan: RattanCore<D>,
     #[cfg(feature = "http")]
-    http_thread_handle: Option<thread::JoinHandle<anyhow::Result<()>>>,
+    http_thread_handle: Option<thread::JoinHandle<crate::error::Result<()>>>,
 }
 
 impl<D> RattanRadix<D>
@@ -53,12 +55,11 @@ where
     D::Sender: Send + Sync,
     D::Receiver: Send,
 {
-    pub fn new(config: RattanConfig<D::Packet>) -> Result<Self, Error> {
+    pub fn new(config: RattanConfig<D::Packet>) -> crate::error::Result<Self> {
         info!("New RattanRadix");
         let build_env = || {
-            get_std_env(&config.env).map_err(|e| {
+            get_std_env(&config.env).inspect_err(|_| {
                 warn!("Failed to build environment, retrying");
-                e
             })
         };
         let running_core = config
@@ -135,35 +136,40 @@ where
             let http_cancel_token = cancel_token.clone();
             let op_endpoint = rattan.op_endpoint();
             let http_thread_span = span!(Level::INFO, "http_thread").or_current();
-            Some(std::thread::spawn(move || -> anyhow::Result<()> {
+            Some(std::thread::spawn(move || -> crate::error::Result<()> {
                 let _entered = http_thread_span.entered();
                 info!("HTTP thread started");
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .map_err(|e| {
-                        error!("Failed to build http runtime: {:?}", e);
-                        e
-                    })?;
-                runtime.block_on(async move {
-                    let address =
-                        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), config.http.port);
-                    let server = axum::Server::bind(&address)
-                        .serve(
-                            HttpControlEndpoint::new(op_endpoint)
-                                .router()
-                                .into_make_service(),
-                        )
-                        .with_graceful_shutdown(async {
-                            http_cancel_token.cancelled().await;
-                        });
-                    info!("HTTP server listening on http://{}", address);
-                    server.await.map_err(|e| {
-                        error!("HTTP Server error: {}", e);
+                        let err: Error = HttpServerError::TokioRuntimeError(e).into();
+                        error!("{}", err);
                         http_cancel_token.cancel();
-                        e
+                        err
+                    })?;
+                let shutdown_cancel_token = http_cancel_token.clone();
+                runtime
+                    .block_on(async move {
+                        let address = SocketAddr::new(
+                            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                            config.http.port,
+                        );
+                        let listener = tokio::net::TcpListener::bind(&address)
+                            .await
+                            .map_err(HttpServerError::BindAddrError)?;
+                        let server =
+                            axum::serve(listener, HttpControlEndpoint::new(op_endpoint).router())
+                                .with_graceful_shutdown(async move {
+                                    shutdown_cancel_token.cancelled().await;
+                                });
+                        info!("HTTP server listening on http://{}", address);
+                        server.await.map_err(HttpServerError::ServerError)
                     })
-                })?;
+                    .inspect_err(|e| {
+                        error!("{}", e);
+                        http_cancel_token.cancel();
+                    })?;
                 info!("HTTP thread exited");
                 Ok(())
             }))
@@ -326,15 +332,16 @@ where
     pub fn left_spawn<R: Send + 'static>(
         &self,
         task: impl Task<R> + 'static,
-    ) -> Result<thread::JoinHandle<anyhow::Result<R>>, Error> {
+    ) -> Result<thread::JoinHandle<TaskResult<R>>, Error> {
         let thread_span = span!(Level::INFO, "left_ns").or_current();
         let left_ns = self.env.left_ns.clone();
         Ok(std::thread::spawn(move || {
             let _entered = thread_span.entered();
-            if let Err(e) = left_ns.enter() {
-                error!("Failed to enter left namespace: {:?}", e);
-                return anyhow::Result::Err(e.into());
-            }
+            left_ns.enter().map_err(|e| {
+                error!("Failed to enter left namespace");
+                let e: Error = e.into();
+                e
+            })?;
             info!("Run task in left namespace");
             task()
         }))
@@ -344,15 +351,16 @@ where
     pub fn right_spawn<R: Send + 'static>(
         &self,
         task: impl Task<R> + 'static,
-    ) -> Result<thread::JoinHandle<anyhow::Result<R>>, Error> {
+    ) -> Result<thread::JoinHandle<TaskResult<R>>, Error> {
         let thread_span = span!(Level::INFO, "right_ns").or_current();
         let right_ns = self.env.right_ns.clone();
         Ok(std::thread::spawn(move || {
             let _entered = thread_span.entered();
-            if let Err(e) = right_ns.enter() {
-                error!("Failed to enter right namespace: {:?}", e);
-                return anyhow::Result::Err(e.into());
-            }
+            right_ns.enter().map_err(|e| {
+                error!("Failed to enter right namespace");
+                let e: Error = e.into();
+                e
+            })?;
             info!("Run task in right namespace");
             task()
         }))

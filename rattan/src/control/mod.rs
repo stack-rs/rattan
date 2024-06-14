@@ -11,7 +11,7 @@ use std::{
 
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::{
     core::RattanState,
@@ -92,15 +92,9 @@ impl RattanOpEndpoint {
         self.op_tx
             .send((op, res_tx))
             .map_err(|tokio::sync::mpsc::error::SendError((op, _))| {
-                let e = RattanOpError::SendOpError(op);
-                error!("{}", e);
-                e
+                RattanOpError::SendOpError(op)
             })?;
-        res_rx.await.map_err(|_| {
-            let e = RattanOpError::RecvOpResError;
-            error!("{}", e);
-            e
-        })?
+        res_rx.await.map_err(|_| RattanOpError::RecvOpResError)?
     }
 }
 
@@ -136,12 +130,11 @@ impl RattanController {
                 if notify == RattanNotify::Start
                     && self.state.load(Ordering::Relaxed) != RattanState::Spawned as u8
                 {
-                    let err_msg = format!(
+                    Err(RattanCoreError::SendNotifyError(format!(
                         "Rattan state is {:?} instead of Spawned when sending Start notify",
                         RattanState::from(self.state.load(Ordering::Relaxed))
-                    );
-                    error!("{}", err_msg);
-                    Err(RattanCoreError::SendNotifyError(err_msg).into())
+                    ))
+                    .into())
                 } else {
                     self.notify_tx
                         .send(notify.clone())
@@ -154,9 +147,8 @@ impl RattanController {
                             RattanOpResult::SendNotify
                         })
                         .map_err(|tokio::sync::broadcast::error::SendError(notify)| {
-                            error!("Failed to send notify {:?}", notify);
                             RattanCoreError::SendNotifyError(format!(
-                                "Failed to send notify {:?}",
+                                "Failed to send notify, {:?}",
                                 notify
                             ))
                             .into()

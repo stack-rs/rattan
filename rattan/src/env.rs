@@ -36,7 +36,7 @@ fn get_addresses_in_use() -> Result<Vec<IpAddr>, Error> {
         .enable_all()
         .build()
         .map_err(|e| {
-            error!("Failed to build rtnetlink runtime: {:?}", e);
+            error!("Failed to build rtnetlink runtime");
             Error::TokioRuntimeError(e.into())
         })?;
     let _guard = rt.enter();
@@ -197,7 +197,6 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
                             addr_suffix += 1;
                         }
                         if addr_suffix == 255 {
-                            error!("No available address suffix for server veth");
                             return Err(VethError::CreateVethPairError(
                                 "No available address suffix for server veth".to_string(),
                             )
@@ -381,13 +380,13 @@ pub struct ContainerEnv {
 }
 
 #[instrument(skip_all, level = "debug")]
-pub fn get_container_env() -> anyhow::Result<ContainerEnv> {
+pub fn get_container_env() -> crate::error::Result<ContainerEnv> {
     debug!("Getting all veth devices");
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| {
-            error!("Failed to build rtnetlink runtime: {:?}", e);
+            error!("Failed to build rtnetlink runtime");
             Error::TokioRuntimeError(e.into())
         })?;
     let _guard = rt.enter();

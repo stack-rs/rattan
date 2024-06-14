@@ -7,9 +7,8 @@ rust-version = "1.77.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.69"
 async-trait = "0.1.68"
-axum = { version = "0.6.16", optional = true }
+axum = { version = "0.7.5", optional = true }
 backon = "0.4.4"
 bandwidth = "0.3.0"
 figment = { version = "0.10", features = ["toml", "env", "json"] }
@@ -46,6 +45,7 @@ tracing = "0.1.37"
 tempfile = "3.10.1"
 
 [dev-dependencies]
+anyhow = "1.0.69"
 criterion = "0.5.1"
 ctrlc = "3.2.5"
 insta = { version = "1.39.0", features = ["json"] }

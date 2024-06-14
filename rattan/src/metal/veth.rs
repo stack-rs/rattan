@@ -422,7 +422,7 @@ impl VethPairBuilder {
                 .enable_all()
                 .build()
                 .map_err(|e| {
-                    error!("Failed to build rtnetlink runtime: {:?}", e);
+                    error!("Failed to build rtnetlink runtime");
                     VethError::TokioRuntimeError(e.into())
                 })?;
             rt.block_on(self.build_impl(rt.handle()))
@@ -439,16 +439,15 @@ impl Drop for VethPair {
         let build_thread_span = span!(Level::DEBUG, "build_thread").or_current();
         let build_thread = std::thread::spawn(move || -> Result<(), Error> {
             let _entered = build_thread_span.entered();
-            let _ns_guard = NetNsGuard::new(left.namespace.clone()).map_err(|e| {
+            let _ns_guard = NetNsGuard::new(left.namespace.clone()).inspect_err(|e| {
                 error!("Failed to enter netns: {}", e);
-                e
             })?;
             std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .map_err(|e| {
-                    error!("Failed to build rtnetlink runtime: {:?}", e);
+                    error!("Failed to build rtnetlink runtime");
                     Error::TokioRuntimeError(e.into())
                 })?;
             let _guard = rt.enter();

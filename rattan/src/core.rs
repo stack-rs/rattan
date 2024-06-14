@@ -14,7 +14,7 @@ use tokio::{
     task,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, span, trace, warn, Instrument, Level};
+use tracing::{debug, info, span, trace, warn, Instrument, Level};
 
 use crate::{
     control::{RattanController, RattanNotify, RattanOp, RattanOpEndpoint, RattanOpResult},
@@ -166,10 +166,10 @@ where
     ) -> Result<(), RattanCoreError> {
         match self.sender.entry(id.clone()) {
             std::collections::hash_map::Entry::Occupied(_) => {
-                error!(id, "Device ID already exists in sender list");
-                return Err(RattanCoreError::AddDeviceError(
-                    "Device ID already exists in sender list".to_string(),
-                ));
+                return Err(RattanCoreError::AddDeviceError(format!(
+                    "Device with ID {} already exists in sender list",
+                    id
+                )));
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert(device.sender());
@@ -177,10 +177,10 @@ where
         };
         match self.receiver.entry(id.clone()) {
             std::collections::hash_map::Entry::Occupied(_) => {
-                error!(id, "Device ID already exists in receiver list");
-                return Err(RattanCoreError::AddDeviceError(
-                    "Device ID already exists in receiver list".to_string(),
-                ));
+                return Err(RattanCoreError::AddDeviceError(format!(
+                    "Device with ID {} already exists in receiver list",
+                    id
+                )));
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert(Box::new(device.into_receiver()));
@@ -217,17 +217,15 @@ where
 
     pub fn spawn_rattan(&mut self) -> Result<(), RattanCoreError> {
         if self.state.load(Ordering::Relaxed) != RattanState::Initial as u8 {
-            let err_msg = format!(
+            return Err(RattanCoreError::SpawnError(format!(
                 "Rattan state is {:?} instead of Initial",
                 RattanState::from(self.state.load(Ordering::Relaxed))
-            );
-            error!("{}", err_msg);
-            return Err(RattanCoreError::SpawnError(err_msg));
+            )));
         }
         if self.router.is_empty() {
-            let err_msg = "No links specified".to_string();
-            error!("{}", err_msg);
-            return Err(RattanCoreError::SpawnError(err_msg));
+            return Err(RattanCoreError::SpawnError(
+                "No links specified".to_string(),
+            ));
         }
 
         let rattan_cancel_token = self.cancel_token.child_token();
@@ -236,25 +234,22 @@ where
             let mut notify_rx = self.rattan_notify_rx.resubscribe();
             let rx_id = rx_id.clone();
             let tx_id = tx_id.clone();
-            let mut rx = self.receiver.remove(&rx_id).ok_or_else(|| {
-                error!("Unknown receiver ID: {}", rx_id);
-                RattanCoreError::UnknownIdError(rx_id.clone())
-            })?;
+            let mut rx = self
+                .receiver
+                .remove(&rx_id)
+                .ok_or_else(|| RattanCoreError::UnknownIdError(rx_id.clone()))?;
             let tx = self
                 .sender
                 .get(&tx_id)
-                .ok_or_else(|| {
-                    error!("Unknown sender ID: {}", tx_id);
-                    RattanCoreError::UnknownIdError(tx_id.clone())
-                })?
+                .ok_or_else(|| RattanCoreError::UnknownIdError(tx_id.clone()))?
                 .clone();
             #[cfg(feature = "packet-dump")]
             let pcap_writer = self.pcap_writer.clone();
             #[cfg(feature = "packet-dump")]
-            let interface_id = *self.interface_id.get(&rx_id).ok_or_else(|| {
-                error!("Unknown interface ID: {}", rx_id);
-                RattanCoreError::UnknownIdError(rx_id.clone())
-            })?;
+            let interface_id = *self
+                .interface_id
+                .get(&rx_id)
+                .ok_or_else(|| RattanCoreError::UnknownIdError(rx_id.clone()))?;
 
             self.rattan_handles.push(self.runtime.spawn(
                 async move {
@@ -312,8 +307,7 @@ where
                                             debug!(rx_id, tx_id, "Drop packet since the system is busy");
                                         }
                                         Err(e) => {
-                                            error!(rx_id, tx_id, "Error forwarding packet: {:?}", e);
-                                            panic!("Error forwarding packet: {:?}", e);
+                                            panic!("Error forwarding packet between {} and {}: {:?}", rx_id, tx_id, e);
                                         }
                                     }
                                 }

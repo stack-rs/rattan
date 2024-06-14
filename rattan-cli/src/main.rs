@@ -1,4 +1,7 @@
-use std::{collections::HashMap, process::Stdio};
+use std::{
+    collections::HashMap,
+    process::{ExitCode, Stdio, Termination},
+};
 
 use clap::{command, Args, Parser, Subcommand, ValueEnum};
 use figment::{
@@ -161,7 +164,7 @@ macro_rules! bw_q_args_into_config {
                 )),
                 Err(e) => {
                     error!("Failed to parse queue args {:?}: {}", $q_args, e);
-                    return Err(anyhow::anyhow!("Failed to parse queue args {:?}: {}", $q_args, e));
+                    return Err(rattan::error::Error::ConfigError(format!("Failed to parse queue args {:?}: {}", $q_args, e)));
                 }
             }
         )
@@ -185,14 +188,14 @@ macro_rules! bwreplay_q_args_into_config {
                 )),
                 Err(e) => {
                     error!("Failed to parse queue args {:?}: {}", $q_args, e);
-                    return Err(anyhow::anyhow!("Failed to parse queue args {:?}: {}", $q_args, e));
+                    return Err(rattan::error::Error::ConfigError(format!("Failed to parse queue args {:?}: {}", $q_args, e)));
                 }
             }
         )
     };
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> ExitCode {
     let opts = Arguments::parse();
     debug!("{:?}", opts);
     // if opts.docker {
@@ -230,11 +233,21 @@ fn main() -> anyhow::Result<()> {
                     .map(|log_dir| (log_dir, "packet.log".to_string()))
             })
         {
-            std::fs::create_dir_all(&log_dir)?;
-            let file_logger = std::fs::OpenOptions::new()
+            if let Err(e) = std::fs::create_dir_all(&log_dir) {
+                error!("Failed to create log directory: {:?}", e);
+                return ExitCode::from(74);
+            }
+            let file_logger = match std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(log_dir.join(file_name))?;
+                .open(log_dir.join(file_name))
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    error!("Failed to open log file: {:?}", e);
+                    return ExitCode::from(74);
+                }
+            };
             // let file_logger = tracing_appender::rolling::daily(log_dir, file_name_prefix);
             let (non_blocking, guard) = tracing_appender::non_blocking(file_logger);
             let file_log_filter = FilterFn::new(|metadata| {
@@ -260,270 +273,296 @@ fn main() -> anyhow::Result<()> {
         subscriber.init();
         None
     };
+    let main_cli = || -> rattan::error::Result<()> {
+        let config = match opts.config {
+            Some(config_file) => {
+                info!("Loading config from {}", config_file);
+                let config: RattanConfig<StdPacket> = Figment::new()
+                    .merge(Toml::file(&config_file))
+                    .merge(Env::prefixed("RATTAN_"))
+                    .extract()
+                    .map_err(|e| rattan::error::Error::ConfigError(e.to_string()))?;
 
-    let config = match opts.config {
-        Some(config_file) => {
-            info!("Loading config from {}", config_file);
-            let config: RattanConfig<StdPacket> = Figment::new()
-                .merge(Toml::file(&config_file))
-                .merge(Env::prefixed("RATTAN_"))
-                .extract()?;
-
-            config
-        }
-        None => {
-            #[cfg(feature = "http")]
-            let mut http_config = HttpConfig {
-                enable: opts.http,
-                ..Default::default()
-            };
-            #[cfg(feature = "http")]
-            if let Some(port) = opts.port {
-                http_config.port = port;
+                config
             }
-
-            let mut devices_config = HashMap::<String, DeviceBuildConfig<StdPacket>>::new();
-            let mut links_config = HashMap::<String, String>::new();
-            let mut uplink_count = 0;
-            let mut downlink_count = 0;
-
-            if let Some(bandwidth) = opts.uplink_bandwidth {
-                let bandwidth = Bandwidth::from_bps(bandwidth);
-                let device_config = match opts.uplink_queue {
-                    Some(QueueType::Infinite) | None => {
-                        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
-                            bandwidth,
-                            InfiniteQueueConfig::new(),
-                            None,
-                        )))
-                    }
-                    Some(QueueType::DropTail) => {
-                        bw_q_args_into_config!(DropTail, opts.uplink_queue_args.clone(), bandwidth)
-                    }
-                    Some(QueueType::DropHead) => {
-                        bw_q_args_into_config!(DropHead, opts.uplink_queue_args.clone(), bandwidth)
-                    }
-                    Some(QueueType::CoDel) => {
-                        bw_q_args_into_config!(CoDel, opts.uplink_queue_args.clone(), bandwidth)
-                    }
-                };
-                uplink_count += 1;
-                devices_config.insert(format!("up_{}", uplink_count), device_config);
-            } else if let Some(trace_file) = opts.uplink_trace {
-                let device_config = match opts.uplink_queue {
-                    Some(QueueType::Infinite) | None => {
-                        DeviceBuildConfig::BwReplay(BwReplayDeviceBuildConfig::Infinite(
-                            BwReplayQueueConfig::new(trace_file, InfiniteQueueConfig::new(), None),
-                        ))
-                    }
-                    Some(QueueType::DropTail) => {
-                        bwreplay_q_args_into_config!(
-                            DropTail,
-                            opts.uplink_queue_args.clone(),
-                            trace_file
-                        )
-                    }
-                    Some(QueueType::DropHead) => {
-                        bwreplay_q_args_into_config!(
-                            DropHead,
-                            opts.uplink_queue_args.clone(),
-                            trace_file
-                        )
-                    }
-                    Some(QueueType::CoDel) => {
-                        bwreplay_q_args_into_config!(
-                            CoDel,
-                            opts.uplink_queue_args.clone(),
-                            trace_file
-                        )
-                    }
-                };
-                uplink_count += 1;
-                devices_config.insert(format!("up_{}", uplink_count), device_config);
-            }
-
-            if let Some(bandwidth) = opts.downlink_bandwidth {
-                let bandwidth = Bandwidth::from_bps(bandwidth);
-                let device_config = match opts.downlink_queue {
-                    Some(QueueType::Infinite) | None => {
-                        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
-                            bandwidth,
-                            InfiniteQueueConfig::new(),
-                            None,
-                        )))
-                    }
-                    Some(QueueType::DropTail) => {
-                        bw_q_args_into_config!(
-                            DropTail,
-                            opts.downlink_queue_args.clone(),
-                            bandwidth
-                        )
-                    }
-                    Some(QueueType::DropHead) => {
-                        bw_q_args_into_config!(
-                            DropHead,
-                            opts.downlink_queue_args.clone(),
-                            bandwidth
-                        )
-                    }
-                    Some(QueueType::CoDel) => {
-                        bw_q_args_into_config!(CoDel, opts.downlink_queue_args.clone(), bandwidth)
-                    }
-                };
-                downlink_count += 1;
-                devices_config.insert(format!("down_{}", downlink_count), device_config);
-            } else if let Some(trace_file) = opts.downlink_trace {
-                let device_config = match opts.downlink_queue {
-                    Some(QueueType::Infinite) | None => {
-                        DeviceBuildConfig::BwReplay(BwReplayDeviceBuildConfig::Infinite(
-                            BwReplayQueueConfig::new(trace_file, InfiniteQueueConfig::new(), None),
-                        ))
-                    }
-                    Some(QueueType::DropTail) => {
-                        bwreplay_q_args_into_config!(
-                            DropTail,
-                            opts.downlink_queue_args.clone(),
-                            trace_file
-                        )
-                    }
-                    Some(QueueType::DropHead) => {
-                        bwreplay_q_args_into_config!(
-                            DropHead,
-                            opts.downlink_queue_args.clone(),
-                            trace_file
-                        )
-                    }
-                    Some(QueueType::CoDel) => {
-                        bwreplay_q_args_into_config!(
-                            CoDel,
-                            opts.downlink_queue_args.clone(),
-                            trace_file
-                        )
-                    }
-                };
-                downlink_count += 1;
-                devices_config.insert(format!("down_{}", downlink_count), device_config);
-            }
-
-            if let Some(delay) = opts.uplink_delay {
-                let device_config = DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(delay));
-                uplink_count += 1;
-                devices_config.insert(format!("up_{}", uplink_count), device_config);
-            }
-
-            if let Some(delay) = opts.downlink_delay {
-                let device_config = DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(delay));
-                downlink_count += 1;
-                devices_config.insert(format!("down_{}", downlink_count), device_config);
-            }
-
-            if let Some(loss) = opts.uplink_loss {
-                let device_config = DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([loss]));
-                uplink_count += 1;
-                devices_config.insert(format!("up_{}", uplink_count), device_config);
-            }
-
-            if let Some(loss) = opts.downlink_loss {
-                let device_config = DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([loss]));
-                downlink_count += 1;
-                devices_config.insert(format!("down_{}", downlink_count), device_config);
-            }
-
-            for i in 1..uplink_count {
-                links_config.insert(format!("up_{}", i), format!("up_{}", i + 1));
-            }
-            for i in 1..downlink_count {
-                links_config.insert(format!("down_{}", i), format!("down_{}", i + 1));
-            }
-
-            if uplink_count > 0 {
-                links_config.insert("left".to_string(), "up_1".to_string());
-                links_config.insert(format!("up_{}", uplink_count), "right".to_string());
-            } else {
-                links_config.insert("left".to_string(), "right".to_string());
-            }
-            if downlink_count > 0 {
-                links_config.insert("right".to_string(), "down_1".to_string());
-                links_config.insert(format!("down_{}", downlink_count), "left".to_string());
-            } else {
-                links_config.insert("right".to_string(), "left".to_string());
-            }
-
-            RattanConfig::<StdPacket> {
-                env: StdNetEnvConfig {
-                    mode: StdNetEnvMode::Compatible,
-                    client_cores: vec![1],
-                    server_cores: vec![3],
-                },
+            None => {
                 #[cfg(feature = "http")]
-                http: http_config,
-                devices: devices_config,
-                links: links_config,
-                resource: Default::default(),
-            }
-        }
-    };
-    debug!(?config);
-    if config.devices.is_empty() {
-        warn!("No devices specified in config");
-    }
-    if config.links.is_empty() {
-        warn!("No links specified in config");
-    }
-
-    if let Some(cmd) = opts.subcommand {
-        match cmd {
-            CliCommand::Generate(args) => {
-                let toml_string = toml::to_string_pretty(&config)?;
-                if let Some(output) = args.output {
-                    std::fs::write(output, toml_string)?;
-                } else {
-                    println!("{}", toml_string);
+                let mut http_config = HttpConfig {
+                    enable: opts.http,
+                    ..Default::default()
+                };
+                #[cfg(feature = "http")]
+                if let Some(port) = opts.port {
+                    http_config.port = port;
                 }
-                return Ok(());
+
+                let mut devices_config = HashMap::<String, DeviceBuildConfig<StdPacket>>::new();
+                let mut links_config = HashMap::<String, String>::new();
+                let mut uplink_count = 0;
+                let mut downlink_count = 0;
+
+                if let Some(bandwidth) = opts.uplink_bandwidth {
+                    let bandwidth = Bandwidth::from_bps(bandwidth);
+                    let device_config = match opts.uplink_queue {
+                        Some(QueueType::Infinite) | None => {
+                            DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(
+                                BwDeviceConfig::new(bandwidth, InfiniteQueueConfig::new(), None),
+                            ))
+                        }
+                        Some(QueueType::DropTail) => {
+                            bw_q_args_into_config!(
+                                DropTail,
+                                opts.uplink_queue_args.clone(),
+                                bandwidth
+                            )
+                        }
+                        Some(QueueType::DropHead) => {
+                            bw_q_args_into_config!(
+                                DropHead,
+                                opts.uplink_queue_args.clone(),
+                                bandwidth
+                            )
+                        }
+                        Some(QueueType::CoDel) => {
+                            bw_q_args_into_config!(CoDel, opts.uplink_queue_args.clone(), bandwidth)
+                        }
+                    };
+                    uplink_count += 1;
+                    devices_config.insert(format!("up_{}", uplink_count), device_config);
+                } else if let Some(trace_file) = opts.uplink_trace {
+                    let device_config = match opts.uplink_queue {
+                        Some(QueueType::Infinite) | None => DeviceBuildConfig::BwReplay(
+                            BwReplayDeviceBuildConfig::Infinite(BwReplayQueueConfig::new(
+                                trace_file,
+                                InfiniteQueueConfig::new(),
+                                None,
+                            )),
+                        ),
+                        Some(QueueType::DropTail) => {
+                            bwreplay_q_args_into_config!(
+                                DropTail,
+                                opts.uplink_queue_args.clone(),
+                                trace_file
+                            )
+                        }
+                        Some(QueueType::DropHead) => {
+                            bwreplay_q_args_into_config!(
+                                DropHead,
+                                opts.uplink_queue_args.clone(),
+                                trace_file
+                            )
+                        }
+                        Some(QueueType::CoDel) => {
+                            bwreplay_q_args_into_config!(
+                                CoDel,
+                                opts.uplink_queue_args.clone(),
+                                trace_file
+                            )
+                        }
+                    };
+                    uplink_count += 1;
+                    devices_config.insert(format!("up_{}", uplink_count), device_config);
+                }
+
+                if let Some(bandwidth) = opts.downlink_bandwidth {
+                    let bandwidth = Bandwidth::from_bps(bandwidth);
+                    let device_config = match opts.downlink_queue {
+                        Some(QueueType::Infinite) | None => {
+                            DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(
+                                BwDeviceConfig::new(bandwidth, InfiniteQueueConfig::new(), None),
+                            ))
+                        }
+                        Some(QueueType::DropTail) => {
+                            bw_q_args_into_config!(
+                                DropTail,
+                                opts.downlink_queue_args.clone(),
+                                bandwidth
+                            )
+                        }
+                        Some(QueueType::DropHead) => {
+                            bw_q_args_into_config!(
+                                DropHead,
+                                opts.downlink_queue_args.clone(),
+                                bandwidth
+                            )
+                        }
+                        Some(QueueType::CoDel) => {
+                            bw_q_args_into_config!(
+                                CoDel,
+                                opts.downlink_queue_args.clone(),
+                                bandwidth
+                            )
+                        }
+                    };
+                    downlink_count += 1;
+                    devices_config.insert(format!("down_{}", downlink_count), device_config);
+                } else if let Some(trace_file) = opts.downlink_trace {
+                    let device_config = match opts.downlink_queue {
+                        Some(QueueType::Infinite) | None => DeviceBuildConfig::BwReplay(
+                            BwReplayDeviceBuildConfig::Infinite(BwReplayQueueConfig::new(
+                                trace_file,
+                                InfiniteQueueConfig::new(),
+                                None,
+                            )),
+                        ),
+                        Some(QueueType::DropTail) => {
+                            bwreplay_q_args_into_config!(
+                                DropTail,
+                                opts.downlink_queue_args.clone(),
+                                trace_file
+                            )
+                        }
+                        Some(QueueType::DropHead) => {
+                            bwreplay_q_args_into_config!(
+                                DropHead,
+                                opts.downlink_queue_args.clone(),
+                                trace_file
+                            )
+                        }
+                        Some(QueueType::CoDel) => {
+                            bwreplay_q_args_into_config!(
+                                CoDel,
+                                opts.downlink_queue_args.clone(),
+                                trace_file
+                            )
+                        }
+                    };
+                    downlink_count += 1;
+                    devices_config.insert(format!("down_{}", downlink_count), device_config);
+                }
+
+                if let Some(delay) = opts.uplink_delay {
+                    let device_config =
+                        DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(delay));
+                    uplink_count += 1;
+                    devices_config.insert(format!("up_{}", uplink_count), device_config);
+                }
+
+                if let Some(delay) = opts.downlink_delay {
+                    let device_config =
+                        DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(delay));
+                    downlink_count += 1;
+                    devices_config.insert(format!("down_{}", downlink_count), device_config);
+                }
+
+                if let Some(loss) = opts.uplink_loss {
+                    let device_config = DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([loss]));
+                    uplink_count += 1;
+                    devices_config.insert(format!("up_{}", uplink_count), device_config);
+                }
+
+                if let Some(loss) = opts.downlink_loss {
+                    let device_config = DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([loss]));
+                    downlink_count += 1;
+                    devices_config.insert(format!("down_{}", downlink_count), device_config);
+                }
+
+                for i in 1..uplink_count {
+                    links_config.insert(format!("up_{}", i), format!("up_{}", i + 1));
+                }
+                for i in 1..downlink_count {
+                    links_config.insert(format!("down_{}", i), format!("down_{}", i + 1));
+                }
+
+                if uplink_count > 0 {
+                    links_config.insert("left".to_string(), "up_1".to_string());
+                    links_config.insert(format!("up_{}", uplink_count), "right".to_string());
+                } else {
+                    links_config.insert("left".to_string(), "right".to_string());
+                }
+                if downlink_count > 0 {
+                    links_config.insert("right".to_string(), "down_1".to_string());
+                    links_config.insert(format!("down_{}", downlink_count), "left".to_string());
+                } else {
+                    links_config.insert("right".to_string(), "left".to_string());
+                }
+
+                RattanConfig::<StdPacket> {
+                    env: StdNetEnvConfig {
+                        mode: StdNetEnvMode::Compatible,
+                        client_cores: vec![1],
+                        server_cores: vec![3],
+                    },
+                    #[cfg(feature = "http")]
+                    http: http_config,
+                    devices: devices_config,
+                    links: links_config,
+                    resource: Default::default(),
+                }
+            }
+        };
+        debug!(?config);
+        if config.devices.is_empty() {
+            warn!("No devices specified in config");
+        }
+        if config.links.is_empty() {
+            warn!("No links specified in config");
+        }
+
+        if let Some(cmd) = opts.subcommand {
+            match cmd {
+                CliCommand::Generate(args) => {
+                    let toml_string = toml::to_string_pretty(&config)
+                        .map_err(|e| rattan::error::Error::ConfigError(e.to_string()))?;
+                    if let Some(output) = args.output {
+                        std::fs::write(output, toml_string)?;
+                    } else {
+                        println!("{}", toml_string);
+                    }
+                    return Ok(());
+                }
             }
         }
+
+        let mut radix = RattanRadix::<AfPacketDriver>::new(config)?;
+        radix.spawn_rattan()?;
+
+        let rattan_base = radix.right_ip();
+        let left_handle = radix.left_spawn(move || {
+            let mut client_handle = std::process::Command::new("/usr/bin/env");
+            client_handle.env("RATTAN_BASE", rattan_base.to_string());
+            if opts.command.is_empty() {
+                let shell = std::env::var("SHELL").unwrap_or("/bin/bash".to_string());
+                client_handle.arg(shell);
+            } else {
+                client_handle.args(opts.command);
+            }
+            info!("Running {:?}", client_handle);
+            let mut client_handle = client_handle
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()?;
+            let output = client_handle.wait()?;
+            match output.code() {
+                Some(0) => info!("Exited with status code: 0"),
+                Some(code) => warn!("Exited with status code: {}", code),
+                None => error!("Process terminated by signal"),
+            }
+            Ok(())
+        })?;
+        radix.start_rattan()?;
+        match left_handle.join() {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => error!("Left handle exited with error: {:?}", e),
+            Err(e) => error!("Fail to join left handle: {:?}", e),
+        }
+
+        // get the last byte of rattan_base as the port number
+        // let port = CONFIG_PORT_BASE - 1
+        //     + match rattan_base {
+        //         std::net::IpAddr::V4(ip) => ip.octets()[3],
+        //         std::net::IpAddr::V6(ip) => ip.octets()[15],
+        //     } as u16;
+        // let config = RattanMachineConfig { original_ns, port };
+
+        Ok(())
+    };
+    match main_cli() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            error!("{:?}", e);
+            e.report()
+        }
     }
-
-    let mut radix = RattanRadix::<AfPacketDriver>::new(config)?;
-    radix.spawn_rattan()?;
-
-    let rattan_base = radix.right_ip();
-    let left_handle = radix.left_spawn(move || {
-        let mut client_handle = std::process::Command::new("/usr/bin/env");
-        client_handle.env("RATTAN_BASE", rattan_base.to_string());
-        if opts.command.is_empty() {
-            let shell = std::env::var("SHELL").unwrap_or("/bin/bash".to_string());
-            client_handle.arg(shell);
-        } else {
-            client_handle.args(opts.command);
-        }
-        info!("Running {:?}", client_handle);
-        let mut client_handle = client_handle
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()?;
-        let output = client_handle.wait()?;
-        match output.code() {
-            Some(0) => info!("Exited with status code: 0"),
-            Some(code) => warn!("Exited with status code: {}", code),
-            None => error!("Process terminated by signal"),
-        }
-        anyhow::Result::Ok(())
-    })?;
-    radix.start_rattan()?;
-    left_handle
-        .join()
-        .map_err(|e| anyhow::anyhow!("Error joining left handle: {:?}", e))??;
-
-    // get the last byte of rattan_base as the port number
-    // let port = CONFIG_PORT_BASE - 1
-    //     + match rattan_base {
-    //         std::net::IpAddr::V4(ip) => ip.octets()[3],
-    //         std::net::IpAddr::V6(ip) => ip.octets()[15],
-    //     } as u16;
-    // let config = RattanMachineConfig { original_ns, port };
-
-    Ok(())
 }
