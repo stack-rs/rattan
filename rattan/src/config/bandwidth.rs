@@ -119,11 +119,7 @@ where
     P: AsRef<Path>,
 {
     let trace_file = std::fs::File::open(filename.as_ref()).map_err(|e| {
-        error!(
-            "Failed to open trace file {}: {}",
-            filename.as_ref().display(),
-            e
-        );
+        error!("Failed to open trace file {}", filename.as_ref().display(),);
         Error::IoError(e)
     })?;
     let trace_pattern = std::io::BufReader::new(trace_file)
@@ -134,23 +130,21 @@ where
                 Ok(line) => line,
                 Err(e) => {
                     error!(
-                        "Failed to read line {} in {}: {}",
+                        "Failed to read line {} in {}",
                         i,
                         filename.as_ref().display(),
-                        e
                     );
                     return Err(Error::IoError(e));
                 }
             };
             let line = line.trim();
             line.parse::<u64>().map_err(|e| {
-                error!(
+                Error::ConfigError(format!(
                     "Failed to parse line {} in {}: {}",
                     i,
                     filename.as_ref().display(),
                     e
-                );
-                Error::ConfigError(format!("Failed to parse line {}: {}", i, e))
+                ))
             })
         })
         .collect();

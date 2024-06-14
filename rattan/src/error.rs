@@ -1,3 +1,7 @@
+use std::process::{ExitCode, Termination};
+
+pub type Result<T> = std::result::Result<T, Error>;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("MacParseError: {0}")]
@@ -25,6 +29,9 @@ pub enum Error {
     #[cfg(feature = "serde")]
     #[error("Serde error: {0}")]
     SerdeError(#[from] serde_json::Error),
+    #[cfg(feature = "http")]
+    #[error("Http server error: {0}")]
+    HttpServerError(#[from] HttpServerError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -116,6 +123,16 @@ pub enum RattanOpError {
     MismatchOpResError,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum HttpServerError {
+    #[error("Failed to build http runtime, {0}")]
+    TokioRuntimeError(std::io::Error),
+    #[error("Failed to bind http server, {0}")]
+    BindAddrError(std::io::Error),
+    #[error("Failed to run http server, {0}")]
+    ServerError(std::io::Error),
+}
+
 #[cfg(feature = "http")]
 impl axum::response::IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
@@ -138,8 +155,32 @@ impl axum::response::IntoResponse for Error {
             Error::ChannelError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             #[cfg(feature = "serde")]
             Error::SerdeError(_) => StatusCode::BAD_REQUEST,
+            #[cfg(feature = "http")]
+            Error::HttpServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
         (status, Json(json!({"error": self.to_string(),}))).into_response()
+    }
+}
+
+impl Termination for Error {
+    fn report(self) -> ExitCode {
+        match self {
+            Error::MacParseError(_) => ExitCode::from(78),
+            Error::NsError(_) => ExitCode::from(71),
+            Error::VethError(_) => ExitCode::from(71),
+            Error::IoError(_) => ExitCode::from(74),
+            Error::MetalError(_) => ExitCode::from(74),
+            Error::TokioRuntimeError(_) => ExitCode::from(74),
+            Error::RattanRadixError(_) => ExitCode::from(70),
+            Error::RattanCoreError(_) => ExitCode::from(1),
+            Error::RattanOpError(_) => ExitCode::from(69),
+            Error::ConfigError(_) => ExitCode::from(78),
+            Error::ChannelError(_) => ExitCode::from(69),
+            #[cfg(feature = "serde")]
+            Error::SerdeError(_) => ExitCode::from(65),
+            #[cfg(feature = "http")]
+            Error::HttpServerError(_) => ExitCode::from(70),
+        }
     }
 }

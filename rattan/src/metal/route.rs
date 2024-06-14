@@ -19,18 +19,12 @@ where
     let build_thread_span = span!(Level::DEBUG, "build_thread").or_current();
     let build_thread = std::thread::spawn(move || -> Result<(), Error> {
         let _entered = build_thread_span.entered();
-        let _ns_guard = NetNsGuard::new(netns.clone()).map_err(|e| {
-            error!("Failed to enter netns: {}", e);
-            e
-        })?;
+        let _ns_guard = NetNsGuard::new(netns.clone())?;
         std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|e| {
-                error!("Failed to build rtnetlink runtime: {:?}", e);
-                Error::TokioRuntimeError(e.into())
-            })?;
+            .map_err(|e| Error::TokioRuntimeError(e.into()))?;
         let _guard = rt.enter();
         let (conn, rtnl_handle, _) = rtnetlink::new_connection()?;
         rt.spawn(conn);
@@ -64,9 +58,10 @@ pub fn add_route_with_netns<
                 let mut handle = rtnl_handle.route().add().v4().destination_prefix(
                     Ipv4Net::new(dest_v4, prefix_length)
                         .map_err(|_| {
-                            let msg = format!("IPv4 prefix length {} is invalid", prefix_length);
-                            error!("{}", msg);
-                            Error::ConfigError(msg)
+                            Error::ConfigError(format!(
+                                "IPv4 prefix length {} is invalid",
+                                prefix_length
+                            ))
                         })?
                         .trunc()
                         .addr(),
@@ -76,12 +71,10 @@ pub fn add_route_with_netns<
                     if let IpAddr::V4(gateway_v4) = gateway {
                         handle = handle.gateway(gateway_v4);
                     } else {
-                        let msg = format!(
+                        return Err(Error::ConfigError(format!(
                             "dest {} and gateway {} are not the same type",
                             dest_v4, gateway
-                        );
-                        error!("{}", msg);
-                        return Err(Error::ConfigError(msg.to_string()));
+                        )));
                     }
                 }
                 if let Some(if_id) = outif_id {
@@ -93,9 +86,10 @@ pub fn add_route_with_netns<
                 let mut handle = rtnl_handle.route().add().v6().destination_prefix(
                     Ipv6Net::new(dest_v6, prefix_length)
                         .map_err(|_| {
-                            let msg = format!("IPv6 prefix length {} is invalid", prefix_length);
-                            error!("{}", msg);
-                            Error::ConfigError(msg)
+                            Error::ConfigError(format!(
+                                "IPv6 prefix length {} is invalid",
+                                prefix_length
+                            ))
                         })?
                         .trunc()
                         .addr(),
@@ -105,12 +99,10 @@ pub fn add_route_with_netns<
                     if let IpAddr::V6(gateway_v6) = gateway {
                         handle = handle.gateway(gateway_v6);
                     } else {
-                        let msg = format!(
+                        return Err(Error::ConfigError(format!(
                             "dest {} and gateway {} are not the same type",
                             dest_v6, gateway
-                        );
-                        error!("{}", msg);
-                        return Err(Error::ConfigError(msg.to_string()));
+                        )));
                     }
                 }
                 if let Some(if_id) = outif_id {
