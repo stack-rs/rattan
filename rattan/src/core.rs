@@ -212,6 +212,13 @@ where
 
     pub fn link_device(&mut self, rx_id: String, tx_id: String) {
         info!("Link device \"{}\" --> \"{}\"", rx_id, tx_id);
+        // Check existence of devices
+        if !self.receiver.contains_key(&rx_id) {
+            warn!("Device with ID {} does not exist in devices map", rx_id);
+        }
+        if !self.receiver.contains_key(&tx_id) {
+            warn!("Device with ID {} does not exist in devices map", tx_id);
+        }
         self.router.insert(rx_id, tx_id);
     }
 
