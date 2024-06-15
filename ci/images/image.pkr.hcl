@@ -86,6 +86,13 @@ source "libvirt" "image" {
           }
         ]
 
+        write_files = [
+          {
+            path = "/etc/modules-load.d/bbr.conf"
+            content = "tcp_bbr"
+          }
+        ]
+
         apt = {
           sources = {
             mainline = {
