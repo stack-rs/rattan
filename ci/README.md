@@ -4,10 +4,11 @@
 
 Rattan now contains two parts of tests:
 
-* Standard Tests: run on each commit in all branches. (see .github/workflows/test.yaml) 
+* Standard Tests: run on each commit in all branches. (see .github/workflows/test.yaml)
 * Verification Tests: run **only in the main branch** every day. (see .github/workflows/verify.yaml)
 
 ## Kernels
+
 Rattan is currently tested on the latest four LTS kernels, that are 5.4 (the default one on Ubuntu 20.04), 5.15 (the default one on Ubuntu 22.04), 6.8 (the default one on Ubuntu 24.04) and 6.9 (the latest upstream release).
 
 This directory contains artifacts setting up four test machines with equipped aforementioned four kernels as our development and CI environments.
@@ -19,7 +20,7 @@ This directory contains artifacts setting up four test machines with equipped af
 | noble-0608 | 6.8 | Ubuntu 24.04 (noble) | [noble/20240521](https://cloud-images.ubuntu.com/releases/24.04/release-20240608/ubuntu-24.04-server-cloudimg-amd64.img) |
 | noble-0609 | 6.9 | Ubuntu 24.04 (noble) | [noble/20240521](https://cloud-images.ubuntu.com/releases/24.04/release-20240608/ubuntu-24.04-server-cloudimg-amd64.img) |
 
-# Prepare Virtual Machines
+## Prepare Virtual Machines
 
 * Build machine images using [Packer by HashiCorp](https://www.packer.io/) with [libvirtd plugin](https://developer.hashicorp.com/packer/plugins/builders/libvirt) on a machine with `libvirtd` available.
 
@@ -31,7 +32,6 @@ packer build -var "github_access_key=<git_PAT>" -var "release_name=<Distribution
 * `<Distribution>` should be `jammy` (for Ubuntu 22.04), `focal` (for Ubutnu 20.04) or `noble` (Ubuntu 24.04).
 * `<Kernel>` should be `5.4`, `5.15` or `6.8`.
 * `<GitHub User>` should be the user whose public keys will be imported to the VM.
-
 
 Run VMs on a mchine with `libvirtd` availble.
 

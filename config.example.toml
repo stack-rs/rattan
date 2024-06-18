@@ -1,7 +1,7 @@
 # This is a sample configuration file for Rattan CLI.
 #
 # Fileds with "Default" are optional.
-# User can specify the configuration file by the `-c` option of `rattan-cli`.
+# User can specify the configuration file by the `-c` option of `rattan`.
 #
 # **ATTENTION**: Check firewall settings before running Rattan CLI.
 # Please make sure you allow the following addresses:
@@ -11,7 +11,7 @@
 # - `ufw allow from 192.168.11.0/24`
 # - `ufw allow from 192.168.12.0/24`
 # 
-# Run `rattan-cli` will generate some network namespaces and veth pairs to
+# Run `rattan` will generate some network namespaces and veth pairs to
 # emulate the network environment. The network topology is like:
 #
 #   ns-left                        ns-rattan                        ns-right
@@ -23,7 +23,7 @@
 # Then Rattan will build and link the devices according to the configuration file.
 # Each device emulates some network characteristics, such as bandwidth, delay, loss, etc.
 #
-# Then the `COMMAND` specified to `rattan-cli` will run in the `ns-left` network namespace.
+# Then the `COMMAND` specified to `rattan` will run in the `ns-left` network namespace.
 # If not specified, the `$SHELL` will run.
 #
 # Sections:

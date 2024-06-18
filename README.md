@@ -4,7 +4,6 @@
 
 High Performance Modular Transport Channel Emulator Ready for Post-Gigabit Era.
 
-
 ## Development
 
 ### Dependencies
@@ -12,6 +11,7 @@ High Performance Modular Transport Channel Emulator Ready for Post-Gigabit Era.
 * For tests: `iperf3`, `ethtool` and `iputils-ping`
 
 ### Example
+
 ```shell
 cargo run --example channel --release # AF_PACKET version
 cargo run --example channel-xdp --release --features="camellia" # AF_XDP version

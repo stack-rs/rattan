@@ -4,14 +4,14 @@ myname=${0##*/}
 set -e
 
 install_rattan() {
-    local binary_path=${1:-"rattan-cli"}
+    local binary_path=${1:-"rattan"}
     install_binary "$binary_path"
     config_networkd
 }
 
 install_binary() {
-    sudo install -m 755 "$1" /usr/local/bin/rattan-cli
-    sudo setcap 'cap_dac_override,cap_dac_read_search,cap_sys_ptrace,cap_net_admin,cap_sys_admin,cap_net_raw+ep' /usr/local/bin/rattan-cli
+    sudo install -m 755 "$1" /usr/local/bin/rattan
+    sudo setcap 'cap_dac_override,cap_dac_read_search,cap_sys_ptrace,cap_net_admin,cap_sys_admin,cap_net_raw+ep' /usr/local/bin/rattan
 }
 
 # Config systemd-networkd to not change MAC address of veth interfaces
@@ -34,15 +34,15 @@ EOF
 
 usage() {
     cat >&2 <<EOL
-Install rattan-cli and grant necessary privileges
+Install rattan and grant necessary privileges
 Usage:
-$myname options RATTAN-CLI_PATH ...
+$myname options RATTAN_BINARY_PATH ...
 
 options:
     --help|-h                   Print this help message
 
 Example:
-    $myname target/release/rattan-cli
+    $myname target/release/rattan
 
 EOL
     exit 1

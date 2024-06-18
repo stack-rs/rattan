@@ -4,7 +4,7 @@ set -e
 IPERF_ITERS=10
 PING_ITERS=100
 WORKDIR=$(
-	cd $(dirname $0)
+	cd "$(dirname "$0")"
 	pwd
 )
 RESULT_FILE=verify.html
@@ -100,7 +100,7 @@ ping_verify() {
 
 	echo "Ping Test: Loss $loss; Delay $delay ms"
 	RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' \
-		cargo run --release -q -p rattan-cli -- \
+		cargo run --release -q -p rattan -- \
 		--uplink-delay ${delay}ms \
 		--downlink-delay ${delay}ms \
 		--downlink-loss $loss \
@@ -148,7 +148,7 @@ iperf_verify() {
 	echo "iPerf Test: Loss $loss; Bandwidth $bandwidth Mbps; Delay $delay ms"
 	bandwidth=$(expr 12 \* $bw_mul \* 1000000)
 	RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' \
-		cargo run --release -q -p rattan-cli -- \
+		cargo run --release -q -p rattan -- \
 		--uplink-delay ${delay}ms \
 		--downlink-delay ${delay}ms \
 		--downlink-loss $loss \

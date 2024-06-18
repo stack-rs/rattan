@@ -1,6 +1,62 @@
 [workspace]
-members = ['rattan', 'rattan-cli']
+members = ['.', 'rattan-core']
 resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+homepage = "https://github.com/stack-rs/rattan"
+repository = "https://github.com/stack-rs/rattan"
+rust-version = "1.77"
+
+[workspace.dependencies]
+figment = { version = "0.10", features = ["toml", "env", "json"] }
+futures = "0.3.29"
+humantime = "2.1.0"
+netem-trace = { version = "0.3.1", features = ["serde", "human", "mahimahi"] }
+rand = "0.8.5"
+tokio = { version = "1.26.0", features = [
+    "rt-multi-thread",
+    "time",
+    "net",
+    "sync",
+    "signal",
+    "tokio-macros",
+    "macros",
+] }
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+
+[package]
+name = "rattan"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# anyhow = "1.0.75"
+# bollard = "0.15.0"
+clap = { version = "4.2.4", features = ["derive"] }
+dirs = "5.0.1"
+figment = { workspace = true }
+futures = { workspace = true }
+humantime = { workspace = true }
+netem-trace = { workspace = true }
+paste = "1.0.14"
+rand = { workspace = true }
+rattan-core = { path = "rattan-core", features = ["serde"] }
+serde_json = "1.0.114"
+tokio = { workspace = true }
+toml = "0.8.12"
+tracing = { workspace = true }
+tracing-appender = "0.2.3"
+tracing-subscriber = { workspace = true }
+
+[features]
+http = ["rattan-core/http"]
+packet-dump = ["rattan-core/packet-dump"]
 
 # required for cargo flamegraph
 [profile.release]

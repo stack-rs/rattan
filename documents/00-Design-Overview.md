@@ -34,11 +34,11 @@ We could create powerful emulated channels with flexible combinations of rich de
 
 The router may work in two modes: busy-loop and event-driven; both require device support. In busy-loop mode, the router polls every device in an unending loop and promptly handles incoming packets. In event-driven mode, the router awaits packet events and forwards packets on demand. It utilizes an external poller supported by all devices for event polling. The busy loop mode gives lower latency at the cost of higher CPU utilization, a necessary evil for high-resolution emulation.
 
-The router is indifferent to internal states and hardware resources used by devices. 
+The router is indifferent to internal states and hardware resources used by devices.
 It is a single-thread program for simplicity as it's unlikely to be CPU-bound in most cases. Devices (especially queues) can run a background thread (or process, if necessary) to handle internal work and creates a trivial `read()/write()` implementation, easing the burden of the router thread in the remaining cases.
 
 ### Resource
 
-We intentionally decouple logic components (device, router, etc.) and hardware/software resources backing them provided by the operating system (`veth` device, process, etc.). It's essential for multi-platform support so one logic component can be backed by different OS resources on different platforms. It also helps when we need multiple logical components for one OS resource. One example is writing one device using the `AF_XDP` interface and another using the conventional raw socket interface for the `veth` virtual interface. 
+We intentionally decouple logic components (device, router, etc.) and hardware/software resources backing them provided by the operating system (`veth` device, process, etc.). It's essential for multi-platform support so one logic component can be backed by different OS resources on different platforms. It also helps when we need multiple logical components for one OS resource. One example is writing one device using the `AF_XDP` interface and another using the conventional raw socket interface for the `veth` virtual interface.
 
 In platforms with isolation mechanisms (cgroup and namespace on Linux, jail on BSD, etc.), we implement platform-specific isolators to isolate these physical resources for better stability.

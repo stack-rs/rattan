@@ -36,7 +36,7 @@ jobs:
       - run: sudo ln -sf /usr/bin/clang-17 /usr/bin/clang && sudo ln -sf /usr/bin/llc-17 /usr/bin/llc
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - run: cargo nextest run --profile ci --all-features --release
+      - run: cargo nextest run --profile ci --all-features --release --workspace
         env:
           RUST_LOG: 'info'
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: 'sudo -E'
