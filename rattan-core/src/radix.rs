@@ -14,7 +14,7 @@ use crate::{
     control::{RattanOp, RattanOpEndpoint, RattanOpResult},
     core::{DeviceFactory, RattanCore},
     devices::{external::VirtualEthernet, Device, Packet},
-    env::{get_std_env, StdNetEnv},
+    env::{get_std_env, StdNetEnv, StdNetEnvMode},
     error::Error,
     metal::{io::common::InterfaceDriver, netns::NetNsGuard},
 };
@@ -39,6 +39,7 @@ where
     D::Receiver: Send,
 {
     env: StdNetEnv,
+    mode: StdNetEnvMode,
     cancel_token: CancellationToken,
 
     rattan_thread_handle: Option<thread::JoinHandle<()>>, // Use option to allow take ownership in drop
@@ -180,6 +181,7 @@ where
 
         let mut radix = Self {
             env,
+            mode: config.env.mode,
             cancel_token: cancel_token.clone(),
             rattan_thread_handle: Some(rattan_thread_handle),
             _rattan_runtime: rattan_runtime,
@@ -326,6 +328,10 @@ where
 
     pub fn right_ip(&self) -> IpAddr {
         self.env.right_pair.right.ip_addr.0
+    }
+
+    pub fn get_mode(&self) -> StdNetEnvMode {
+        self.mode
     }
 
     // Spawn a thread running task in left namespace

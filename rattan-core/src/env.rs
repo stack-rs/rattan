@@ -104,7 +104,7 @@ lazy_static::lazy_static! {
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Copy, Eq, PartialEq)]
 pub enum StdNetEnvMode {
     #[default]
     Compatible,
