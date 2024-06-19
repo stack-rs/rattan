@@ -1,13 +1,17 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     process::{ExitCode, Stdio, Termination},
 };
 
 use clap::{command, Args, Parser, Subcommand, ValueEnum};
 use figment::{
-    providers::{Env, Format, Toml},
+    providers::{Env, Format, Serialized, Toml},
     Figment,
 };
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
+use once_cell::sync::OnceCell;
 use paste::paste;
 use rattan_core::config::{
     BwDeviceBuildConfig, BwReplayDeviceBuildConfig, BwReplayQueueConfig, DelayDeviceBuildConfig,
@@ -22,6 +26,7 @@ use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::netem_trace::{Bandwidth, Delay};
 use rattan_core::radix::RattanRadix;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::filter::{self, FilterFn};
 use tracing_subscriber::Layer;
@@ -33,6 +38,9 @@ use rattan_core::control::http::HttpConfig;
 // mod docker;
 
 // const CONFIG_PORT_BASE: u16 = 8086;
+
+static LEFT_PID: OnceCell<i32> = OnceCell::new();
+static RIGHT_PID: OnceCell<i32> = OnceCell::new();
 
 #[derive(Debug, Parser, Clone)]
 #[command(rename_all = "kebab-case")]
@@ -47,6 +55,10 @@ pub struct Arguments {
     /// Use config file and ignore other options
     #[arg(short, long, value_name = "Config File")]
     config: Option<String>,
+
+    /// Mode to run in
+    #[arg(short, long, value_enum, default_value_t = Mode::Compatible)]
+    mode: Mode,
 
     #[command(subcommand)]
     subcommand: Option<CliCommand>,
@@ -119,9 +131,27 @@ pub struct Arguments {
     #[arg(long, value_name = "Log File", requires = "packet-log")]
     packet_log_path: Option<String>,
 
-    /// Command to run
+    /// Command to run in left ns. Only used when in isolated mode
+    #[arg(long = "left", num_args = 0..)]
+    left_command: Option<Vec<String>>,
+    /// Command to run in right ns. Only used when in isolated mode
+    #[arg(long = "right", num_args = 0..)]
+    right_command: Option<Vec<String>>,
+
+    /// Shell used to run if no command is specified. Only used when in compatible mode
+    #[arg(short, long, value_enum, default_value_t = TaskShell::Default)]
+    shell: TaskShell,
+    /// Command to run. Only used when in compatible mode
     #[arg(last = true)]
-    command: Vec<String>,
+    command: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskCommands {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub left: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub right: Option<Vec<String>>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -138,6 +168,22 @@ pub struct GenerateArgs {
     pub output: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, ValueEnum)]
+pub enum TaskShell {
+    Default,
+    Sh,
+    Bash,
+    Zsh,
+    Fish,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, ValueEnum, Copy)]
+pub enum Mode {
+    Compatible,
+    Isolated,
+    Container,
+}
+
 #[derive(ValueEnum, Clone, Debug)]
 #[value(rename_all = "lower")]
 enum QueueType {
@@ -145,6 +191,31 @@ enum QueueType {
     DropTail,
     DropHead,
     CoDel,
+}
+
+impl TaskShell {
+    fn shell(&self) -> Cow<'_, str> {
+        match self {
+            TaskShell::Default => {
+                let shell = std::env::var("SHELL").unwrap_or("/bin/sh".to_string());
+                Cow::Owned(shell)
+            }
+            TaskShell::Sh => Cow::Borrowed("/bin/sh"),
+            TaskShell::Bash => Cow::Borrowed("/bin/bash"),
+            TaskShell::Zsh => Cow::Borrowed("/bin/zsh"),
+            TaskShell::Fish => Cow::Borrowed("/bin/fish"),
+        }
+    }
+}
+
+impl From<Mode> for StdNetEnvMode {
+    fn from(mode: Mode) -> Self {
+        match mode {
+            Mode::Compatible => StdNetEnvMode::Compatible,
+            Mode::Isolated => StdNetEnvMode::Isolated,
+            Mode::Container => StdNetEnvMode::Container,
+        }
+    }
 }
 
 // Deserialize queue args and create BwDeviceBuildConfig
@@ -196,12 +267,15 @@ macro_rules! bwreplay_q_args_into_config {
 }
 
 fn main() -> ExitCode {
-    let opts = Arguments::parse();
+    // Parse Arguments
+    let mut opts = Arguments::parse();
     debug!("{:?}", opts);
     // if opts.docker {
     //     docker::docker_main(opts).unwrap();
     //     return;
     // }
+
+    // Install Tracing Subscriber
     let subscriber = tracing_subscriber::registry().with(
         tracing_subscriber::fmt::layer()
             .with_filter(
@@ -273,12 +347,29 @@ fn main() -> ExitCode {
         subscriber.init();
         None
     };
+
+    // Install Ctrl-C Handler
+    ctrlc::set_handler(move || {
+        if let Some(pid) = LEFT_PID.get() {
+            let _ = signal::kill(Pid::from_raw(*pid), Signal::SIGTERM).inspect_err(|e| {
+                tracing::error!("Failed to send SIGTERM to left task: {}", e);
+            });
+        }
+        if let Some(pid) = RIGHT_PID.get() {
+            let _ = signal::kill(Pid::from_raw(*pid), Signal::SIGTERM).inspect_err(|e| {
+                tracing::error!("Failed to send SIGTERM to right task: {}", e);
+            });
+        }
+    })
+    .expect("unable to install ctrl+c handler");
+
+    // Main CLI
     let main_cli = || -> rattan_core::error::Result<()> {
         let config = match opts.config {
-            Some(config_file) => {
+            Some(ref config_file) => {
                 info!("Loading config from {}", config_file);
                 let config: RattanConfig<StdPacket> = Figment::new()
-                    .merge(Toml::file(&config_file))
+                    .merge(Toml::file(config_file))
                     .merge(Env::prefixed("RATTAN_"))
                     .extract()
                     .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
@@ -479,7 +570,7 @@ fn main() -> ExitCode {
 
                 RattanConfig::<StdPacket> {
                     env: StdNetEnvConfig {
-                        mode: StdNetEnvMode::Compatible,
+                        mode: opts.mode.into(),
                         client_cores: vec![1],
                         server_cores: vec![3],
                     },
@@ -517,38 +608,155 @@ fn main() -> ExitCode {
             }
         }
 
+        let commands = {
+            let config = {
+                if let Some(config_file) = opts.config {
+                    Figment::new().merge(Toml::file(config_file).nested())
+                } else {
+                    Figment::new()
+                }
+            };
+            config
+                .merge(Serialized::from(
+                    TaskCommands {
+                        left: opts.left_command.take(),
+                        right: opts.right_command.take(),
+                    },
+                    "commands",
+                ))
+                .merge(Env::prefixed("RATTAN_").profile("commands"))
+                .select("commands")
+                .extract::<TaskCommands>()
+                .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?
+        };
+
+        if config.env.mode == StdNetEnvMode::Container {
+            return Err(rattan_core::error::Error::ConfigError(
+                "Container mode is not supported yet".to_string(),
+            ));
+        }
+        if config.env.mode == StdNetEnvMode::Isolated
+            && (commands.left.is_none() || commands.right.is_none())
+        {
+            return Err(rattan_core::error::Error::ConfigError(
+                "Isolated mode requires commands to be set in both sides".to_string(),
+            ));
+        }
+
         let mut radix = RattanRadix::<AfPacketDriver>::new(config)?;
         radix.spawn_rattan()?;
-
-        let rattan_base = radix.right_ip();
-        let left_handle = radix.left_spawn(move || {
-            let mut client_handle = std::process::Command::new("/usr/bin/env");
-            client_handle.env("RATTAN_BASE", rattan_base.to_string());
-            if opts.command.is_empty() {
-                let shell = std::env::var("SHELL").unwrap_or("/bin/bash".to_string());
-                client_handle.arg(shell);
-            } else {
-                client_handle.args(opts.command);
-            }
-            info!("Running {:?}", client_handle);
-            let mut client_handle = client_handle
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .spawn()?;
-            let output = client_handle.wait()?;
-            match output.code() {
-                Some(0) => info!("Exited with status code: 0"),
-                Some(code) => warn!("Exited with status code: {}", code),
-                None => error!("Process terminated by signal"),
-            }
-            Ok(())
-        })?;
         radix.start_rattan()?;
-        match left_handle.join() {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => error!("Left handle exited with error: {:?}", e),
-            Err(e) => error!("Fail to join left handle: {:?}", e),
+
+        match radix.get_mode() {
+            StdNetEnvMode::Compatible => {
+                let rattan_base = radix.right_ip();
+                let left_handle = radix.left_spawn(move || {
+                    let mut client_handle = std::process::Command::new("/usr/bin/env");
+                    client_handle.env("RATTAN_BASE", rattan_base.to_string());
+                    if let Some(arguments) = opts.command {
+                        client_handle.args(arguments);
+                    } else if let Some(arguments) = commands.left {
+                        client_handle.args(arguments);
+                    } else {
+                        client_handle.arg(opts.shell.shell().as_ref());
+                    }
+                    info!("Running {:?}", client_handle);
+                    let mut client_handle = client_handle
+                        .stdin(Stdio::inherit())
+                        .stdout(Stdio::inherit())
+                        .stderr(Stdio::inherit())
+                        .spawn()?;
+                    let pid = client_handle.id() as i32;
+                    let _ = LEFT_PID.set(pid);
+                    let status = client_handle.wait()?;
+                    Ok(status)
+                })?;
+                match left_handle.join() {
+                    Ok(Ok(status)) => {
+                        if let Some(code) = status.code() {
+                            if code == 0 {
+                                info!("Left handle {}", status);
+                            } else {
+                                warn!("Left handle {}", status);
+                            }
+                        } else {
+                            error!("Left handle {}", status);
+                        }
+                    }
+                    Ok(Err(e)) => error!("Left handle exited with error: {:?}", e),
+                    Err(e) => error!("Fail to join left handle: {:?}", e),
+                }
+            }
+            StdNetEnvMode::Isolated => {
+                let rattan_base = radix.left_ip();
+                let right_handle = radix.right_spawn(move || {
+                    let mut server_handle = std::process::Command::new("/usr/bin/env");
+                    server_handle.env("RATTAN_BASE", rattan_base.to_string());
+                    if let Some(arguments) = commands.right {
+                        server_handle.args(arguments);
+                    }
+                    info!("Running {:?}", server_handle);
+                    let mut server_handle = server_handle
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .spawn()?;
+                    let pid = server_handle.id() as i32;
+                    let _ = RIGHT_PID.set(pid);
+                    let status = server_handle.wait()?;
+                    Ok(status)
+                })?;
+                let rattan_base = radix.right_ip();
+                let left_handle = radix.left_spawn(move || {
+                    let mut client_handle = std::process::Command::new("/usr/bin/env");
+                    client_handle.env("RATTAN_BASE", rattan_base.to_string());
+                    if let Some(arguments) = commands.left {
+                        client_handle.args(arguments);
+                    }
+                    info!("Running {:?}", client_handle);
+                    let mut client_handle = client_handle
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .spawn()?;
+                    let pid = client_handle.id() as i32;
+                    let _ = LEFT_PID.set(pid);
+                    let status = client_handle.wait()?;
+                    Ok(status)
+                })?;
+
+                match left_handle.join() {
+                    Ok(Ok(status)) => {
+                        if let Some(code) = status.code() {
+                            if code == 0 {
+                                info!("Left handle {}", status);
+                            } else {
+                                warn!("Left handle {}", status);
+                            }
+                        } else {
+                            error!("Left handle {}", status);
+                        }
+                    }
+                    Ok(Err(e)) => error!("Left handle exited with error: {:?}", e),
+                    Err(e) => error!("Fail to join left handle: {:?}", e),
+                }
+                match right_handle.join() {
+                    Ok(Ok(status)) => {
+                        if let Some(code) = status.code() {
+                            if code == 0 {
+                                info!("Right handle {}", status);
+                            } else {
+                                warn!("Right handle {}", status);
+                            }
+                        } else {
+                            error!("Right handle {}", status);
+                        }
+                    }
+                    Ok(Err(e)) => error!("Right handle exited with error: {:?}", e),
+                    Err(e) => error!("Fail to join right handle: {:?}", e),
+                }
+            }
+            StdNetEnvMode::Container => {}
         }
 
         // get the last byte of rattan_base as the port number
