@@ -1,10 +1,10 @@
 use std::{net::IpAddr, sync::Arc, thread};
 
 use backon::{BlockingRetryable, ExponentialBuilder};
-use nix::{
-    sched::{sched_setaffinity, CpuSet},
-    unistd::Pid,
-};
+// use nix::{
+//     sched::{sched_setaffinity, CpuSet},
+//     unistd::Pid,
+// };
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, span, warn, Level};
@@ -63,12 +63,7 @@ where
                 warn!("Failed to build environment, retrying");
             })
         };
-        let running_core = config
-            .resource
-            .cpu
-            .clone()
-            .or_else(|| Some(vec![1]))
-            .unwrap();
+        let running_core = config.resource.cpu.clone().unwrap_or(vec![1]);
 
         let env = build_env
             .retry(
@@ -98,13 +93,13 @@ where
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(running_core.len())
                 .enable_all()
-                .on_thread_start(move || {
-                    let mut cpuset = CpuSet::new();
-                    for core in running_core.iter() {
-                        cpuset.set(*core as usize).unwrap();
-                    }
-                    sched_setaffinity(Pid::from_raw(0), &cpuset).unwrap();
-                })
+                // .on_thread_start(move || {
+                //     let mut cpuset = CpuSet::new();
+                //     for core in running_core.iter() {
+                //         cpuset.set(*core as usize).unwrap();
+                //     }
+                //     sched_setaffinity(Pid::from_raw(0), &cpuset).unwrap();
+                // })
                 .build()
                 .map(Arc::new);
 
