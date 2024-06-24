@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     process::{ExitCode, Stdio, Termination},
+    sync::{atomic::AtomicBool, Arc},
 };
 
 use clap::{command, Args, Parser, Subcommand, ValueEnum};
@@ -348,17 +349,25 @@ fn main() -> ExitCode {
         None
     };
 
+    let left_handle_finished = Arc::new(AtomicBool::new(false));
+    let left_handle_finished_inner = left_handle_finished.clone();
+    let right_handle_finished = Arc::new(AtomicBool::new(false));
+    let right_handle_finished_inner = right_handle_finished.clone();
     // Install Ctrl-C Handler
     ctrlc::set_handler(move || {
-        if let Some(pid) = LEFT_PID.get() {
-            let _ = signal::kill(Pid::from_raw(*pid), Signal::SIGTERM).inspect_err(|e| {
-                tracing::error!("Failed to send SIGTERM to left task: {}", e);
-            });
+        if !left_handle_finished_inner.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(pid) = LEFT_PID.get() {
+                let _ = signal::kill(Pid::from_raw(*pid), Signal::SIGTERM).inspect_err(|e| {
+                    tracing::error!("Failed to send SIGTERM to left task: {}", e);
+                });
+            }
         }
-        if let Some(pid) = RIGHT_PID.get() {
-            let _ = signal::kill(Pid::from_raw(*pid), Signal::SIGTERM).inspect_err(|e| {
-                tracing::error!("Failed to send SIGTERM to right task: {}", e);
-            });
+        if !right_handle_finished_inner.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(pid) = RIGHT_PID.get() {
+                let _ = signal::kill(Pid::from_raw(*pid), Signal::SIGTERM).inspect_err(|e| {
+                    tracing::error!("Failed to send SIGTERM to right task: {}", e);
+                });
+            }
         }
     })
     .expect("unable to install ctrl+c handler");
@@ -669,6 +678,7 @@ fn main() -> ExitCode {
                     let pid = client_handle.id() as i32;
                     let _ = LEFT_PID.set(pid);
                     let status = client_handle.wait()?;
+                    left_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
                     Ok(status)
                 })?;
                 match left_handle.join() {
@@ -704,6 +714,7 @@ fn main() -> ExitCode {
                     let pid = server_handle.id() as i32;
                     let _ = RIGHT_PID.set(pid);
                     let status = server_handle.wait()?;
+                    right_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
                     Ok(status)
                 })?;
                 let rattan_base = radix.right_ip();
@@ -722,6 +733,7 @@ fn main() -> ExitCode {
                     let pid = client_handle.id() as i32;
                     let _ = LEFT_PID.set(pid);
                     let status = client_handle.wait()?;
+                    left_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
                     Ok(status)
                 })?;
 
