@@ -88,8 +88,8 @@ pub struct Arguments {
     downlink_delay: Option<Delay>,
 
     /// Uplink bandwidth
-    #[arg(long, global = true, value_name = "Bandwidth", group = "uplink-bw")]
-    uplink_bandwidth: Option<u64>,
+    #[arg(long, global = true, value_name = "Bandwidth", group = "uplink-bw", value_parser = human_bandwidth::parse_bandwidth)]
+    uplink_bandwidth: Option<Bandwidth>,
     /// Uplink trace file
     #[arg(long, global = true, value_name = "Trace File", group = "uplink-bw")]
     uplink_trace: Option<String>,
@@ -107,8 +107,8 @@ pub struct Arguments {
     uplink_queue_args: Option<String>,
 
     /// Downlink bandwidth
-    #[arg(long, global = true, value_name = "Bandwidth", group = "downlink-bw")]
-    downlink_bandwidth: Option<u64>,
+    #[arg(long, global = true, value_name = "Bandwidth", group = "downlink-bw", value_parser = human_bandwidth::parse_bandwidth)]
+    downlink_bandwidth: Option<Bandwidth>,
     /// Downlink trace file
     #[arg(long, global = true, value_name = "Trace File", group = "downlink-bw")]
     downlink_trace: Option<String>,
@@ -402,7 +402,6 @@ fn main() -> ExitCode {
                 let mut downlink_count = 0;
 
                 if let Some(bandwidth) = opts.uplink_bandwidth {
-                    let bandwidth = Bandwidth::from_bps(bandwidth);
                     let device_config = match opts.uplink_queue {
                         Some(QueueType::Infinite) | None => {
                             DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(
@@ -465,7 +464,6 @@ fn main() -> ExitCode {
                 }
 
                 if let Some(bandwidth) = opts.downlink_bandwidth {
-                    let bandwidth = Bandwidth::from_bps(bandwidth);
                     let device_config = match opts.downlink_queue {
                         Some(QueueType::Infinite) | None => {
                             DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(

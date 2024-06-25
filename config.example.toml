@@ -106,7 +106,7 @@ bw_type = "NetworkLayer"
 # For example, the following line means 1.2 Gbps.
 #
 # Default: Unlimited
-bandwidth = { gbps = 1, bps = 200000000 }
+bandwidth = "1Gbps 200Mbps"
 
 # Queue type
 # Possible values:

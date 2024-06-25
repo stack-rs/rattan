@@ -13,8 +13,8 @@ rust-version = "1.77"
 ctrlc = "3.2.5"
 figment = { version = "0.10", features = ["toml", "env", "json"] }
 futures = "0.3.29"
-humantime = "2.1.0"
-netem-trace = { version = "0.3.1", features = ["serde", "human", "mahimahi"] }
+human-bandwidth = { version = "0.1.1", features = ["serde"] }
+netem-trace = { version = "0.3.3", features = ["serde", "human", "mahimahi"] }
 nix = "0.26.2"
 once_cell = "1.19"
 rand = "0.8.5"
@@ -47,7 +47,8 @@ ctrlc = { workspace = true }
 dirs = "5.0.1"
 figment = { workspace = true }
 futures = { workspace = true }
-humantime = { workspace = true }
+human-bandwidth = { workspace = true }
+humantime = "2.1.0"
 netem-trace = { workspace = true }
 nix = { workspace = true }
 once_cell = { workspace = true }

@@ -237,6 +237,7 @@ where
     P: Packet,
     Q: PacketQueue<P>,
 {
+    #[cfg_attr(feature = "serde", serde(with = "human_bandwidth::serde"))]
     pub bandwidth: Option<Bandwidth>,
     pub queue_config: Option<Q::Config>,
     pub bw_type: Option<BwType>,
