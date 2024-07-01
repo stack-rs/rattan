@@ -1,0 +1,23 @@
+- name: set service configuration directory
+  become: true
+  ansible.builtin.file:
+    path: /etc/runner
+    state: directory
+
+- name: copy github-runner docker-compose file
+  become: true
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: /etc/runner/docker-compose.yml
+
+- name: poll a image
+  become: true
+  community.docker.docker_image:
+    name: "docker.io/myoung34/github-runner:{{ tag }}"
+    source: pull
+
+- name: start the github-runner container
+  become: true
+  community.docker.docker_compose_v2:
+    project_src: /etc/runner
+    state: present 

@@ -1,6 +1,7 @@
 variable "github_access_key" {
   type = string
   sensitive = true
+  default = ""
 }
 
 variable "base_images" {
@@ -41,4 +42,9 @@ variable "kernel_version" {
 
 variable "key_import_user" {
   type = string
-} 
+}
+
+variable "install_runner" {
+  type = bool
+  default = true
+}

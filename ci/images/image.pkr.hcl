@@ -160,6 +160,6 @@ build {
   provisioner "ansible" {
     playbook_file = "./ansible/configure.yml"
     galaxy_file = "./ansible/requirements.yml"
-    extra_arguments = [ "--extra-vars", "github_access_key=${var.github_access_key} kernel_version=${var.kernel_version} runner_name=${var.release_name}-${var.kernel_version} tag=ubuntu-${var.release_name}" ]
+    extra_arguments = [ "--extra-vars", "github_access_key=${var.github_access_key} kernel_version=${var.kernel_version} runner_name=${var.release_name}-${var.kernel_version} tag=ubuntu-${var.release_name} install_runner=${var.install_runner}" ]
   }
 }

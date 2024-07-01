@@ -21,35 +21,16 @@
       docker_compose_url: "https://github.com/docker/compose/releases/download/{{ docker_compose_version }}/docker-compose-linux-{{ docker_compose_arch }}"
       docker_apt_filename: "docker"
 
-  - name: set service configuration directory
-    become: true
-    ansible.builtin.file:
-      path: /etc/runner
-      state: directory
-
-  - name: copy github-runner docker-compose file
-    become: true
-    ansible.builtin.template:
-      src: docker-compose.yml.j2
-      dest: /etc/runner/docker-compose.yml
-
-  - name: poll a image
-    become: true
-    community.docker.docker_image:
-      name: "docker.io/myoung34/github-runner:{{ tag }}"
-      source: pull
-
-  - name: start the github-runner container
-    become: true
-    community.docker.docker_compose_v2:
-      project_src: /etc/runner
-      state: present 
+  - name: install github runner
+    ansible.builtin.include_tasks:
+      file: github-runner.yml
+    when: install_runner != "false"
 
   - name: change default tcp congestion control to cubic
     become: true
     ansible.posix.sysctl:
       name: net.ipv4.tcp_congestion_control
-      value: "cubic"
+      value: "bbr"
       sysctl_set: true
 
   - name: Tune TCP write buffer
