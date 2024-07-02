@@ -666,6 +666,10 @@ fn main() -> ExitCode {
                         client_handle.args(arguments);
                     } else {
                         client_handle.arg(opts.shell.shell().as_ref());
+                        if matches!(opts.shell, TaskShell::Bash) {
+                            client_handle
+                                .env("PROMPT_COMMAND", "PS1=\"[rattan] $PS1\" PROMPT_COMMAND=");
+                        }
                     }
                     info!("Running {:?}", client_handle);
                     let mut client_handle = client_handle
