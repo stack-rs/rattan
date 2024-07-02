@@ -9,6 +9,7 @@ use crate::error::Error;
 
 pub mod bandwidth;
 pub mod delay;
+pub mod duplicate;
 pub mod external;
 pub mod loss;
 

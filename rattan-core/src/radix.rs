@@ -274,6 +274,12 @@ where
                 DeviceBuildConfig::LossReplay(config) => {
                     self.build_device(id, config.into_factory())?;
                 }
+                DeviceBuildConfig::Duplicate(config) => {
+                    self.build_device(id, config.into_factory())?;
+                }
+                DeviceBuildConfig::DuplicateReplay(config) => {
+                    self.build_device(id, config.into_factory())?;
+                }
                 DeviceBuildConfig::Custom => {
                     debug!("Skip build custom device: {}", id);
                 }
