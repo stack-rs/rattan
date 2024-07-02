@@ -103,7 +103,7 @@ where
         if rand_num < duplicate_rate {
             self.prev_duplicated += 1;
             let mut duplicated_packet = P::from_raw_buffer(packet.as_raw_buffer());
-            duplicated_packet.set_timestamp(packet.get_timestamp().clone());
+            duplicated_packet.set_timestamp(packet.get_timestamp());
             self.duplicated_buffer = Some(duplicated_packet);
         } else {
             self.prev_duplicated = 0;
@@ -946,7 +946,10 @@ mod tests {
                 "Tested duplicate rate is {} and calibrated duplicated rate is {}",
                 duplicate_rate, calibrated_duplicate_rate
             );
-            assert!((duplicate_rate - calibrated_duplicate_rate).abs() <= DUPLICATE_RATE_ACCURACY_TOLERANCE);
+            assert!(
+                (duplicate_rate - calibrated_duplicate_rate).abs()
+                    <= DUPLICATE_RATE_ACCURACY_TOLERANCE
+            );
         }
         Ok(())
     }
