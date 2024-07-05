@@ -45,7 +45,7 @@ static RIGHT_PID: OnceCell<i32> = OnceCell::new();
 
 #[derive(Debug, Parser, Clone)]
 #[command(rename_all = "kebab-case")]
-#[command(propagate_version = true)]
+#[command(version, propagate_version = true)]
 pub struct Arguments {
     // Verbose debug output
     // #[arg(short, long)]
@@ -128,8 +128,10 @@ pub struct Arguments {
     /// Enable packet logging
     #[arg(long)]
     packet_log: bool,
+    // This "requires" field uses an underscore '_' instead of a dash '-' since "packet_log" is a
+    // field name instead of a group name
     /// Packet log path, default to $CACHE_DIR/rattan/packet.log
-    #[arg(long, value_name = "Log File", requires = "packet-log")]
+    #[arg(long, value_name = "Log File", requires = "packet_log")]
     packet_log_path: Option<String>,
 
     /// Command to run in left ns. Only used when in isolated mode
