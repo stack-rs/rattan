@@ -42,5 +42,7 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: 'sudo -E'
           # For insta to disable writing new snapshot files and fail on mismatch
           CI: 'true'
+      - name: Test CLI
+        run: ./ci/scripts/test_cli.sh
       - run: sudo ./scripts/clean_stdenv.sh -a
 
