@@ -152,8 +152,8 @@ iperf_verify() {
 		--uplink-delay ${delay}ms \
 		--downlink-delay ${delay}ms \
 		--downlink-loss $loss \
-		--uplink-bandwidth $bandwidth \
-		--downlink-bandwidth $bandwidth \
+		--uplink-bandwidth "$bandwidth"Mbps \
+		--downlink-bandwidth "$bandwidth"Mbps \
 		-- $WORKDIR/iperf3.sh $IPERF_ITERS '$RATTAN_BASE' $cc \
 		>"rattan_$suffix.log" 2>&1
 	calc_iperf_stats $(expr 12 \* $bw_mul) $loss $suffix
