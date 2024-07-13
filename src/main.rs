@@ -329,10 +329,10 @@ fn main() -> ExitCode {
             let (non_blocking, guard) = tracing_appender::non_blocking(file_logger);
             let file_log_filter = FilterFn::new(|metadata| {
                 // Only enable spans or events with the target "interesting_things"
-                metadata.target().ends_with("packet")
+                metadata.target().ends_with("::packet_log")
             });
             let env_filter = tracing_subscriber::EnvFilter::try_from_env("RATTAN_PACKET_LOG")
-                .unwrap_or_else(|_| "info".into());
+                .unwrap_or_else(|_| "trace".into());
             subscriber
                 .with(
                     tracing_subscriber::fmt::layer()

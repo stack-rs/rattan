@@ -30,8 +30,14 @@ pub trait Packet: Debug + 'static + Send {
     fn ether_hdr(&self) -> Option<Ethernet2Header>;
     fn ip_hdr(&self) -> Option<Ipv4Header>;
 
+    // Timestamp
     fn get_timestamp(&self) -> Instant;
     fn set_timestamp(&mut self, timestamp: Instant);
+
+    // Packet description
+    fn desc(&self) -> String {
+        String::new()
+    }
 }
 
 #[derive(Debug)]
@@ -97,6 +103,85 @@ impl Packet for StdPacket {
 
     fn set_timestamp(&mut self, timestamp: Instant) {
         self.timestamp = timestamp;
+    }
+
+    fn desc(&self) -> String {
+        let mut desc = String::new();
+        if let Ok(ether_hdr) = etherparse::Ethernet2HeaderSlice::from_slice(self.buf.as_slice()) {
+            desc.push_str("[Ether] ");
+            match ether_hdr.ether_type() {
+                etherparse::EtherType::ARP => desc.push_str("[ARP]"),
+                etherparse::EtherType::IPV4 => {
+                    desc.push_str("[IPv4]");
+                    match etherparse::Ipv4HeaderSlice::from_slice(
+                        self.buf
+                            .as_slice()
+                            .get(ether_hdr.slice().len()..)
+                            .unwrap_or(&[]),
+                    ) {
+                        Ok(ip_hdr) => {
+                            desc.push_str(&format!(
+                                " src: {} dst: {} id: {} offset: {} chksum: {} ",
+                                ip_hdr.source_addr(),
+                                ip_hdr.destination_addr(),
+                                ip_hdr.identification(),
+                                ip_hdr.fragments_offset(),
+                                ip_hdr.header_checksum()
+                            ));
+                            match ip_hdr.protocol() {
+                                etherparse::IpNumber::UDP => {
+                                    desc.push_str("[UDP]");
+                                    if let Ok(udp_hdr) = etherparse::UdpHeaderSlice::from_slice(
+                                        self.buf
+                                            .as_slice()
+                                            .get(ether_hdr.slice().len() + ip_hdr.slice().len()..)
+                                            .unwrap_or(&[]),
+                                    ) {
+                                        desc.push_str(&format!(
+                                            " sport: {} dport: {} chksum: {}",
+                                            udp_hdr.source_port(),
+                                            udp_hdr.destination_port(),
+                                            udp_hdr.checksum()
+                                        ));
+                                    }
+                                }
+                                etherparse::IpNumber::TCP => {
+                                    desc.push_str("[TCP]");
+                                    if let Ok(tcp_hdr) = etherparse::TcpHeaderSlice::from_slice(
+                                        self.buf
+                                            .as_slice()
+                                            .get(ether_hdr.slice().len() + ip_hdr.slice().len()..)
+                                            .unwrap_or(&[]),
+                                    ) {
+                                        desc.push_str(&format!(
+                                            " sport: {} dport: {} chksum: {} seq: {} ack: {} flags: {}",
+                                            tcp_hdr.source_port(),
+                                            tcp_hdr.destination_port(),
+                                            tcp_hdr.checksum(),
+                                            tcp_hdr.sequence_number(),
+                                            tcp_hdr.acknowledgment_number(),
+                                            tcp_hdr.slice().get(13).unwrap()
+                                        ));
+                                    }
+                                }
+                                etherparse::IpNumber::ICMP => desc.push_str("[ICMP]"),
+                                etherparse::IpNumber::IPV6_ICMP => desc.push_str("[IPV6_ICMP]"),
+                                _ => desc.push_str("[Unknown]"),
+                            }
+                        }
+                        Err(e) => {
+                            desc.push_str(&format!("Error parsing: {}", e));
+                        }
+                    }
+                }
+
+                etherparse::EtherType::IPV6 => desc.push_str("[IPv6]"),
+                _ => desc.push_str("[Unknown]"),
+            }
+        } else {
+            desc.push_str("[Unknown]");
+        }
+        desc
     }
 }
 
