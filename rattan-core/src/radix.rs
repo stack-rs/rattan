@@ -1,6 +1,7 @@
 use std::{net::IpAddr, sync::Arc, thread};
 
 use backon::{BlockingRetryable, ExponentialBuilder};
+use once_cell::sync::OnceCell;
 // use nix::{
 //     sched::{sched_setaffinity, CpuSet},
 //     unistd::Pid,
@@ -23,6 +24,8 @@ use crate::{
 use crate::{control::http::HttpControlEndpoint, error::HttpServerError};
 #[cfg(feature = "http")]
 use std::net::{Ipv4Addr, SocketAddr};
+
+pub static INSTANCE_ID: OnceCell<String> = OnceCell::new();
 
 pub type TaskResult<R> = Result<R, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -57,7 +60,11 @@ where
     D::Receiver: Send,
 {
     pub fn new(config: RattanConfig<D::Packet>) -> crate::error::Result<Self> {
-        info!("New RattanRadix");
+        let instance_id = INSTANCE_ID.get_or_init(|| {
+            // get env var from RATTAN_INSTANCE_ID
+            std::env::var("RATTAN_INSTANCE_ID").unwrap_or_else(|_| uuid::Uuid::new_v4().to_string())
+        });
+        info!("New RattanRadix with instance id: {}", instance_id);
         let build_env = || {
             get_std_env(&config.env).inspect_err(|_| {
                 warn!("Failed to build environment, retrying");

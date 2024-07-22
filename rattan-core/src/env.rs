@@ -11,7 +11,7 @@ use netlink_packet_route::{address::AddressAttribute, link::LinkAttribute};
 use once_cell::sync::OnceCell;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
-use std::sync::Arc;
+use std::{io::Write, sync::Arc};
 use std::{
     net::{IpAddr, Ipv4Addr},
     str::FromStr,
@@ -150,6 +150,19 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         .take(6)
         .map(char::from)
         .collect();
+    let mut kmesg_logger = std::fs::OpenOptions::new().write(true).open("/dev/kmsg")?;
+    let instance_id = crate::radix::INSTANCE_ID.get_or_init(|| {
+        // get env var from RATTAN_INSTANCE_ID
+        std::env::var("RATTAN_INSTANCE_ID").unwrap_or_else(|_| uuid::Uuid::new_v4().to_string())
+    });
+    let mut buf = Vec::new();
+    writeln!(
+        buf,
+        "rattan instance id {} create ns with rand_string {}",
+        instance_id, rand_string
+    )?;
+    kmesg_logger.write_all(&buf)?;
+    kmesg_logger.flush()?;
     let client_netns_name = format!("ns-left-{}", rand_string);
     let server_netns_name = format!("ns-right-{}", rand_string);
     let rattan_netns_name = format!("ns-rattan-{}", rand_string);
