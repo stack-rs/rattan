@@ -1205,22 +1205,15 @@ where
         /* Alpha and beta take at most 32b, i.e, the delay difference would
         overflow for queuing delay differences > ~4.2sec.
         */
-        let mut delta =
-            (qdelay.as_nanos() - self.config.target.as_nanos()) as i64 * self.config.alpha as i64;
-        delta += (qdelay.as_nanos() - self.last_qdelay.as_nanos()) as i64 * self.config.beta as i64;
-        let new_prob = if delta > 0 {
-            let mut new_prob = Self::scale_delta(delta) as u32 + self.pi2_prob;
-            if new_prob < self.pi2_prob {
-                new_prob = DualPI2QueueConfig::MAX_PROB;
-            }
-            new_prob
-        } else {
-            // This line is particularly ugly since the reference code is using c
-            let mut new_prob = (self.pi2_prob as i32 - Self::scale_delta(delta) as i32) as u32;
-            if new_prob > self.pi2_prob {
-                new_prob = 0;
-            }
-            new_prob
+        let mut delta = (qdelay.as_nanos() as i64 - self.config.target.as_nanos() as i64)
+            * self.config.alpha as i64;
+        delta += (qdelay.as_nanos() as i64 - self.last_qdelay.as_nanos() as i64)
+            * self.config.beta as i64;
+        let new_prob = self.pi2_prob as i64 + Self::scale_delta(delta as u64);
+        let new_prob: u32 = match new_prob {
+            p if p > u32::MAX as i64 => u32::MAX,
+            p if p < 0 => 0,
+            _ => new_prob as u32,
         };
         self.last_qdelay = qdelay;
         /* If we do not drop on overload, ensure we cap the L4S probability to
@@ -1236,7 +1229,7 @@ where
         new_prob
     }
 
-    fn scale_delta(delta: i64) -> i64 {
-        delta / (1 << DualPI2QueueConfig::ALPHA_BETA_GRANULARITY)
+    fn scale_delta(delta: u64) -> i64 {
+        (delta / (1 << DualPI2QueueConfig::ALPHA_BETA_GRANULARITY)) as i64
     }
 }
