@@ -4,6 +4,7 @@ use figment::{
 };
 use netem_trace::{model::LossTraceConfig, LossTrace};
 use rand::{rngs::StdRng, SeedableRng};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -25,7 +26,11 @@ impl LossDeviceBuildConfig {
     }
 }
 
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde_with::skip_serializing_none,
+    derive(Serialize, Deserialize)
+)]
 #[derive(Debug, Clone)]
 pub struct LossReplayDeviceBuildConfig {
     pub trace: String,

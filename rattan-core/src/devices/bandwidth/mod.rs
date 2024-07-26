@@ -230,7 +230,11 @@ where
     }
 }
 
-#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde_with::skip_serializing_none,
+    derive(Deserialize, Serialize)
+)]
 #[derive(Debug)]
 pub struct BwDeviceConfig<P, Q>
 where
@@ -586,7 +590,11 @@ where
     }
 }
 
-#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde_with::skip_serializing_none,
+    derive(Deserialize, Serialize)
+)]
 pub struct BwReplayDeviceConfig<P, Q>
 where
     P: Packet,

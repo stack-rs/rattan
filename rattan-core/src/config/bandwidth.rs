@@ -69,7 +69,12 @@ pub enum BwReplayDeviceBuildConfig<P: Packet> {
     CoDel(BwReplayQueueConfig<P, queue::CoDelQueue<P>>),
 }
 
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
+#[cfg_attr(
+    feature = "serde",
+    serde_with::skip_serializing_none,
+    derive(Serialize, Deserialize),
+    serde(bound = "")
+)]
 #[derive(Debug)]
 pub struct BwReplayQueueConfig<P, Q>
 where

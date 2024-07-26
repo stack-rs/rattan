@@ -46,7 +46,12 @@ impl<P: Packet> Default for RattanConfig<P> {
     }
 }
 
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
+#[cfg_attr(
+    feature = "serde",
+    serde_with::skip_serializing_none,
+    derive(Serialize, Deserialize),
+    serde(bound = "")
+)]
 #[derive(Clone, Debug, Default)]
 pub struct RattanResourceConfig {
     #[cfg_attr(feature = "serde", serde(default))]
