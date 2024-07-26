@@ -14,10 +14,6 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
 use paste::paste;
-use rattan_core::config::{
-    BwDeviceBuildConfig, BwReplayDeviceBuildConfig, BwReplayQueueConfig, DelayDeviceBuildConfig,
-    DeviceBuildConfig, LossDeviceBuildConfig, RattanConfig, RattanResourceConfig,
-};
 use rattan_core::devices::bandwidth::queue::{
     CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
 };
@@ -27,6 +23,14 @@ use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::netem_trace::{Bandwidth, Delay};
 use rattan_core::radix::RattanRadix;
+use rattan_core::{
+    config::{
+        BwDeviceBuildConfig, BwReplayDeviceBuildConfig, BwReplayQueueConfig,
+        DelayDeviceBuildConfig, DeviceBuildConfig, LossDeviceBuildConfig, RattanConfig,
+        RattanResourceConfig,
+    },
+    radix::TaskResultNotify,
+};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::filter::{self, FilterFn};
@@ -656,10 +660,13 @@ fn main() -> ExitCode {
         radix.spawn_rattan()?;
         radix.start_rattan()?;
 
+        let (tx_left, rx) = std::sync::mpsc::channel();
+        let tx_right = tx_left.clone();
+
         match radix.get_mode() {
             StdNetEnvMode::Compatible => {
                 let rattan_base = radix.right_ip();
-                let left_handle = radix.left_spawn(move || {
+                let left_handle = radix.left_spawn(None, move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
                     client_handle.env("RATTAN_BASE", rattan_base.to_string());
                     if let Some(arguments) = opts.command {
@@ -704,7 +711,7 @@ fn main() -> ExitCode {
             }
             StdNetEnvMode::Isolated => {
                 let rattan_base = radix.left_ip();
-                let right_handle = radix.right_spawn(move || {
+                let right_handle = radix.right_spawn(Some(tx_right), move || {
                     let mut server_handle = std::process::Command::new("/usr/bin/env");
                     server_handle.env("RATTAN_BASE", rattan_base.to_string());
                     if let Some(arguments) = commands.right {
@@ -724,7 +731,7 @@ fn main() -> ExitCode {
                     Ok(status)
                 })?;
                 let rattan_base = radix.right_ip();
-                let left_handle = radix.left_spawn(move || {
+                let left_handle = radix.left_spawn(Some(tx_left), move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
                     client_handle.env("RATTAN_BASE", rattan_base.to_string());
                     if let Some(arguments) = commands.left {
@@ -744,35 +751,118 @@ fn main() -> ExitCode {
                     Ok(status)
                 })?;
 
-                match left_handle.join() {
-                    Ok(Ok(status)) => {
-                        if let Some(code) = status.code() {
-                            if code == 0 {
-                                info!("Left handle {}", status);
-                            } else {
-                                warn!("Left handle {}", status);
+                match rx.recv() {
+                    Ok(notify) => match notify {
+                        TaskResultNotify::Left => {
+                            match left_handle.join() {
+                                Ok(Ok(status)) => {
+                                    if let Some(code) = status.code() {
+                                        if code == 0 {
+                                            info!("Left handle {}", status);
+                                        } else {
+                                            warn!("Left handle {}", status);
+                                        }
+                                    } else {
+                                        error!("Left handle {}", status);
+                                    }
+                                }
+                                Ok(Err(e)) => {
+                                    error!("Left handle exited with error: {:?}", e);
+                                    // TODO: we may also add other arguments to disable the killing of the other half
+                                    if right_handle.is_finished() {
+                                        warn!("Right handle is already finished");
+                                    } else {
+                                        warn!("Try to send SIGTERM to right spawned thread");
+                                        if let Some(pid) = RIGHT_PID.get() {
+                                            let _ =
+                                                signal::kill(Pid::from_raw(*pid), Signal::SIGTERM)
+                                                    .inspect_err(|e| {
+                                                        tracing::error!(
+                                                            "Failed to send SIGTERM: {}",
+                                                            e
+                                                        );
+                                                    });
+                                        }
+                                        // TODO: we may wait for a while before sending SIGKILL
+                                    }
+                                }
+                                Err(e) => error!("Fail to join left handle: {:?}", e),
                             }
-                        } else {
-                            error!("Left handle {}", status);
-                        }
-                    }
-                    Ok(Err(e)) => error!("Left handle exited with error: {:?}", e),
-                    Err(e) => error!("Fail to join left handle: {:?}", e),
-                }
-                match right_handle.join() {
-                    Ok(Ok(status)) => {
-                        if let Some(code) = status.code() {
-                            if code == 0 {
-                                info!("Right handle {}", status);
-                            } else {
-                                warn!("Right handle {}", status);
+                            match right_handle.join() {
+                                Ok(Ok(status)) => {
+                                    if let Some(code) = status.code() {
+                                        if code == 0 {
+                                            info!("Right handle {}", status);
+                                        } else {
+                                            warn!("Right handle {}", status);
+                                        }
+                                    } else {
+                                        error!("Right handle {}", status);
+                                    }
+                                }
+                                Ok(Err(e)) => {
+                                    error!("Right handle exited with error: {:?}", e);
+                                }
+                                Err(e) => error!("Fail to join right handle: {:?}", e),
                             }
-                        } else {
-                            error!("Right handle {}", status);
                         }
+                        TaskResultNotify::Right => {
+                            match right_handle.join() {
+                                Ok(Ok(status)) => {
+                                    if let Some(code) = status.code() {
+                                        if code == 0 {
+                                            info!("Right handle {}", status);
+                                        } else {
+                                            warn!("Right handle {}", status);
+                                        }
+                                    } else {
+                                        error!("Right handle {}", status);
+                                    }
+                                }
+                                Ok(Err(e)) => {
+                                    error!("Right handle exited with error: {:?}", e);
+                                    // TODO: we may also add other arguments to disable the killing of the other half
+                                    if left_handle.is_finished() {
+                                        warn!("Left handle is already finished");
+                                    } else {
+                                        warn!("Try to send SIGTERM to left spawned thread");
+                                        if let Some(pid) = LEFT_PID.get() {
+                                            let _ =
+                                                signal::kill(Pid::from_raw(*pid), Signal::SIGTERM)
+                                                    .inspect_err(|e| {
+                                                        tracing::error!(
+                                                            "Failed to send SIGTERM: {}",
+                                                            e
+                                                        );
+                                                    });
+                                        }
+                                        // TODO: we may wait for a while before sending SIGKILL
+                                    }
+                                }
+                                Err(e) => error!("Fail to join right handle: {:?}", e),
+                            }
+                            match left_handle.join() {
+                                Ok(Ok(status)) => {
+                                    if let Some(code) = status.code() {
+                                        if code == 0 {
+                                            info!("Left handle {}", status);
+                                        } else {
+                                            warn!("Left handle {}", status);
+                                        }
+                                    } else {
+                                        error!("Left handle {}", status);
+                                    }
+                                }
+                                Ok(Err(e)) => {
+                                    error!("Left handle exited with error: {:?}", e);
+                                }
+                                Err(e) => error!("Fail to join left handle: {:?}", e),
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        error!("Fail to receive from channel: {:?}", e);
                     }
-                    Ok(Err(e)) => error!("Right handle exited with error: {:?}", e),
-                    Err(e) => error!("Fail to join right handle: {:?}", e),
                 }
             }
             StdNetEnvMode::Container => {}

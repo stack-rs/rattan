@@ -1,4 +1,8 @@
-use std::{net::IpAddr, sync::Arc, thread};
+use std::{
+    net::IpAddr,
+    sync::{mpsc, Arc},
+    thread,
+};
 
 use backon::{BlockingRetryable, ExponentialBuilder};
 use once_cell::sync::OnceCell;
@@ -32,6 +36,11 @@ pub type TaskResult<R> = Result<R, Box<dyn std::error::Error + Send + Sync>>;
 pub trait Task<R: Send>: FnOnce() -> TaskResult<R> + Send {}
 
 impl<R: Send, T: FnOnce() -> TaskResult<R> + Send> Task<R> for T {}
+
+pub enum TaskResultNotify {
+    Left,
+    Right,
+}
 
 // Manage environment and resources
 pub struct RattanRadix<D>
@@ -339,6 +348,7 @@ where
     // Spawn a thread running task in left namespace
     pub fn left_spawn<R: Send + 'static>(
         &self,
+        tx: Option<mpsc::Sender<TaskResultNotify>>,
         task: impl Task<R> + 'static,
     ) -> Result<thread::JoinHandle<TaskResult<R>>, Error> {
         let thread_span = span!(Level::INFO, "left_ns").or_current();
@@ -352,13 +362,18 @@ where
             })?;
             std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and process spawn
             info!("Run task in left namespace");
-            task()
+            let res = task();
+            if let Some(tx) = tx {
+                let _ = tx.send(TaskResultNotify::Left);
+            }
+            res
         }))
     }
 
     // Spawn a thread running task in right namespace
     pub fn right_spawn<R: Send + 'static>(
         &self,
+        tx: Option<mpsc::Sender<TaskResultNotify>>,
         task: impl Task<R> + 'static,
     ) -> Result<thread::JoinHandle<TaskResult<R>>, Error> {
         let thread_span = span!(Level::INFO, "right_ns").or_current();
@@ -372,7 +387,11 @@ where
             })?;
             std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and process spawn
             info!("Run task in right namespace");
-            task()
+            let res = task();
+            if let Some(tx) = tx {
+                let _ = tx.send(TaskResultNotify::Right);
+            }
+            res
         }))
     }
 

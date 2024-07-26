@@ -48,7 +48,7 @@ fn test_delay() {
         let _span = span!(Level::INFO, "ping_no_delay").entered();
         info!("try to ping with no delay");
         let left_handle = radix
-            .left_spawn(|| {
+            .left_spawn(None, || {
                 let handle = std::process::Command::new("ping")
                     .args(["192.168.12.1", "-c", "10", "-i", "0.3"])
                     .stdout(std::process::Stdio::piped())
@@ -94,7 +94,7 @@ fn test_delay() {
             .unwrap();
 
         let left_handle = radix
-            .left_spawn(|| {
+            .left_spawn(None, || {
                 let handle = std::process::Command::new("ping")
                     .args(["192.168.12.1", "-c", "10", "-i", "0.3"])
                     .stdout(std::process::Stdio::piped())

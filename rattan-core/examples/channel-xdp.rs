@@ -83,7 +83,7 @@ fn main() {
     // Before config the BwDevice, the bandwidth should be around 1Gbps
     {
         let right_handle = radix
-            .right_spawn(|| {
+            .right_spawn(None, || {
                 let mut iperf_server = std::process::Command::new("taskset")
                     .args(["-c", "0", "iperf3", "-s", "-p", "9000", "-1"])
                     .stdout(std::process::Stdio::null())
@@ -97,7 +97,7 @@ fn main() {
         sleep(Duration::from_millis(500));
 
         let left_handle = radix
-            .left_spawn(|| {
+            .left_spawn(None, || {
                 let client_handle = std::process::Command::new("taskset")
                     .args([
                         "-c",

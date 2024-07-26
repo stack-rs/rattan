@@ -48,7 +48,7 @@ fn test_loss() {
         let _span = span!(Level::INFO, "ping_no_loss").entered();
         info!("try to ping with no loss");
         let left_handle = radix
-            .left_spawn(|| {
+            .left_spawn(None, || {
                 let handle = std::process::Command::new("ping")
                     .args(["192.168.12.1", "-c", "20", "-i", "0.3"])
                     .stdout(std::process::Stdio::piped())
@@ -82,7 +82,7 @@ fn test_loss() {
             .unwrap();
 
         let left_handle = radix
-            .left_spawn(|| {
+            .left_spawn(None, || {
                 let handle = std::process::Command::new("ping")
                     .args(["192.168.12.1", "-c", "50", "-i", "0.3"])
                     .stdout(std::process::Stdio::piped())
