@@ -680,6 +680,7 @@ fn main() -> ExitCode {
                         .stderr(Stdio::inherit())
                         .spawn()?;
                     let pid = client_handle.id() as i32;
+                    debug!("Left pid: {}", pid);
                     let _ = LEFT_PID.set(pid);
                     let status = client_handle.wait()?;
                     left_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -716,6 +717,7 @@ fn main() -> ExitCode {
                         .stderr(Stdio::null())
                         .spawn()?;
                     let pid = server_handle.id() as i32;
+                    debug!("Right pid: {}", pid);
                     let _ = RIGHT_PID.set(pid);
                     let status = server_handle.wait()?;
                     right_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -735,6 +737,7 @@ fn main() -> ExitCode {
                         .stderr(Stdio::null())
                         .spawn()?;
                     let pid = client_handle.id() as i32;
+                    debug!("Left pid: {}", pid);
                     let _ = LEFT_PID.set(pid);
                     let status = client_handle.wait()?;
                     left_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);

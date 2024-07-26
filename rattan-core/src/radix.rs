@@ -350,6 +350,7 @@ where
                 let e: Error = e.into();
                 e
             })?;
+            std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and process spawn
             info!("Run task in left namespace");
             task()
         }))
@@ -369,6 +370,7 @@ where
                 let e: Error = e.into();
                 e
             })?;
+            std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and process spawn
             info!("Run task in right namespace");
             task()
         }))
