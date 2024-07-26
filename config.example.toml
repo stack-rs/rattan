@@ -139,6 +139,7 @@ bandwidth = "1Gbps 200Mbps"
 # - "DropTail" : DropTail queue
 # - "DropHead" : DropHead queue
 # - "CoDel"    : CoDel queue
+# - "DualPI2"  : DualPI2 Coupled AQM queue for L4S network [RFC9332]
 #
 # Default: "Infinite"
 queue = "DropTail"
@@ -161,6 +162,37 @@ queue = "DropTail"
 #   - "target"       : CoDel Target Delay.             Default: 5ms
 #   - "mtu"          : MTU for CoDel decision.         Default: 1500
 #
+# - For DualPI2 queue, we have 13 fields:
+#   - "packet_limit"    : Queue size in packets numbers.               Default: Unlimited
+#   - "byte_limit"      : Queue size in bytes.                         Default: Unlimited
+#   - "mtu"             : MTU for DualPI2 decision.                    Default: 1500
+#   - "target"          : Target delay for L4S Queue                   Default: 15ms
+#   - "tupdate"         : Update freqency of the internal prob         Default: 16ms
+#   - "alpha"           : Gain factor for integral rate response       Default: 41, ~0.16 Hz * 256
+#   - "beta"            : Gain factor for propotional rate response    Default: 819, ~3.20 Hz * 256
+#   - "ecn_thresh"      : Threshhold sojourn time / queue size to
+#                         start mark L4S queue packets. To specify
+#                         a packet target of 40, use
+#                         `ecn_thresh = {Packet = 40}`;
+#                         to specify a queue delay of 2ms, use
+#                         `ecn_thresh = {Delay = "2ms"}`.               Default: {Delay = "1ms"}
+#   - "c_protection_wc" : The C queue weight for conditional priority.
+#                         Between 0 and 100. wl is calculated by 
+#                         wl = 100 - wc.                                Default: 10
+#   - "coupling_factor" : Coupling factor k in DualPI2                  Default: 2
+#   - "ecn_mask"        : The mask used for selecting which packets go
+#                         into the L4S queue. 3 values available:
+#                         - "NoECN": All packets to into classic queue
+#                         - "L4SECT": Only ECT(1) and CE go into L4S 
+#                           queue.
+#                         - "AnyECT": ECT(0), ECT(1) and CE go into
+#                           L4S queue (for DCTCP compatability)         Default: "L4SECT"
+#   - "drop_early"      : Drop at enqueue instead of dequeue if true    Default: false
+#   - "drop_overload"   : If enabled, drop (mark) on overload;
+#                         If not enabled, let the queue overflow until
+#                         drop due to full queue.                       Default: true
+# BwType is always in network layer.
+# Alpha/Beta are in units of 256ns, and should not exceed 2^23 - 1.
 queue_config = { packet_limit = 60 }
 
 

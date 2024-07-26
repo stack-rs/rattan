@@ -34,6 +34,7 @@ pub enum BwDeviceBuildConfig<P: Packet> {
     DropTail(bandwidth::BwDeviceConfig<P, queue::DropTailQueue<P>>),
     DropHead(bandwidth::BwDeviceConfig<P, queue::DropHeadQueue<P>>),
     CoDel(bandwidth::BwDeviceConfig<P, queue::CoDelQueue<P>>),
+    DualPI2(bandwidth::BwDeviceConfig<P, queue::DualPI2Queue<P>>),
 }
 
 macro_rules! impl_bw_device_into_factory {
@@ -54,7 +55,13 @@ macro_rules! impl_bw_device_into_factory {
     };
 }
 
-impl_bw_device_into_factory!(InfiniteQueue, DropTailQueue, DropHeadQueue, CoDelQueue);
+impl_bw_device_into_factory!(
+    InfiniteQueue,
+    DropTailQueue,
+    DropHeadQueue,
+    CoDelQueue,
+    DualPI2Queue
+);
 
 #[cfg_attr(
     feature = "serde",
@@ -67,6 +74,7 @@ pub enum BwReplayDeviceBuildConfig<P: Packet> {
     DropTail(BwReplayQueueConfig<P, queue::DropTailQueue<P>>),
     DropHead(BwReplayQueueConfig<P, queue::DropHeadQueue<P>>),
     CoDel(BwReplayQueueConfig<P, queue::CoDelQueue<P>>),
+    DualPI2(BwReplayQueueConfig<P, queue::DualPI2Queue<P>>),
 }
 
 #[cfg_attr(
@@ -214,4 +222,10 @@ macro_rules! impl_bw_replay_device_into_factory {
     };
 }
 
-impl_bw_replay_device_into_factory!(InfiniteQueue, DropTailQueue, DropHeadQueue, CoDelQueue);
+impl_bw_replay_device_into_factory!(
+    InfiniteQueue,
+    DropTailQueue,
+    DropHeadQueue,
+    CoDelQueue,
+    DualPI2Queue
+);

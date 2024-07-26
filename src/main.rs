@@ -15,8 +15,13 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
 use paste::paste;
+use rattan_core::config::{
+    BwDeviceBuildConfig, BwReplayDeviceBuildConfig, BwReplayQueueConfig, DelayDeviceBuildConfig,
+    DeviceBuildConfig, LossDeviceBuildConfig, RattanConfig, RattanResourceConfig,
+};
 use rattan_core::devices::bandwidth::queue::{
-    CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
+    CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, DualPI2QueueConfig,
+    InfiniteQueueConfig,
 };
 use rattan_core::devices::bandwidth::BwDeviceConfig;
 use rattan_core::devices::StdPacket;
@@ -202,6 +207,7 @@ enum QueueType {
     DropTail,
     DropHead,
     CoDel,
+    DualPI2,
 }
 
 impl TaskShell {
@@ -417,6 +423,13 @@ fn main() -> ExitCode {
                         Some(QueueType::CoDel) => {
                             bw_q_args_into_config!(CoDel, opts.uplink_queue_args.clone(), bandwidth)
                         }
+                        Some(QueueType::DualPI2) => {
+                            bw_q_args_into_config!(
+                                DualPI2,
+                                opts.uplink_queue_args.clone(),
+                                bandwidth
+                            )
+                        }
                     };
                     uplink_count += 1;
                     devices_config.insert(format!("up_{}", uplink_count), device_config);
@@ -446,6 +459,13 @@ fn main() -> ExitCode {
                         Some(QueueType::CoDel) => {
                             bwreplay_q_args_into_config!(
                                 CoDel,
+                                opts.uplink_queue_args.clone(),
+                                trace_file
+                            )
+                        }
+                        Some(QueueType::DualPI2) => {
+                            bwreplay_q_args_into_config!(
+                                DualPI2,
                                 opts.uplink_queue_args.clone(),
                                 trace_file
                             )
@@ -483,6 +503,13 @@ fn main() -> ExitCode {
                                 bandwidth
                             )
                         }
+                        Some(QueueType::DualPI2) => {
+                            bw_q_args_into_config!(
+                                DualPI2,
+                                opts.downlink_queue_args.clone(),
+                                bandwidth
+                            )
+                        }
                     };
                     downlink_count += 1;
                     devices_config.insert(format!("down_{}", downlink_count), device_config);
@@ -512,6 +539,13 @@ fn main() -> ExitCode {
                         Some(QueueType::CoDel) => {
                             bwreplay_q_args_into_config!(
                                 CoDel,
+                                opts.downlink_queue_args.clone(),
+                                trace_file
+                            )
+                        }
+                        Some(QueueType::DualPI2) => {
+                            bwreplay_q_args_into_config!(
+                                DualPI2,
                                 opts.downlink_queue_args.clone(),
                                 trace_file
                             )

@@ -355,6 +355,9 @@ where
                     crate::config::BwDeviceBuildConfig::CoDel(config) => {
                         self.build_device(id, config.into_factory())?;
                     }
+                    crate::config::BwDeviceBuildConfig::DualPI2(config) => {
+                        self.build_device(id, config.into_factory())?;
+                    }
                 },
                 DeviceBuildConfig::BwReplay(bw_replay_config) => match bw_replay_config {
                     crate::config::BwReplayDeviceBuildConfig::Infinite(config) => {
@@ -367,6 +370,9 @@ where
                         self.build_device(id, config.into_factory())?;
                     }
                     crate::config::BwReplayDeviceBuildConfig::CoDel(config) => {
+                        self.build_device(id, config.into_factory())?;
+                    }
+                    crate::config::BwReplayDeviceBuildConfig::DualPI2(config) => {
                         self.build_device(id, config.into_factory())?;
                     }
                 },
