@@ -40,7 +40,7 @@ pub trait Packet: Debug + 'static + Send {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct StdPacket {
     buf: Vec<u8>,
     timestamp: Instant,
