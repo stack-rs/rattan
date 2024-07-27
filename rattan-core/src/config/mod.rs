@@ -10,10 +10,12 @@ use crate::control::http::HttpConfig;
 
 mod bandwidth;
 mod delay;
+mod duplicate;
 mod loss;
 
 pub use bandwidth::*;
 pub use delay::*;
+pub use duplicate::*;
 pub use loss::*;
 
 /// Configuration for the whole Rattan system.
@@ -79,5 +81,7 @@ pub enum DeviceBuildConfig<P: Packet> {
     DelayReplay(DelayReplayDeviceBuildConfig),
     Loss(LossDeviceBuildConfig),
     LossReplay(LossReplayDeviceBuildConfig),
+    Duplicate(DuplicateDeviceBuildConfig),
+    DuplicateReplay(DuplicateReplayDeviceBuildConfig),
     Custom,
 }
