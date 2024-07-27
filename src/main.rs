@@ -698,15 +698,28 @@ fn main() -> ExitCode {
                         if let Some(code) = status.code() {
                             if code == 0 {
                                 info!("Left handle {}", status);
+                                Ok(())
                             } else {
-                                warn!("Left handle {}", status);
+                                Err(rattan_core::error::Error::Custom(format!(
+                                    "Left handle {}",
+                                    status
+                                )))
                             }
                         } else {
-                            error!("Left handle {}", status);
+                            Err(rattan_core::error::Error::Custom(format!(
+                                "Left handle {}",
+                                status
+                            )))
                         }
                     }
-                    Ok(Err(e)) => error!("Left handle exited with error: {:?}", e),
-                    Err(e) => error!("Fail to join left handle: {:?}", e),
+                    Ok(Err(e)) => Err(rattan_core::error::Error::Custom(format!(
+                        "Left handle exited with error: {:?}",
+                        e
+                    ))),
+                    Err(e) => Err(rattan_core::error::Error::Custom(format!(
+                        "Fail to join left handle: {:?}",
+                        e
+                    ))),
                 }
             }
             StdNetEnvMode::Isolated => {
@@ -750,7 +763,8 @@ fn main() -> ExitCode {
                     left_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
                     Ok(status)
                 })?;
-
+                let mut left_res = Ok(());
+                let mut right_res = Ok(());
                 match rx.recv() {
                     Ok(notify) => match notify {
                         TaskResultNotify::Left => {
@@ -760,14 +774,19 @@ fn main() -> ExitCode {
                                         if code == 0 {
                                             info!("Left handle {}", status);
                                         } else {
-                                            warn!("Left handle {}", status);
+                                            left_res = left_res.and_then(|_| {
+                                                Err(format!("Left handle {}", status))
+                                            });
                                         }
                                     } else {
-                                        error!("Left handle {}", status);
+                                        left_res = left_res
+                                            .and_then(|_| Err(format!("Left handle {}", status)));
                                     }
                                 }
                                 Ok(Err(e)) => {
-                                    error!("Left handle exited with error: {:?}", e);
+                                    left_res = left_res.and_then(|_| {
+                                        Err(format!("Left handle exited with error: {:?}", e))
+                                    });
                                     // TODO: we may also add other arguments to disable the killing of the other half
                                     if right_handle.is_finished() {
                                         warn!("Right handle is already finished");
@@ -786,7 +805,11 @@ fn main() -> ExitCode {
                                         // TODO: we may wait for a while before sending SIGKILL
                                     }
                                 }
-                                Err(e) => error!("Fail to join left handle: {:?}", e),
+                                Err(e) => {
+                                    left_res = left_res.and_then(|_| {
+                                        Err(format!("Fail to join left handle: {:?}", e))
+                                    });
+                                }
                             }
                             match right_handle.join() {
                                 Ok(Ok(status)) => {
@@ -794,16 +817,25 @@ fn main() -> ExitCode {
                                         if code == 0 {
                                             info!("Right handle {}", status);
                                         } else {
-                                            warn!("Right handle {}", status);
+                                            right_res = right_res.and_then(|_| {
+                                                Err(format!("Right handle {}", status))
+                                            });
                                         }
                                     } else {
-                                        error!("Right handle {}", status);
+                                        right_res = right_res
+                                            .and_then(|_| Err(format!("Right handle {}", status)));
                                     }
                                 }
                                 Ok(Err(e)) => {
-                                    error!("Right handle exited with error: {:?}", e);
+                                    right_res = right_res.and_then(|_| {
+                                        Err(format!("Right handle exited with error: {:?}", e))
+                                    });
                                 }
-                                Err(e) => error!("Fail to join right handle: {:?}", e),
+                                Err(e) => {
+                                    right_res = right_res.and_then(|_| {
+                                        Err(format!("Fail to join right handle: {:?}", e))
+                                    });
+                                }
                             }
                         }
                         TaskResultNotify::Right => {
@@ -813,14 +845,19 @@ fn main() -> ExitCode {
                                         if code == 0 {
                                             info!("Right handle {}", status);
                                         } else {
-                                            warn!("Right handle {}", status);
+                                            right_res = right_res.and_then(|_| {
+                                                Err(format!("Right handle {}", status))
+                                            });
                                         }
                                     } else {
-                                        error!("Right handle {}", status);
+                                        right_res = right_res
+                                            .and_then(|_| Err(format!("Right handle {}", status)));
                                     }
                                 }
                                 Ok(Err(e)) => {
-                                    error!("Right handle exited with error: {:?}", e);
+                                    right_res = right_res.and_then(|_| {
+                                        Err(format!("Right handle exited with error: {:?}", e))
+                                    });
                                     // TODO: we may also add other arguments to disable the killing of the other half
                                     if left_handle.is_finished() {
                                         warn!("Left handle is already finished");
@@ -839,7 +876,11 @@ fn main() -> ExitCode {
                                         // TODO: we may wait for a while before sending SIGKILL
                                     }
                                 }
-                                Err(e) => error!("Fail to join right handle: {:?}", e),
+                                Err(e) => {
+                                    right_res = right_res.and_then(|_| {
+                                        Err(format!("Fail to join right handle: {:?}", e))
+                                    });
+                                }
                             }
                             match left_handle.join() {
                                 Ok(Ok(status)) => {
@@ -847,25 +888,45 @@ fn main() -> ExitCode {
                                         if code == 0 {
                                             info!("Left handle {}", status);
                                         } else {
-                                            warn!("Left handle {}", status);
+                                            left_res = left_res.and_then(|_| {
+                                                Err(format!("Left handle {}", status))
+                                            });
                                         }
                                     } else {
-                                        error!("Left handle {}", status);
+                                        left_res = left_res
+                                            .and_then(|_| Err(format!("Left handle {}", status)));
                                     }
                                 }
                                 Ok(Err(e)) => {
-                                    error!("Left handle exited with error: {:?}", e);
+                                    left_res = left_res.and_then(|_| {
+                                        Err(format!("Left handle exited with error: {:?}", e))
+                                    });
                                 }
-                                Err(e) => error!("Fail to join left handle: {:?}", e),
+                                Err(e) => {
+                                    left_res = left_res.and_then(|_| {
+                                        Err(format!("Fail to join left handle: {:?}", e))
+                                    });
+                                }
                             }
                         }
                     },
                     Err(e) => {
-                        error!("Fail to receive from channel: {:?}", e);
+                        return Err(rattan_core::error::Error::ChannelError(format!(
+                            "Fail to receive from channel: {:?}",
+                            e
+                        )));
+                    }
+                }
+                match (left_res, right_res) {
+                    (Ok(()), Ok(())) => Ok(()),
+                    (Err(e), Ok(())) => Err(rattan_core::error::Error::Custom(e)),
+                    (Ok(()), Err(e)) => Err(rattan_core::error::Error::Custom(e)),
+                    (Err(e1), Err(e2)) => {
+                        Err(rattan_core::error::Error::Custom(format!("{}. {}", e1, e2)))
                     }
                 }
             }
-            StdNetEnvMode::Container => {}
+            StdNetEnvMode::Container => Ok(()),
         }
 
         // get the last byte of rattan_base as the port number
@@ -875,13 +936,11 @@ fn main() -> ExitCode {
         //         std::net::IpAddr::V6(ip) => ip.octets()[15],
         //     } as u16;
         // let config = RattanMachineConfig { original_ns, port };
-
-        Ok(())
     };
     match main_cli() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            error!("{:?}", e);
+            error!("{}", e);
             e.report()
         }
     }

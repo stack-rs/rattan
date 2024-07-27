@@ -32,6 +32,8 @@ pub enum Error {
     #[cfg(feature = "http")]
     #[error("Http server error: {0}")]
     HttpServerError(#[from] HttpServerError),
+    #[error("Error: {0}")]
+    Custom(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -157,6 +159,7 @@ impl axum::response::IntoResponse for Error {
             Error::SerdeError(_) => StatusCode::BAD_REQUEST,
             #[cfg(feature = "http")]
             Error::HttpServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::Custom(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
         (status, Json(json!({"error": self.to_string(),}))).into_response()
@@ -181,6 +184,7 @@ impl Termination for Error {
             Error::SerdeError(_) => ExitCode::from(65),
             #[cfg(feature = "http")]
             Error::HttpServerError(_) => ExitCode::from(70),
+            Error::Custom(_) => ExitCode::from(1),
         }
     }
 }
