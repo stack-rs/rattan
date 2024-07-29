@@ -1,5 +1,7 @@
 use std::process::{ExitCode, Termination};
 
+use ipnet::AddrParseError;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
@@ -10,6 +12,8 @@ pub enum Error {
     NsError(#[from] NsError),
     #[error("VethError: {0}")]
     VethError(#[from] VethError),
+    #[error("RoutingTableError: {0}")]
+    RoutingTableError(#[from] RoutingTableError),
     #[error("Encounter IO error, {0}")]
     IoError(#[from] std::io::Error),
     #[error("Metal error: {0}")]
@@ -96,6 +100,18 @@ pub enum VethError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum RoutingTableError {
+    #[error("IpNet parse error: {0}")]
+    AddrParseError(#[from] AddrParseError),
+    #[error("Duplicate entry: {0}")]
+    DuplicateEntry(String),
+    #[error("Entry not found: {0}")]
+    EntryNotFound(String),
+    #[error("Invalid interface id: {0}")]
+    InvalidInterfaceId(usize),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum TokioRuntimeError {
     #[error("Failed to build runtime, {0}")]
     CreateError(#[from] std::io::Error),
@@ -146,6 +162,7 @@ impl axum::response::IntoResponse for Error {
             Error::MacParseError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::NsError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::VethError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::RoutingTableError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::IoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::MetalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::TokioRuntimeError(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -172,6 +189,7 @@ impl Termination for Error {
             Error::MacParseError(_) => ExitCode::from(78),
             Error::NsError(_) => ExitCode::from(71),
             Error::VethError(_) => ExitCode::from(71),
+            Error::RoutingTableError(_) => ExitCode::from(78),
             Error::IoError(_) => ExitCode::from(74),
             Error::MetalError(_) => ExitCode::from(74),
             Error::TokioRuntimeError(_) => ExitCode::from(74),

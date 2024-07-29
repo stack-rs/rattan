@@ -11,6 +11,8 @@ pub mod bandwidth;
 pub mod delay;
 pub mod external;
 pub mod loss;
+pub mod router;
+pub mod shadow;
 
 pub trait Packet: Debug + 'static + Send {
     type PacketGenerator;
