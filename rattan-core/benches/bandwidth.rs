@@ -18,6 +18,7 @@ fn prepare_env() -> RattanRadix<AfPacketDriver> {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
             server_cores: vec![3],
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -63,19 +64,12 @@ fn run_iperf(radix: &mut RattanRadix<AfPacketDriver>) {
         .unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(100));
+    let right_ip = radix.right_ip(1).to_string();
     let left_handle = radix
-        .left_spawn(None, || {
+        .left_spawn(None, move || {
             std::process::Command::new("iperf3")
                 .args([
-                    "-c",
-                    "192.168.12.1",
-                    "-p",
-                    "9000",
-                    "-n",
-                    "1024M",
-                    "-J",
-                    "-C",
-                    "reno",
+                    "-c", &right_ip, "-p", "9000", "-n", "1024M", "-J", "-C", "reno",
                 ])
                 .output()
                 .unwrap();

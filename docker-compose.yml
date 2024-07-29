@@ -17,10 +17,10 @@ services:
       - ./tmp:/tmp
     networks:
       leftnet:
-        ipv4_address: 192.168.11.2
+        ipv4_address: 10.1.1.2
         ipv6_address: fd11::2
       rightnet:
-        ipv4_address: 192.168.12.2
+        ipv4_address: 10.2.1.2
         ipv6_address: fd12::2
 
   client:
@@ -33,11 +33,11 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
-      - RATTAN_HOST=192.168.11.2
+      - RATTAN_HOST=10.1.1.2
       - RATTAN_HOST6=fd11::2
     networks:
       leftnet:
-        ipv4_address: 192.168.11.3
+        ipv4_address: 10.1.1.3
         ipv6_address: fd11::3
 
   server:
@@ -50,11 +50,11 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
-      - RATTAN_HOST=192.168.12.2
+      - RATTAN_HOST=10.2.1.2
       - RATTAN_HOST6=fd12::2
     networks:
       rightnet:
-        ipv4_address: 192.168.12.3
+        ipv4_address: 10.2.1.3
         ipv6_address: fd12::3
 
 networks:
@@ -65,7 +65,7 @@ networks:
     enable_ipv6: true
     ipam:
       config:
-        - subnet: 192.168.11.0/24
+        - subnet: 10.1.1.0/24
         - subnet: fd11::/64
   rightnet:
     driver: bridge
@@ -74,5 +74,5 @@ networks:
     enable_ipv6: true
     ipam:
       config:
-        - subnet: 192.168.12.0/24
+        - subnet: 10.2.1.0/24
         - subnet: fd12::/64

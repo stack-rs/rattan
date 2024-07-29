@@ -149,11 +149,11 @@ fn af_packet_test() -> anyhow::Result<()> {
 
     // step into rattan namespace
     {
-        let netns = stdenv.rattan_ns;
+        let netns = stdenv.rattan_ns.clone();
         netns.enter().unwrap();
 
-        let left_sniffer = create_dev_socket(&stdenv.left_pair.right).unwrap();
-        let right_sniffer = create_dev_socket(&stdenv.right_pair.left).unwrap();
+        let left_sniffer = create_dev_socket(&stdenv.left_default_pair().right).unwrap();
+        let right_sniffer = create_dev_socket(&stdenv.right_default_pair().left).unwrap();
         println!(
             "left sniffer: {}, right sniffer: {}",
             left_sniffer, right_sniffer
@@ -227,26 +227,32 @@ fn af_packet_test() -> anyhow::Result<()> {
 
                 match fd {
                     x if x == left_sniffer => {
-                        assert_ne!(addr.sll_ifindex, stdenv.right_pair.left.index as i32);
+                        assert_ne!(
+                            addr.sll_ifindex,
+                            stdenv.right_default_pair().left.index as i32
+                        );
                         send_to_dev(
-                            stdenv.right_pair.left.index,
-                            &stdenv.right_pair.right.mac_addr,
+                            stdenv.right_default_pair().left.index,
+                            &stdenv.right_default_pair().right.mac_addr,
                             &addr,
                             send_sock,
                             &mut buf[0..read],
                         )?;
-                        // println!("forward packet (length: {}) from left to right, from index {}, target index {}", size, addr.sll_ifindex, stdenv.right_pair.left.index)
+                        // println!("forward packet (length: {}) from left to right, from index {}, target index {}", size, addr.sll_ifindex, stdenv.right_default_pair().left.index)
                     }
                     x if x == right_sniffer => {
-                        assert_ne!(addr.sll_ifindex, stdenv.left_pair.right.index as i32);
+                        assert_ne!(
+                            addr.sll_ifindex,
+                            stdenv.left_default_pair().right.index as i32
+                        );
                         send_to_dev(
-                            stdenv.left_pair.right.index,
-                            &stdenv.left_pair.left.mac_addr,
+                            stdenv.left_default_pair().right.index,
+                            &stdenv.left_default_pair().left.mac_addr,
                             &addr,
                             send_sock,
                             &mut buf[0..read],
                         )?;
-                        // println!("forward packet (length: {}) from right to left, from index {}, target index {}", size, addr.sll_ifindex, stdenv.left_pair.right.index);
+                        // println!("forward packet (length: {}) from right to left, from index {}, target index {}", size, addr.sll_ifindex, stdenv.left_default_pair().right.index);
                     }
                     _ => panic!("unexpected fd: {}", fd),
                 }

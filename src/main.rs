@@ -586,6 +586,7 @@ fn main() -> ExitCode {
                         mode: opts.mode.into(),
                         client_cores: vec![1],
                         server_cores: vec![3],
+                        ..Default::default()
                     },
                     #[cfg(feature = "http")]
                     http: http_config,
@@ -665,10 +666,14 @@ fn main() -> ExitCode {
 
         match radix.get_mode() {
             StdNetEnvMode::Compatible => {
-                let rattan_base = radix.right_ip();
+                let ip_list = radix.right_ip_list();
                 let left_handle = radix.left_spawn(None, move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    client_handle.env("RATTAN_BASE", rattan_base.to_string());
+                    ip_list.iter().enumerate().for_each(|(i, ip)| {
+                        client_handle.env(format!("RATTAN_IP_{i}"), ip.to_string());
+                    });
+                    client_handle.env("RATTAN_EXT", ip_list[0].to_string());
+                    client_handle.env("RATTAN_BASE", ip_list[1].to_string());
                     if let Some(arguments) = opts.command {
                         client_handle.args(arguments);
                     } else if let Some(arguments) = commands.left {
@@ -723,10 +728,14 @@ fn main() -> ExitCode {
                 }
             }
             StdNetEnvMode::Isolated => {
-                let rattan_base = radix.left_ip();
+                let ip_list = radix.left_ip_list();
                 let right_handle = radix.right_spawn(Some(tx_right), move || {
                     let mut server_handle = std::process::Command::new("/usr/bin/env");
-                    server_handle.env("RATTAN_BASE", rattan_base.to_string());
+                    ip_list.iter().enumerate().for_each(|(i, ip)| {
+                        server_handle.env(format!("RATTAN_IP_{i}"), ip.to_string());
+                    });
+                    server_handle.env("RATTAN_EXT", ip_list[0].to_string());
+                    server_handle.env("RATTAN_BASE", ip_list[1].to_string());
                     if let Some(arguments) = commands.right {
                         server_handle.args(arguments);
                     }
@@ -743,10 +752,14 @@ fn main() -> ExitCode {
                     right_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
                     Ok(status)
                 })?;
-                let rattan_base = radix.right_ip();
+                let ip_list = radix.right_ip_list();
                 let left_handle = radix.left_spawn(Some(tx_left), move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    client_handle.env("RATTAN_BASE", rattan_base.to_string());
+                    ip_list.iter().enumerate().for_each(|(i, ip)| {
+                        client_handle.env(format!("RATTAN_IP_{i}"), ip.to_string());
+                    });
+                    client_handle.env("RATTAN_EXT", ip_list[0].to_string());
+                    client_handle.env("RATTAN_BASE", ip_list[1].to_string());
                     if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     }

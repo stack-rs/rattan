@@ -33,6 +33,7 @@ fn test_http() {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
             server_cores: vec![3],
+            ..Default::default()
         },
         http: HttpConfig {
             enable: true,
@@ -102,22 +103,13 @@ fn test_http() {
             })
             .unwrap();
         sleep(Duration::from_millis(500));
+        let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, || {
+            .left_spawn(None, move || {
                 let client_handle = std::process::Command::new("iperf3")
                     .args([
-                        "-c",
-                        "192.168.12.1",
-                        "-p",
-                        "9000",
-                        "--cport",
-                        "10000",
-                        "-t",
-                        "10",
-                        "-J",
-                        "-R",
-                        "-C",
-                        "reno",
+                        "-c", &right_ip, "-p", "9000", "--cport", "10000", "-t", "10", "-J", "-R",
+                        "-C", "reno",
                     ])
                     .stdout(std::process::Stdio::piped())
                     .spawn()
@@ -274,20 +266,12 @@ fn test_http() {
             })
             .unwrap();
         sleep(Duration::from_millis(500));
+        let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, || {
+            .left_spawn(None, move || {
                 let client_handle = std::process::Command::new("iperf3")
                     .args([
-                        "-c",
-                        "192.168.12.1",
-                        "-p",
-                        "9001",
-                        "--cport",
-                        "10000",
-                        "-t",
-                        "10",
-                        "-J",
-                        "-R",
+                        "-c", &right_ip, "-p", "9001", "--cport", "10000", "-t", "10", "-J", "-R",
                     ])
                     .stdout(std::process::Stdio::piped())
                     .spawn()

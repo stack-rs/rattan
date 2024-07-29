@@ -5,20 +5,25 @@
 #
 # **ATTENTION**: Check firewall settings before running Rattan CLI.
 # Please make sure you allow the following addresses:
-# - 192.168.11.0/24
-# - 192.168.12.0/24
+# - 10.1.1.0/24
+# - 10.2.1.0/24
 # For example, you can run the following commands if using `ufw`:
-# - `ufw allow from 192.168.11.0/24`
-# - `ufw allow from 192.168.12.0/24`
+# - `ufw allow from 10.1.1.0/24`
+# - `ufw allow from 10.2.1.0/24`
 # 
 # Run `rattan` will generate some network namespaces and veth pairs to
 # emulate the network environment. The network topology is like:
 #
-#   ns-left                        ns-rattan                        ns-right
-# +---------+   veth pair   +---------------------+   veth pair   +----------+
-# |   nsL-vL| <-----------> |nsL-vR   [P]   nsR-vL| <-----------> |nsR-vR    |
-# | .11.x/32|               |.11.2/32     .12.2/32|               |.12.x/32  |
-# +---------+               +---------------------+               +----------+
+#    ns-left                                                           ns-right
+# +-----------+ [Internet]                               [Internet] +-----------+
+# |    vL0    |    |                 ns-rattan                 |    |    vR0    |
+# |  external | <--+          +---------------------+          +--> |  external |
+# |   vL1-L   |               |  vL1-R  [P]   vR1-L |               |   vR1-R   |
+# | .1.1.x/32 | <-----------> |.1.1.2/32   .2.1.2/32| <-----------> | .2.1.x/32 |
+# |   vL2-L   |               |  vL2-R        vR2-L |               |   vR2-R   |
+# | .1.2.y/32 | <-----------> |.1.2.2/32   .2.2.2/32| <-----------> | .2.2.y/32 |
+# ~    ...    ~   Veth pairs  ~  ...           ...  ~   Veth pairs  ~    ...    ~
+# +-----------+               +---------------------+               +-----------+
 #
 # Then Rattan will build and link the devices according to the configuration file.
 # Each device emulates some network characteristics, such as bandwidth, delay, loss, etc.
@@ -51,6 +56,14 @@
 #
 # Default: "Compatible"
 mode = "Compatible"
+
+# The number of veth pairs between `ns-left` and `ns-rattan`
+# Possible values: 1..=254
+# Default value: 1
+left_veth_count = 2
+
+# Similar to `left_veth_count`
+# right_veth_count = 1
 
 # ----- Environment Section End -----
 
@@ -224,7 +237,8 @@ pattern = [0.1, 0.2]
 # This section describes how to link the devices.
 #
 # "left" and "right" are pre-defined device IDs, which respectively represent
-# the `ns-left` side veth (named `nsL-vR`) and the `ns-right` side veth (named `nsR-vL`).
+# the `ns-left` side veth (named `vL1-R`) and the `ns-right` side veth (named `vR1-L`).
+# But if a network namespace has more than one veth NICs, `ns-left` side for example, "left1", "left2" etc. will be defined.
 #
 # The other device IDs are defined by user in the devices section.
 #
