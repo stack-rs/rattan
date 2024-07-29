@@ -30,6 +30,7 @@ fn main() {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
             server_cores: vec![3],
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -99,25 +100,13 @@ fn main() {
 
         sleep(Duration::from_millis(500));
 
+        let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, || {
+            .left_spawn(None, move || {
                 let client_handle = std::process::Command::new("taskset")
                     .args([
-                        "-c",
-                        "3",
-                        "iperf3",
-                        "-c",
-                        "192.168.12.1",
-                        "-p",
-                        "9000",
-                        "--cport",
-                        "10000",
-                        "-t",
-                        "10",
-                        "-J",
-                        "-R",
-                        "-C",
-                        "bbr",
+                        "-c", "3", "iperf3", "-c", &right_ip, "-p", "9000", "--cport", "10000",
+                        "-t", "10", "-J", "-R", "-C", "bbr",
                     ])
                     .stdout(std::process::Stdio::piped())
                     .spawn()

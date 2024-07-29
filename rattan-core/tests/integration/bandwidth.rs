@@ -37,6 +37,7 @@ fn test_bandwidth() {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
             server_cores: vec![3],
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -82,22 +83,13 @@ fn test_bandwidth() {
             })
             .unwrap();
         sleep(Duration::from_millis(500));
+        let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, || {
+            .left_spawn(None, move || {
                 let client_handle = std::process::Command::new("iperf3")
                     .args([
-                        "-c",
-                        "192.168.12.1",
-                        "-p",
-                        "9000",
-                        "--cport",
-                        "10000",
-                        "-t",
-                        "10",
-                        "-J",
-                        "-R",
-                        "-C",
-                        "reno",
+                        "-c", &right_ip, "-p", "9000", "--cport", "10000", "-t", "10", "-J", "-R",
+                        "-C", "reno",
                     ])
                     .stdout(std::process::Stdio::piped())
                     .spawn()
@@ -157,22 +149,13 @@ fn test_bandwidth() {
             })
             .unwrap();
         sleep(Duration::from_millis(500));
+        let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, || {
+            .left_spawn(None, move || {
                 let client_handle = std::process::Command::new("iperf3")
                     .args([
-                        "-c",
-                        "192.168.12.1",
-                        "-p",
-                        "9001",
-                        "--cport",
-                        "10000",
-                        "-t",
-                        "10",
-                        "-J",
-                        "-R",
-                        "-C",
-                        "reno",
+                        "-c", &right_ip, "-p", "9001", "--cport", "10000", "-t", "10", "-J", "-R",
+                        "-C", "reno",
                     ])
                     .stdout(std::process::Stdio::piped())
                     .spawn()
@@ -212,6 +195,7 @@ fn test_droptail_queue() {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
             server_cores: vec![3],
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -276,6 +260,7 @@ fn test_droptail_queue() {
             .unwrap();
 
         let op_endpoint = radix.op_endpoint();
+        let right_ip = radix.right_ip(1);
         let left_handle = radix
             .left_spawn(None, move || {
                 std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
@@ -286,7 +271,7 @@ fn test_droptail_queue() {
 
                 sleep(Duration::from_millis(100));
                 let client_socket = std::net::UdpSocket::bind("0.0.0.0:54321").unwrap();
-                client_socket.connect("192.168.12.1:54321").unwrap();
+                client_socket.connect(format!("{right_ip}:54321")).unwrap();
 
                 info!("Test DropTailQueue (10 packets limit)");
                 info!("Set bandwidth to 800kbps (1000B per 10ms)");
@@ -381,6 +366,7 @@ fn test_drophead_queue() {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
             server_cores: vec![3],
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -446,6 +432,7 @@ fn test_drophead_queue() {
             .unwrap();
 
         let op_endpoint = radix.op_endpoint();
+        let right_ip = radix.right_ip(1);
         let left_handle = radix
             .left_spawn(None, move || {
                 std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
@@ -456,7 +443,7 @@ fn test_drophead_queue() {
 
                 sleep(Duration::from_millis(100));
                 let client_socket = std::net::UdpSocket::bind("0.0.0.0:54321").unwrap();
-                client_socket.connect("192.168.12.1:54321").unwrap();
+                client_socket.connect(format!("{right_ip}:54321")).unwrap();
 
                 info!("Test DropHeadQueue (10 packets limit)");
                 info!("Set bandwidth to 800kbps (1000B per 10ms)");
@@ -555,6 +542,7 @@ fn test_codel_queue() {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
             server_cores: vec![3],
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -626,6 +614,7 @@ fn test_codel_queue() {
             .unwrap();
 
         let op_endpoint = radix.op_endpoint();
+        let right_ip = radix.right_ip(1);
         let left_handle = radix
             .left_spawn(None, move || {
                 std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
@@ -636,7 +625,7 @@ fn test_codel_queue() {
 
                 sleep(Duration::from_millis(100));
                 let client_socket = std::net::UdpSocket::bind("0.0.0.0:54321").unwrap();
-                client_socket.connect("192.168.12.1:54321").unwrap();
+                client_socket.connect(format!("{right_ip}:54321")).unwrap();
 
                 info!("Test CoDelQueue (60 packets limit, target 50ms, interval 104ms, mtu 1500)");
                 info!("Set bandwidth to 800kbps (1000B per 10ms)");
@@ -760,6 +749,7 @@ fn test_replay() {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
             server_cores: vec![3],
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -832,19 +822,12 @@ fn test_replay() {
                 None,
             ))
             .unwrap();
+        let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, || {
+            .left_spawn(None, move || {
                 let client_handle = std::process::Command::new("iperf3")
                     .args([
-                        "-c",
-                        "192.168.12.1",
-                        "-p",
-                        "9000",
-                        "--cport",
-                        "10000",
-                        "-t",
-                        "10",
-                        "-J",
+                        "-c", &right_ip, "-p", "9000", "--cport", "10000", "-t", "10", "-J",
                     ])
                     .stdout(std::process::Stdio::piped())
                     .spawn()

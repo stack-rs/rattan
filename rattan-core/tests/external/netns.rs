@@ -95,7 +95,7 @@ fn netns_test() {
                 let output = std::process::Command::new("ip")
                     .arg("addr")
                     .arg("add")
-                    .arg("192.168.11.1/24")
+                    .arg("10.1.1.1/24")
                     .arg("dev")
                     .arg(left_veth)
                     .output()

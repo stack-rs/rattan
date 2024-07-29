@@ -21,14 +21,46 @@ use tracing::{debug, error, info, instrument, trace};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-//   ns-left                        ns-rattan                        ns-right
-// +---------+   veth pair   +---------------------+   veth pair   +----------+
-// |   nsL-vL| <-----------> |nsL-vR   [P]   nsR-vL| <-----------> |nsR-vR    |
-// | .11.x/32|               |.11.2/32     .12.2/32|               |.12.x/32  |
-// +---------+               +---------------------+               +----------+
+//    ns-left                                                           ns-right
+// +-----------+ [Internet]                               [Internet] +-----------+
+// |    vL0    |    |                 ns-rattan                 |    |    vR0    |
+// |  external | <--+          +---------------------+          +--> |  external |
+// |   vL1-L   |               |  vL1-R  [P]   vR1-L |               |   vR1-R   |
+// | .1.1.x/32 | <-----------> |.1.1.2/32   .2.1.2/32| <-----------> | .2.1.x/32 |
+// |   vL2-L   |               |  vL2-R        vR2-L |               |   vR2-R   |
+// | .1.2.y/32 | <-----------> |.1.2.2/32   .2.2.2/32| <-----------> | .2.2.y/32 |
+// ~    ...    ~   Veth pairs  ~  ...           ...  ~   Veth pairs  ~    ...    ~
+// +-----------+               +---------------------+               +-----------+
 //
 // Use /32 to avoid route conflict between multiple rattan instances
 //
+// Left veth pairs use 10.1.a.b, while right veth pairs use 10.2.a.b ,
+// where `a` is veth pair id (1..=254), and `b` is chosen according to the following rules:
+// 1. In `ns-rattan`, `b` = 2;
+// 2. In `ns-left` and `ns-right`, the same `a` corresponds to the same `b`;
+// 3. If `ns-right` is NOT Compatible, `b` = 1;
+// 4. If `ns-right` is Compatible, `b` is chosen without conflicting with existing IP.
+
+enum VethPairGroup {
+    Left = 1,
+    Right = 2,
+}
+
+const VETH_COUNT_MAX: usize = 254;
+
+fn get_veth_ip_address(pair_id: usize, p: VethPairGroup, suffix: u8) -> (IpAddr, u8) {
+    assert!((1..=VETH_COUNT_MAX).contains(&pair_id));
+    (
+        IpAddr::V4(Ipv4Addr::new(10, p as u8, pair_id as u8, suffix)),
+        32,
+    )
+}
+
+fn get_veth_mac_address(pair_id: usize, p: VethPairGroup, suffix: u8) -> MacAddr {
+    assert!((1..=VETH_COUNT_MAX).contains(&pair_id));
+    // just ensure that I/G bit is 0
+    [0x38, 0x7e, 0x58, p as u8, pair_id as u8, suffix].into()
+}
 
 fn get_addresses_in_use() -> Result<Vec<IpAddr>, Error> {
     debug!("Get addresses in use");
@@ -59,43 +91,33 @@ fn get_addresses_in_use() -> Result<Vec<IpAddr>, Error> {
     Ok(addresses)
 }
 
-const RATTAN_TMP_DIR: &str = "/tmp/rattan";
+const IP_LOCK_DIR: &str = "/tmp/rattan/ip_lock";
 
-enum VethAddressSuffix {
-    Unlocked(u8),
-    Locked(u8),
+struct IpAddrLock {
+    file_dir: String,
 }
 
-impl VethAddressSuffix {
-    pub fn new_unlocked(suffix: u8) -> Self {
-        VethAddressSuffix::Unlocked(suffix)
-    }
-
-    // Create a lock file to avoid address conflict
-    // Directory `{RATTAN_TMP_DIR}/ip_lock` should be created before calling this function
-    pub fn new_lock(suffix: u8) -> std::io::Result<Self> {
-        std::fs::File::create_new(format!("{RATTAN_TMP_DIR}/ip_lock/{suffix}"))?;
-        Ok(VethAddressSuffix::Locked(suffix))
-    }
-
-    pub fn content(&self) -> u8 {
-        match self {
-            VethAddressSuffix::Unlocked(suffix) => *suffix,
-            VethAddressSuffix::Locked(suffix) => *suffix,
+impl IpAddrLock {
+    /// Lock an IP address by creating a file with the same name as the it
+    fn new(ip: IpAddr) -> Result<Option<Self>, std::io::Error> {
+        // for ipv6, ':' may be illegal as a filename
+        let ip_str = format!("{ip}").replace(':', "_");
+        let file_dir = format!("{IP_LOCK_DIR}/{ip_str}");
+        match std::fs::File::create_new(&file_dir) {
+            // Lock successfully
+            Ok(_) => Ok(Some(IpAddrLock { file_dir })),
+            // Lock file already exists
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+            // Other error
+            Err(e) => Err(e),
         }
     }
 }
 
-impl Drop for VethAddressSuffix {
+impl Drop for IpAddrLock {
+    /// Unlock by removing the lock file
     fn drop(&mut self) {
-        match self {
-            VethAddressSuffix::Unlocked(_) => {}
-            VethAddressSuffix::Locked(suffix) => {
-                let addr_lock_path = format!("{RATTAN_TMP_DIR}/ip_lock/{suffix}");
-                debug!(?addr_lock_path, "Remove address lock file");
-                let _ = std::fs::remove_file(addr_lock_path);
-            }
-        }
+        let _ = std::fs::remove_file(&self.file_dir);
     }
 }
 
@@ -120,11 +142,21 @@ pub enum IODriver {
     Xdp,
 }
 
+fn default_veth_count() -> usize {
+    1
+}
+
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct StdNetEnvConfig {
     #[cfg_attr(feature = "serde", serde(default))]
     pub mode: StdNetEnvMode,
+
+    #[cfg_attr(feature = "serde", serde(default = "default_veth_count"))]
+    pub left_veth_count: usize,
+    #[cfg_attr(feature = "serde", serde(default = "default_veth_count"))]
+    pub right_veth_count: usize,
+
     // TODO(minhuw): pretty sure these two configs should not be here
     // but let it be for now
     #[cfg_attr(feature = "serde", serde(default))]
@@ -133,16 +165,95 @@ pub struct StdNetEnvConfig {
     pub server_cores: Vec<usize>,
 }
 
+impl Default for StdNetEnvConfig {
+    fn default() -> Self {
+        Self {
+            mode: StdNetEnvMode::default(),
+            left_veth_count: default_veth_count(),
+            right_veth_count: default_veth_count(),
+            client_cores: vec![],
+            server_cores: vec![],
+        }
+    }
+}
+
 pub struct StdNetEnv {
     pub left_ns: Arc<NetNs>,
     pub rattan_ns: Arc<NetNs>,
     pub right_ns: Arc<NetNs>,
-    pub left_pair: Arc<VethPair>,
-    pub right_pair: Arc<VethPair>,
+    pub left_pairs: Vec<Arc<VethPair>>,
+    pub right_pairs: Vec<Arc<VethPair>>,
+}
+
+impl StdNetEnv {
+    pub fn left_ext_pair(&self) -> &Arc<VethPair> {
+        &self.left_pairs[0]
+    }
+    pub fn right_ext_pair(&self) -> &Arc<VethPair> {
+        &self.right_pairs[0]
+    }
+    pub fn left_default_pair(&self) -> &Arc<VethPair> {
+        &self.left_pairs[1]
+    }
+    pub fn right_default_pair(&self) -> &Arc<VethPair> {
+        &self.right_pairs[1]
+    }
+}
+
+/// Try to lock an IP 10.2.pair_id.x in `ns-right`
+fn lock_address_suffix(pair_id: usize) -> Result<(IpAddrLock, u8), Error> {
+    // start from x=1
+    let mut addr_suffix = 1;
+    let lock = loop {
+        // try to create a lock file
+        let ip = get_veth_ip_address(pair_id, VethPairGroup::Left, addr_suffix).0;
+        let lock = IpAddrLock::new(ip)?;
+
+        // if locked and not in use, return
+        let addresses_in_use = get_addresses_in_use()?;
+        if let Some(l) = lock {
+            if !addresses_in_use.contains(&ip) {
+                break l;
+            }
+        }
+
+        debug!("Address suffix {} in use, try next.", addr_suffix);
+        // get next x < 255, which != 2 and not in use
+        loop {
+            addr_suffix += 1;
+            if addr_suffix == 2 {
+                addr_suffix += 1;
+            }
+            if addr_suffix == 255 {
+                // all in use, fail
+                return Err(VethError::CreateVethPairError(
+                    "No available address suffix for right veth".to_string(),
+                )
+                .into());
+            }
+            if !addresses_in_use
+                .contains(&get_veth_ip_address(pair_id, VethPairGroup::Left, addr_suffix).0)
+            {
+                break;
+            }
+        }
+    };
+    info!("Successfully lock address suffix {}", addr_suffix);
+    Ok((lock, addr_suffix))
 }
 
 #[instrument(skip_all, level = "debug")]
 pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
+    // Check veth counts
+    if config.left_veth_count < 1
+        || config.right_veth_count < 1
+        || config.left_veth_count > VETH_COUNT_MAX
+        || config.right_veth_count > VETH_COUNT_MAX
+    {
+        return Err(Error::ConfigError("Invalid veth count".to_string()));
+    }
+
+    // Create network namespaces
     trace!(?config);
     let _guard = STD_ENV_LOCK.lock();
     let rand_string: String = thread_rng()
@@ -163,105 +274,130 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     )?;
     kmesg_logger.write_all(&buf)?;
     kmesg_logger.flush()?;
-    let client_netns_name = format!("ns-left-{}", rand_string);
-    let server_netns_name = format!("ns-right-{}", rand_string);
+
+    let left_netns_name = format!("ns-left-{}", rand_string);
+    let left_netns = NetNs::new(&left_netns_name)?;
+    trace!(?left_netns, "Left netns {} created", left_netns_name);
+
     let rattan_netns_name = format!("ns-rattan-{}", rand_string);
-    let client_netns = NetNs::new(&client_netns_name)?;
-    trace!(?client_netns, "Client netns {} created", client_netns_name);
-    let server_netns = match config.mode {
-        StdNetEnvMode::Compatible => NetNs::current()?,
-        StdNetEnvMode::Isolated => NetNs::new(&server_netns_name)?,
-        StdNetEnvMode::Container => NetNs::new(&server_netns_name)?,
-    };
-    trace!(?server_netns, "Server netns {} created", server_netns_name);
     let rattan_netns = NetNs::new(&rattan_netns_name)?;
     trace!(?rattan_netns, "Rattan netns {} created", rattan_netns_name);
 
-    // Get server veth address
-    let veth_addr_suffix = match config.mode {
-        StdNetEnvMode::Compatible => {
-            std::fs::create_dir_all(format!("{RATTAN_TMP_DIR}/ip_lock"))?;
-            let mut addr_suffix = 1;
-            let lock = loop {
-                // Create a lock file to avoid address conflict
-                let lock = match VethAddressSuffix::new_lock(addr_suffix) {
-                    Ok(lock) => Ok(lock),
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(()),
-                    Err(e) => {
-                        error!("Failed to create address lock file: {}", e);
-                        return Err(e.into());
-                    }
-                };
-                let addresses_in_use = get_addresses_in_use()?;
-                if lock.is_ok()
-                    && !addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(
-                        192,
-                        168,
-                        12,
-                        addr_suffix,
-                    )))
-                {
-                    break lock.unwrap();
-                } else {
-                    debug!("Address suffix {} in use, try next.", addr_suffix);
-                    loop {
-                        addr_suffix += 1;
-                        if addr_suffix == 2 {
-                            addr_suffix += 1;
-                        }
-                        if addr_suffix == 255 {
-                            return Err(VethError::CreateVethPairError(
-                                "No available address suffix for server veth".to_string(),
-                            )
-                            .into());
-                        }
-                        if !addresses_in_use.contains(&IpAddr::V4(Ipv4Addr::new(
-                            192,
-                            168,
-                            12,
-                            addr_suffix,
-                        ))) {
-                            break;
-                        }
-                    }
-                }
-            };
-            info!("Successfully lock address suffix {}", lock.content());
-            lock
-        }
-        _ => VethAddressSuffix::new_unlocked(1),
+    let right_netns_name = format!("ns-right-{}", rand_string);
+    let right_netns = match config.mode {
+        StdNetEnvMode::Compatible => NetNs::current()?,
+        StdNetEnvMode::Isolated => NetNs::new(&right_netns_name)?,
+        StdNetEnvMode::Container => NetNs::new(&right_netns_name)?,
     };
+    trace!(?right_netns, "Right netns {} created", right_netns_name);
 
-    let veth_pair_client = VethPairBuilder::new()
+    // Build veth0 for left and right, which are reserved for external connection, but ignore it for now
+    let left_veth0 = VethPairBuilder::new()
         .name(
-            format!("nsL-vL-{}", rand_string),
-            format!("nsL-vR-{}", rand_string),
+            format!("vL0-L-{}", rand_string),
+            format!("vL0-R-{}", rand_string),
         )
-        .namespace(Some(client_netns.clone()), Some(rattan_netns.clone()))
+        .namespace(Some(left_netns.clone()), Some(rattan_netns.clone()))
         .mac_addr(
-            [0x38, 0x7e, 0x58, 0xe7, 11, veth_addr_suffix.content()].into(),
-            [0x38, 0x7e, 0x58, 0xe7, 11, 2].into(),
+            [0x38, 0x7e, 0x58, 0xe7, 1, 1].into(),
+            [0x38, 0x7e, 0x58, 0xe7, 1, 2].into(),
         )
         .ip_addr(
-            (
-                IpAddr::V4(Ipv4Addr::new(192, 168, 11, veth_addr_suffix.content())),
-                32,
-            ),
-            (IpAddr::V4(Ipv4Addr::new(192, 168, 11, 2)), 32),
+            (IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 32),
+            (IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 32),
         )
         .build()?;
+    let right_veth0 = VethPairBuilder::new()
+        .name(
+            format!("vR0-L-{}", rand_string),
+            format!("vR0-R-{}", rand_string),
+        )
+        .namespace(Some(rattan_netns.clone()), Some(right_netns.clone()))
+        .mac_addr(
+            [0x38, 0x7e, 0x58, 0xe7, 2, 2].into(),
+            [0x38, 0x7e, 0x58, 0xe7, 2, 1].into(),
+        )
+        .ip_addr(
+            (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 2)), 32),
+            (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 32),
+        )
+        .build()?;
+
+    // lock IPs for right veth pairs
+    std::fs::create_dir_all(IP_LOCK_DIR)?;
+    let mut addr_locks = vec![];
+
+    let mut suffixes = vec![0u8];
+    match config.mode {
+        StdNetEnvMode::Compatible => {
+            for pair_id in 1..=config.right_veth_count {
+                let (lock, suffix) = lock_address_suffix(pair_id)?;
+                suffixes.push(suffix);
+                addr_locks.push(lock);
+            }
+        }
+        _ => {
+            suffixes.resize(config.right_veth_count + 1, 1);
+        }
+    }
+
+    // Build right veth pairs
+    let mut right_veth_pairs = vec![right_veth0];
+    for (pair_id, suffix) in suffixes.iter().enumerate().skip(1) {
+        right_veth_pairs.push(
+            VethPairBuilder::new()
+                .name(
+                    format!("vR{}-L-{}", pair_id, rand_string),
+                    format!("vR{}-R-{}", pair_id, rand_string),
+                )
+                .namespace(Some(rattan_netns.clone()), Some(right_netns.clone()))
+                .mac_addr(
+                    get_veth_mac_address(pair_id, VethPairGroup::Right, 2),
+                    get_veth_mac_address(pair_id, VethPairGroup::Right, *suffix),
+                )
+                .ip_addr(
+                    get_veth_ip_address(pair_id, VethPairGroup::Right, 2),
+                    get_veth_ip_address(pair_id, VethPairGroup::Right, *suffix),
+                )
+                .build()?,
+        );
+    }
+
+    // Build left veth pairs
+    suffixes.resize(config.left_veth_count + 1, 1);
+
+    let mut left_veth_pairs = vec![left_veth0];
+    for (pair_id, suffix) in suffixes.iter().enumerate().skip(1) {
+        left_veth_pairs.push(
+            VethPairBuilder::new()
+                .name(
+                    format!("vL{}-L-{}", pair_id, rand_string),
+                    format!("vL{}-R-{}", pair_id, rand_string),
+                )
+                .namespace(Some(left_netns.clone()), Some(rattan_netns.clone()))
+                .mac_addr(
+                    get_veth_mac_address(pair_id, VethPairGroup::Left, *suffix),
+                    get_veth_mac_address(pair_id, VethPairGroup::Left, 2),
+                )
+                .ip_addr(
+                    get_veth_ip_address(pair_id, VethPairGroup::Left, *suffix),
+                    get_veth_ip_address(pair_id, VethPairGroup::Left, 2),
+                )
+                .build()?,
+        );
+    }
 
     // TODO: currently we comment this due to privilege issue
     // {
     //     // TODO(haixuan): could you please replace this with Netlink version when
     //     // time is appropriate?
-    //     let _ns_guard = NetNsGuard::new(veth_pair_client.left.namespace.clone())?;
+    //     let _ns_guard = NetNsGuard::new(veth_pair_left.left.namespace.clone())?;
     //     std::process::Command::new("tc")
     //         .args([
     //             "qdisc",
     //             "add",
     //             "dev",
-    //             &veth_pair_client.left.name,
+    //             &veth_pair_left.left.name,
     //             "root",
     //             "handle",
     //             "1:",
@@ -272,42 +408,23 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     //         .wait()
     //         .unwrap();
 
-    //     // we need to send packets to cores belonging to client and servers.
-    //     // otherwise networking processing of client and server is done on
+    //     // we need to send packets to cores belonging to left and rights.
+    //     // otherwise networking processing of left and right is done on
     //     // rattan's cores
-    //     set_rps_cores(veth_pair_client.left.name.as_str(), &config.client_cores);
+    //     set_rps_cores(veth_pair_left.left.name.as_str(), &config.left_cores);
     // }
-
-    let veth_pair_server = VethPairBuilder::new()
-        .name(
-            format!("nsR-vL-{}", rand_string),
-            format!("nsR-vR-{}", rand_string),
-        )
-        .namespace(Some(rattan_netns.clone()), Some(server_netns.clone()))
-        .mac_addr(
-            [0x38, 0x7e, 0x58, 0xe7, 12, 2].into(),
-            [0x38, 0x7e, 0x58, 0xe7, 12, veth_addr_suffix.content()].into(),
-        )
-        .ip_addr(
-            (IpAddr::V4(Ipv4Addr::new(192, 168, 12, 2)), 32),
-            (
-                IpAddr::V4(Ipv4Addr::new(192, 168, 12, veth_addr_suffix.content())),
-                32,
-            ),
-        )
-        .build()?;
 
     // TODO: currently we comment this due to privilege issue
     // {
     //     // TODO(haixuan): could you please replace this with Netlink version when
     //     // time is appropriate?
-    //     let _ns_guard: NetNsGuard = NetNsGuard::new(veth_pair_server.right.namespace.clone())?;
+    //     let _ns_guard: NetNsGuard = NetNsGuard::new(veth_pair_right.right.namespace.clone())?;
     //     std::process::Command::new("tc")
     //         .args([
     //             "qdisc",
     //             "add",
     //             "dev",
-    //             &veth_pair_server.right.name,
+    //             &veth_pair_right.right.name,
     //             "root",
     //             "handle",
     //             "1:",
@@ -318,73 +435,72 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     //         .wait()
     //         .unwrap();
 
-    //     set_rps_cores(veth_pair_server.right.name.as_str(), &config.server_cores);
+    //     set_rps_cores(veth_pair_right.right.name.as_str(), &config.right_cores);
     // }
 
-    // Set the default route of left and right namespaces
+    // Set veth1 as the default route of left and right namespaces
     info!("Set default route");
 
-    debug!("Set default route for client namespace");
+    debug!("Set default route for left namespace");
     add_route_with_netns(
         None,
         None,
-        veth_pair_client.left.index,
-        client_netns.clone(),
+        left_veth_pairs[1].left.index,
+        left_netns.clone(),
     )?;
 
-    debug!("Set default route for server namespace");
+    debug!("Set default route for right namespace");
     match config.mode {
         StdNetEnvMode::Compatible => {
-            add_route_with_netns(
-                (
-                    veth_pair_client.left.ip_addr.0,
-                    veth_pair_client.left.ip_addr.1,
-                ),
-                None,
-                veth_pair_server.right.index,
-                server_netns.clone(),
-            )?;
+            for left_veth in left_veth_pairs.iter().skip(1) {
+                add_route_with_netns(
+                    left_veth.left.ip_addr,
+                    None,
+                    right_veth_pairs[1].right.index,
+                    right_netns.clone(),
+                )?;
+            }
         }
         _ => {
             add_route_with_netns(
                 None,
                 None,
-                veth_pair_server.right.index,
-                server_netns.clone(),
+                right_veth_pairs[1].right.index,
+                right_netns.clone(),
             )?;
         }
     }
 
     // Set the default neighbors of left and right namespaces
     info!("Set default neighbors");
-
-    debug!("Set default neighbors for client namespace");
-    add_arp_entry_with_netns(
-        veth_pair_server.right.ip_addr.0,
-        veth_pair_server.right.mac_addr,
-        veth_pair_client.left.index,
-        client_netns.clone(),
-    )?;
-
-    debug!("Set default neighbors for server namespace");
-    add_arp_entry_with_netns(
-        veth_pair_client.left.ip_addr.0,
-        veth_pair_client.left.mac_addr,
-        veth_pair_server.right.index,
-        server_netns.clone(),
-    )?;
+    for left_veth in left_veth_pairs.iter().skip(1) {
+        for right_veth in right_veth_pairs.iter().skip(1) {
+            add_arp_entry_with_netns(
+                right_veth.right.ip_addr.0,
+                right_veth.right.mac_addr,
+                left_veth.left.index,
+                left_netns.clone(),
+            )?;
+            add_arp_entry_with_netns(
+                left_veth.left.ip_addr.0,
+                left_veth.left.mac_addr,
+                right_veth.right.index,
+                right_netns.clone(),
+            )?;
+        }
+    }
 
     info!("Set lo interface up");
-    set_loopback_up_with_netns(client_netns.clone())?;
+    set_loopback_up_with_netns(left_netns.clone())?;
     set_loopback_up_with_netns(rattan_netns.clone())?;
-    set_loopback_up_with_netns(server_netns.clone())?;
+    set_loopback_up_with_netns(right_netns.clone())?;
 
     Ok(StdNetEnv {
-        left_ns: client_netns,
+        left_ns: left_netns,
         rattan_ns: rattan_netns,
-        right_ns: server_netns,
-        left_pair: veth_pair_client,
-        right_pair: veth_pair_server,
+        right_ns: right_netns,
+        left_pairs: left_veth_pairs,
+        right_pairs: right_veth_pairs,
     })
 }
 

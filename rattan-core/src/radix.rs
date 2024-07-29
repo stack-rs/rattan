@@ -223,22 +223,37 @@ where
     }
 
     pub fn init_veth(&mut self) -> Result<(), Error> {
-        let rattan_ns = self.env.rattan_ns.clone();
-        let veth = self.env.left_pair.right.clone();
-        self.build_device("left".to_string(), move |rt| {
-            let _guard = rt.enter();
-            let _ns_guard = NetNsGuard::new(rattan_ns);
-            VirtualEthernet::<D>::new(veth, "left".to_string())
-        })?;
+        // Ignore veth0 for now
+        for i in 1..self.env.left_pairs.len() {
+            let rattan_ns = self.env.rattan_ns.clone();
+            let veth = self.env.left_pairs[i].right.clone();
+            let name = if self.env.left_pairs.len() == 2 {
+                // if only one veth pair
+                "left".to_string()
+            } else {
+                format!("left{i}")
+            };
+            self.build_device(name.clone(), move |rt| {
+                let _guard = rt.enter();
+                let _ns_guard = NetNsGuard::new(rattan_ns);
+                VirtualEthernet::<D>::new(veth, name.clone())
+            })?;
+        }
 
-        let rattan_ns = self.env.rattan_ns.clone();
-        let veth = self.env.right_pair.left.clone();
-
-        self.build_device("right".to_string(), move |rt| {
-            let _guard = rt.enter();
-            let _ns_guard = NetNsGuard::new(rattan_ns);
-            VirtualEthernet::<D>::new(veth, "right".to_string())
-        })?;
+        for i in 1..self.env.right_pairs.len() {
+            let rattan_ns = self.env.rattan_ns.clone();
+            let veth = self.env.right_pairs[i].left.clone();
+            let name = if self.env.right_pairs.len() == 2 {
+                "right".to_string()
+            } else {
+                format!("right{i}")
+            };
+            self.build_device(name.clone(), move |rt| {
+                let _guard = rt.enter();
+                let _ns_guard = NetNsGuard::new(rattan_ns);
+                VirtualEthernet::<D>::new(veth, name.clone())
+            })?;
+        }
 
         Ok(())
     }
@@ -333,12 +348,36 @@ where
         self.rattan.op_block_exec(op)
     }
 
-    pub fn left_ip(&self) -> IpAddr {
-        self.env.left_pair.left.ip_addr.0
+    /// IP of i-th veth pair of `ns-left`
+    ///
+    /// 0 is for external connection
+    pub fn left_ip(&self, i: usize) -> IpAddr {
+        self.env.left_pairs[i].left.ip_addr.0
     }
 
-    pub fn right_ip(&self) -> IpAddr {
-        self.env.right_pair.right.ip_addr.0
+    /// IP of i-th veth pair of `ns-right`
+    ///
+    /// 0 is for external connection
+    pub fn right_ip(&self, i: usize) -> IpAddr {
+        self.env.right_pairs[i].right.ip_addr.0
+    }
+
+    /// IP list of veth pairs of `ns-left`
+    pub fn left_ip_list(&self) -> Vec<IpAddr> {
+        self.env
+            .left_pairs
+            .iter()
+            .map(|e| e.left.ip_addr.0)
+            .collect()
+    }
+
+    /// IP list of veth pairs of `ns-right`
+    pub fn right_ip_list(&self) -> Vec<IpAddr> {
+        self.env
+            .right_pairs
+            .iter()
+            .map(|e| e.right.ip_addr.0)
+            .collect()
     }
 
     pub fn get_mode(&self) -> StdNetEnvMode {
@@ -395,16 +434,32 @@ where
         }))
     }
 
-    pub fn ping_test(&self) -> Result<bool, Error> {
-        info!("ping {} testing...", self.right_ip());
+    // ping specialized right veth from left NS through specialized left veth
+    pub fn ping_right_from_left(
+        &self,
+        left_pair_id: usize,
+        right_pair_id: usize,
+    ) -> Result<bool, Error> {
+        let src_ip = self.left_ip(left_pair_id);
+        let dest_ip = self.right_ip(right_pair_id);
+        info!("Ping testing {} from {} ...", dest_ip, src_ip);
+
         let _left_ns_guard = NetNsGuard::new(self.env.left_ns.clone())?;
         let handle = std::process::Command::new("ping")
-            .args([&self.right_ip().to_string(), "-c", "3", "-i", "0.2"])
+            .args([
+                &dest_ip.to_string(),
+                "-c",
+                "3",
+                "-i",
+                "0.2",
+                "-I",
+                &self.env.left_pairs[left_pair_id].left.name,
+            ])
             .stdout(std::process::Stdio::piped())
             .spawn()?;
         let output = handle.wait_with_output()?;
         let stdout = String::from_utf8(output.stdout).unwrap();
-        debug!("ping output: {}", stdout);
+        info!("ping output: {}", stdout);
         Ok(stdout.contains("time="))
     }
 }

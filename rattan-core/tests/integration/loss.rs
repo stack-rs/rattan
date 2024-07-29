@@ -19,6 +19,7 @@ fn test_loss() {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
             server_cores: vec![3],
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -47,10 +48,11 @@ fn test_loss() {
     {
         let _span = span!(Level::INFO, "ping_no_loss").entered();
         info!("try to ping with no loss");
+        let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, || {
+            .left_spawn(None, move || {
                 let handle = std::process::Command::new("ping")
-                    .args(["192.168.12.1", "-c", "20", "-i", "0.3"])
+                    .args([&right_ip, "-c", "20", "-i", "0.3"])
                     .stdout(std::process::Stdio::piped())
                     .spawn()
                     .unwrap();
@@ -81,10 +83,11 @@ fn test_loss() {
             ))
             .unwrap();
 
+        let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, || {
+            .left_spawn(None, move || {
                 let handle = std::process::Command::new("ping")
-                    .args(["192.168.12.1", "-c", "50", "-i", "0.3"])
+                    .args([&right_ip, "-c", "50", "-i", "0.3"])
                     .stdout(std::process::Stdio::piped())
                     .spawn()
                     .unwrap();

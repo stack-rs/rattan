@@ -19,6 +19,7 @@ fn test_delay() {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
             server_cores: vec![3],
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -47,10 +48,11 @@ fn test_delay() {
     {
         let _span = span!(Level::INFO, "ping_no_delay").entered();
         info!("try to ping with no delay");
+        let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, || {
+            .left_spawn(None, move || {
                 let handle = std::process::Command::new("ping")
-                    .args(["192.168.12.1", "-c", "10", "-i", "0.3"])
+                    .args([&right_ip, "-c", "10", "-i", "0.3"])
                     .stdout(std::process::Stdio::piped())
                     .spawn()
                     .unwrap();
@@ -93,10 +95,11 @@ fn test_delay() {
             ))
             .unwrap();
 
+        let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, || {
+            .left_spawn(None, move || {
                 let handle = std::process::Command::new("ping")
-                    .args(["192.168.12.1", "-c", "10", "-i", "0.3"])
+                    .args([&right_ip, "-c", "10", "-i", "0.3"])
                     .stdout(std::process::Stdio::piped())
                     .spawn()
                     .unwrap();
