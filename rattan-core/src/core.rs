@@ -222,6 +222,16 @@ where
         self.router.insert(rx_id, tx_id);
     }
 
+    pub fn get_receiver(
+        &self,
+        id: &String,
+    ) -> Result<Arc<dyn Ingress<D::Packet>>, RattanCoreError> {
+        match self.sender.get(id) {
+            Some(ingress) => Ok(ingress.clone()),
+            None => Err(RattanCoreError::UnknownIdError(id.clone())),
+        }
+    }
+
     pub fn spawn_rattan(&mut self) -> Result<(), RattanCoreError> {
         if self.state.load(Ordering::Relaxed) != RattanState::Initial as u8 {
             return Err(RattanCoreError::SpawnError(format!(

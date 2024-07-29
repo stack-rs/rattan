@@ -230,6 +230,40 @@ type = "Loss"
 # Default: []
 pattern = [0.1, 0.2]
 
+
+# Shadow Device Example
+[devices.shadow]
+type = "Shadow"
+
+
+# Router Device Example
+[devices.router]
+type = "Router"
+
+# Egress connections
+# 
+# It is an ordered list of strings, where each one is a device ID.
+# Each item represents the device connected to the i-th interface of the Router Device.
+# For example, the following one means `left1` connected to interface 0, and `left2` connected to interface 1.
+# At the same time, the length of the list determines the range of interfaces id in the routing_table.
+#
+# Warning: Due to the order of device construction, Router Devices should not be directly connected to another Router Device.
+# The recommended solution is to add a Shadow Device to represent the Router Device being connected, and link them in Links Section. 
+egress_connections = ["left1", "left2"]
+
+# Initial routing table
+[[devices.router.routing_table]]
+prefix = "10.1.1.1/24"
+interface_id = 0
+
+[[devices.router.routing_table]]
+prefix = "10.1.2.1/24"
+interface_id = 1
+
+[[devices.router.routing_table]]
+prefix = "10.2.0.0/16"
+# no interface_id, meaning drop
+
 # ----- Devices Section End -----
 
 
@@ -244,17 +278,24 @@ pattern = [0.1, 0.2]
 #
 # Each line describes a one-way link from a device egress to a device ingress.
 # For example, the following line means:
-# +------+ --->  up_1  --->  up_2  ---> +-------+
-# | left |                              | right |
-# +------+ <--- down_2 <--- down_1 <--- +-------+
-#
+# +-------+  -------->  shadow --->  up_1  --->  up_2  ---> +-------+
+# | left1 | <==+           ^                                | right |
+# +-------+    }= router <-|------- down_2 <--- down_1 <--- +-------+
+# | left2 | <==+           |
+# +-------+  --------------+
+# 
+# Note: The double line "<===" from router is connected in Devices Section
+
 [links]
-left = "up_1"
+left1 = "shadow"
+left2 = "shadow"
+shadow = "up_1"
 up_1 = "up_2"
 up_2 = "right"
 right = "down_1"
 down_1 = "down_2"
-down_2 = "left"
+down_2 = "router"
+# We do not need to link the Router Device to other devices anymore, as we have done it in Devices Section.
 
 # ----- Links Section End -----
 

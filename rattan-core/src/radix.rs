@@ -262,7 +262,9 @@ where
     where
         I: IntoIterator<Item = (String, DeviceBuildConfig<D::Packet>)>,
     {
-        // build devices
+        let mut router_configs = vec![];
+
+        // build devices, EXCEPT routers
         for (id, device_config) in devices {
             match device_config {
                 DeviceBuildConfig::Bw(bw_config) => match bw_config {
@@ -305,10 +307,27 @@ where
                 DeviceBuildConfig::LossReplay(config) => {
                     self.build_device(id, config.into_factory())?;
                 }
+                DeviceBuildConfig::Shadow(config) => {
+                    self.build_device(id, config.into_factory())?;
+                }
+                DeviceBuildConfig::Router(config) => {
+                    // ignore routers, build them after other devices
+                    router_configs.push((id, config));
+                }
                 DeviceBuildConfig::Custom => {
                     debug!("Skip build custom device: {}", id);
                 }
             }
+        }
+
+        // build routers
+        for (id, config) in router_configs {
+            let receivers = config
+                .egress_connections
+                .iter()
+                .map(|id| self.rattan.get_receiver(id))
+                .collect::<Result<_, _>>()?;
+            self.build_device(id, config.into_factory(receivers))?;
         }
 
         Ok(())

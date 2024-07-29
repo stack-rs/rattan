@@ -11,10 +11,14 @@ use crate::control::http::HttpConfig;
 mod bandwidth;
 mod delay;
 mod loss;
+mod router;
+mod shadow;
 
 pub use bandwidth::*;
 pub use delay::*;
 pub use loss::*;
+pub use router::*;
+pub use shadow::*;
 
 /// Configuration for the whole Rattan system.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
@@ -79,5 +83,7 @@ pub enum DeviceBuildConfig<P: Packet> {
     DelayReplay(DelayReplayDeviceBuildConfig),
     Loss(LossDeviceBuildConfig),
     LossReplay(LossReplayDeviceBuildConfig),
+    Shadow(ShadowDeviceBuildConfig),
+    Router(RouterDeviceBuildConfig),
     Custom,
 }
