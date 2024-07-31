@@ -181,22 +181,17 @@ where
                     .extract()
                     .map_err(|e| Error::ConfigError(e.to_string()))?;
                 return Ok(trace.into_model());
-            } else {
-                let trace_pattern = mahimahi_file_to_pattern(file_path)?;
-                let trace = netem_trace::load_mahimahi_trace(trace_pattern, None).map_err(|e| {
-                    Error::ConfigError(format!(
-                        "Failed to load trace file {}: {}",
-                        file_path.display(),
-                        e
-                    ))
-                })?;
-                return Ok(Box::new(trace.build()) as Box<dyn BwTrace>);
             }
         }
-        Err(Error::ConfigError(format!(
-            "Unknown trace file format: {:?}",
-            file_path
-        )))
+        let trace_pattern = mahimahi_file_to_pattern(file_path)?;
+        let trace = netem_trace::load_mahimahi_trace(trace_pattern, None).map_err(|e| {
+            Error::ConfigError(format!(
+                "Failed to load trace file {}: {}",
+                file_path.display(),
+                e
+            ))
+        })?;
+        Ok(Box::new(trace.build()) as Box<dyn BwTrace>)
     }
 }
 
