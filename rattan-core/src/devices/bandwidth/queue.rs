@@ -959,28 +959,21 @@ where
         // dequeue to ensure the update of the prob
         self.update_prob();
         let now = Instant::now();
-        let mut credit_change: i32 = 0;
 
         loop {
-            let packet_cb = self.dequeue_packet(&mut credit_change);
+            let (packet_cb, credit_change) = self.dequeue_packet();
+            self.c_protection_credit += credit_change;
             match packet_cb {
                 Some(mut packet_cb) => {
-                    if !self.config.drop_early && self.must_drop(&mut packet_cb)
+                    if (!self.config.drop_early && self.must_drop(&mut packet_cb))
                         || (packet_cb.in_l_queue() && self.do_step_aqm(&mut packet_cb, now))
                     {
                         self.defferred_dropped_cnt += 1;
-                        self.defferred_dropped_len += packet_cb
-                            .packet
-                            .ip_hdr()
-                            .expect("Cannot find ip header")
-                            .payload_len()
-                            .expect("Parse total length error")
-                            as u32;
+                        self.defferred_dropped_len += packet_cb.packet.l3_length() as u32;
 
                         // Drop the packet
                         continue;
                     }
-                    self.c_protection_credit += credit_change;
                     return Some(packet_cb.packet);
                 }
                 None => return None,
@@ -1024,6 +1017,7 @@ where
             rng: StdRng::seed_from_u64(42),
         };
         temp.calculate_c_protection();
+        debug!("Initialized DualPI2: {:?}", temp);
         temp
     }
 
@@ -1038,11 +1032,13 @@ where
         self.reset_c_protection();
     }
 
-    /* Never drop packets  */
     fn must_drop(&mut self, packet_control_buffer: &mut DualPI2PacketControlBuffer<P>) -> bool {
-        if self.bytes_in_c < 2 * self.config.mtu as usize {
+        /* Never drop packets  */
+        if self.bytes_in_c + self.bytes_in_l < 2 * self.config.mtu as usize {
             return false;
         }
+
+        trace!("DaulPI2 prob: {}", self.pi2_prob);
 
         let prob = self.pi2_prob;
         let local_l_prob = prob as u64 * self.config.coupling_factor as u64;
@@ -1099,12 +1095,19 @@ where
         }
     }
 
-    fn dequeue_packet(&mut self, credit_change: &mut i32) -> Option<DualPI2PacketControlBuffer<P>> {
+    fn dequeue_packet(&mut self) -> (Option<DualPI2PacketControlBuffer<P>>, i32) {
         /* Prioritize dequeing from the L queue. Only protection credit is > 0
         we try to give out c queue packet. If C queue has no packet when it is
         given the chance the dequeue, we still try to dequeue from L; similarly,
         if there is no packet to dequeue in L queue when it is given the chance
         we will try to dequeue from C queue */
+        let mut credit_change = 0;
+        trace!(
+            "Dequeue: l length {}, c length {}, credit {}",
+            self.l_queue.len(),
+            self.c_queue.len(),
+            self.c_protection_credit
+        );
         let packet = if (self.c_queue.is_empty() || self.c_protection_credit <= 0)
             && !self.l_queue.is_empty()
         {
@@ -1119,7 +1122,7 @@ where
                 .map(|front_pkt| front_pkt.packet.get_timestamp());
 
             if !self.c_queue.is_empty() {
-                *credit_change = self.config.c_protection_wc as i32;
+                credit_change = self.config.c_protection_wc as i32;
             }
 
             self.packets_in_l -= 1;
@@ -1137,7 +1140,7 @@ where
                 .map(|front_pkt| front_pkt.packet.get_timestamp());
 
             if !self.l_queue.is_empty() {
-                *credit_change = -(self.c_protection_wl as i32);
+                credit_change = -(self.c_protection_wl as i32);
             }
 
             self.packets_in_c -= 1;
@@ -1145,14 +1148,14 @@ where
             dequeued_packet
         } else {
             self.reset_c_protection();
-            return None;
+            return (None, 0);
         };
         // This is not safe only in theory. l3_length gives usize, which may
         // overflow the i32. However, I fail to come up with a scenario where the
         // packet size will be larger then 2^31 - 1, thus this in practical should
         // never cause any problem.
-        *credit_change *= packet.packet.l3_length() as i32;
-        Some(packet)
+        credit_change *= packet.packet.l3_length() as i32;
+        (Some(packet), credit_change)
     }
 
     fn do_step_aqm(&mut self, packet: &mut DualPI2PacketControlBuffer<P>, now: Instant) -> bool {
@@ -1209,7 +1212,7 @@ where
             * self.config.alpha as i64;
         delta += (qdelay.as_nanos() as i64 - self.last_qdelay.as_nanos() as i64)
             * self.config.beta as i64;
-        let new_prob = self.pi2_prob as i64 + Self::scale_delta(delta as u64);
+        let new_prob = self.pi2_prob as i64 + Self::scale_delta(delta);
         let new_prob: u32 = match new_prob {
             p if p > u32::MAX as i64 => u32::MAX,
             p if p < 0 => 0,
@@ -1229,7 +1232,7 @@ where
         new_prob
     }
 
-    fn scale_delta(delta: u64) -> i64 {
+    fn scale_delta(delta: i64) -> i64 {
         (delta / (1 << DualPI2QueueConfig::ALPHA_BETA_GRANULARITY)) as i64
     }
 }
