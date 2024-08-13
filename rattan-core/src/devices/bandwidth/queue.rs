@@ -1233,6 +1233,588 @@ where
     }
 
     fn scale_delta(delta: i64) -> i64 {
-        (delta / (1 << DualPI2QueueConfig::ALPHA_BETA_GRANULARITY)) as i64
+        delta / (1 << DualPI2QueueConfig::ALPHA_BETA_GRANULARITY)
+    }
+}
+
+/// PIE AQM implementation. Ref: linux kernel implementation
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(default))]
+#[derive(Debug, Clone)]
+pub struct PIEQueueConfig {
+    pub packet_limit: Option<usize>,
+    pub byte_limit: Option<usize>,
+    pub mtu: u32,
+
+    #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
+    pub target: Duration, // AQM Latency Target (default: 15 milliseconds)
+    #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
+    pub t_update: Duration, // A period to calculate drop prob (default: 15 milliseconds)
+
+    pub alpha: u64, // For prob calculation. Use a value of 0-32 and it will be scaled down to value between 0-2 (default: 2, scaled to 1/8=0.125). Internally stores the value after scaling.
+    pub beta: u64, // For prob calculation. Use a value of 0-32 and it will be scaled down to value between 0-2 (default: 20, scaled to 1 + 1/4). Internally stores the value after scaling
+
+    pub use_ecn: bool,           // is ECN marking of packets enabled
+    pub bytemode: bool,          // is drop probability scaled based on pkt size
+    pub dq_rate_estimator: bool, // is Little's law used for qdelay calculation, if not, use jojourn time as qdelay
+
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "serde_default")
+    )]
+    pub bw_type: BwType,
+}
+
+impl Default for PIEQueueConfig {
+    fn default() -> Self {
+        Self {
+            packet_limit: None,
+            byte_limit: None,
+            mtu: 1500,
+            target: Duration::from_millis(15),
+            t_update: Duration::from_millis(15),
+            alpha: Self::scale_alpha_beta(8),
+            beta: Self::scale_alpha_beta(20),
+            use_ecn: false,
+            bytemode: false,
+            dq_rate_estimator: false,
+            bw_type: BwType::default(),
+        }
+    }
+}
+
+impl PIEQueueConfig {
+    const MAX_PROB: u64 = u64::MAX >> 8;
+    const QUEUE_THRESHOLD: u32 = 16384;
+    const PIE_SCALE: u8 = 8;
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
+        packet_limit: A,
+        byte_limit: B,
+        mtu: u32,
+        target: Duration,
+        t_update: Duration,
+        alpha: u8,
+        beta: u8,
+        use_ecn: bool,
+        bytemode: bool,
+        dq_rate_estimator: bool,
+        bw_type: BwType,
+    ) -> Self {
+        Self {
+            packet_limit: packet_limit.into(),
+            byte_limit: byte_limit.into(),
+            mtu,
+            target,
+            t_update,
+            alpha: Self::scale_alpha_beta(alpha),
+            beta: Self::scale_alpha_beta(beta),
+            use_ecn,
+            bytemode,
+            dq_rate_estimator,
+            bw_type,
+        }
+    }
+
+    fn scale_alpha_beta(coeff: u8) -> u64 {
+        (coeff as u64 * (PIEQueueConfig::MAX_PROB / (1000000000 >> 6))) >> 4
+    }
+}
+
+impl<P> From<PIEQueueConfig> for PIEQueue<P>
+where
+    P: Packet,
+{
+    fn from(config: PIEQueueConfig) -> Self {
+        PIEQueue::new(config)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PIEPacketControlBuffer<P> {
+    ect: Ipv4Ecn,
+    packet: P,
+}
+
+impl<P> PIEPacketControlBuffer<P>
+where
+    P: Packet,
+{
+    fn new(packet: P) -> Self {
+        Self {
+            ect: Self::classify(&packet),
+            packet,
+        }
+    }
+
+    fn classify(packet: &P) -> Ipv4Ecn {
+        let ip_header = match packet.ip_hdr() {
+            Some(header) => header,
+            None => return Ipv4Ecn::ZERO,
+        };
+
+        ip_header.ecn
+    }
+
+    fn set_ce(&mut self) -> bool {
+        let mut ip_hdr_idx = 0;
+        if self.packet.ether_hdr().is_some() {
+            ip_hdr_idx += 14;
+        }
+
+        if self.packet.ip_hdr().is_none() {
+            return false; // No ip header, cannot change.
+        }
+
+        let tos_idx = ip_hdr_idx + 1;
+        let check_idx = ip_hdr_idx + 10;
+
+        let packet_buffer = self.packet.as_raw_buffer();
+        let tos = &mut packet_buffer[tos_idx];
+
+        let ecn = (*tos + 1) & Ipv4Ecn::TRHEE.value();
+        /*
+         * After the last operation we have (in binary):
+         * INET_ECN_NOT_ECT => 01
+         * INET_ECN_ECT_1   => 10
+         * INET_ECN_ECT_0   => 11
+         * INET_ECN_CE      => 00
+         */
+        if (ecn & 2) == 0 {
+            return ecn == 0;
+        }
+
+        /*
+         * The following gives us:
+         * INET_ECN_ECT_1 => check += htons(0xFFFD)
+         * INET_ECN_ECT_0 => check += htons(0xFFFE)
+         */
+
+        let tos = &mut packet_buffer[tos_idx];
+        *tos |= Ipv4Ecn::TRHEE.value();
+
+        // Now we calculate the new checksum
+        let check_add: u16 = 0xFFFB + ecn as u16;
+
+        let check_before =
+            u16::from_be_bytes([packet_buffer[check_idx], packet_buffer[check_idx + 1]]);
+
+        let mut check_after = check_before + check_add;
+        if check_after < check_add {
+            check_after += 1;
+        }
+
+        let check_after = check_after.to_be_bytes();
+        packet_buffer[check_idx..check_idx + 2].copy_from_slice(&check_after);
+        // packet_buffer[check_idx] = check_after[0];
+        // packet_buffer[check_idx + 1] = check_after[1];
+        self.ect = Ipv4Ecn::TRHEE;
+        true
+    }
+}
+
+#[derive(Debug)]
+pub struct PIEQueue<P>
+where
+    P: Packet,
+{
+    queue: VecDeque<PIEPacketControlBuffer<P>>,
+    config: PIEQueueConfig,
+
+    qdelay: Duration,
+    qdelay_old: Duration,
+    burst_time: Duration,
+    dq_timestamp: Instant, // timestamp at which dq rate was last calculated
+    prob: u64,
+    accu_prob: u64,
+    dq_count: Option<u64>,
+    avg_dq_rate: u32,
+    backlog_old: usize,
+
+    packets_in_q: u32,
+    bytes_in_q: usize,
+
+    last_update_time: Instant,
+
+    rng: StdRng,
+}
+
+impl<P> Default for PIEQueue<P>
+where
+    P: Packet,
+{
+    fn default() -> Self {
+        Self::new(PIEQueueConfig::default())
+    }
+}
+
+impl<P> PIEQueue<P>
+where
+    P: Packet,
+{
+    pub fn new(config: PIEQueueConfig) -> Self {
+        debug!(?config, "New PIEQueue");
+        Self {
+            queue: VecDeque::new(),
+            config,
+
+            qdelay: Duration::ZERO,
+            qdelay_old: Duration::ZERO,
+            burst_time: Duration::from_millis(150),
+            dq_timestamp: Instant::now(),
+            prob: 0,
+            accu_prob: 0,
+            dq_count: None,
+            avg_dq_rate: 0,
+            backlog_old: 0,
+
+            packets_in_q: 0,
+            bytes_in_q: 0,
+
+            last_update_time: Instant::now(),
+
+            rng: StdRng::seed_from_u64(42),
+        }
+    }
+
+    fn drop_early(&mut self, packet_size: u64) -> bool {
+        /* If there is still burst allowance left skip random early drop */
+        if self.burst_time > Duration::ZERO {
+            return false;
+        }
+
+        /* If currentdelay is less than half of target, and if drop prob is low already,
+         * disable early_drop
+         */
+        if (self.qdelay < self.config.target / 2) && self.prob < PIEQueueConfig::MAX_PROB / 5 {
+            return false;
+        }
+
+        /* If we have fewer than 2 mtu-sized packets, disable pie_drop_early,
+         * similar to min_th in RED
+         */
+        if self.bytes_in_q < 2 * self.config.mtu as usize {
+            return false;
+        }
+
+        /* If bytemode is turned on, use packet size to compute new
+         * probablity. Smaller packets will have lower drop prob in this case
+         */
+        let local_prob = if self.config.bytemode && packet_size < self.config.mtu as u64 {
+            packet_size * (self.prob / self.config.mtu as u64)
+        } else {
+            self.prob
+        };
+
+        if local_prob == 0 {
+            self.accu_prob = 0;
+        } else {
+            self.accu_prob += local_prob;
+        }
+
+        if self.accu_prob < (PIEQueueConfig::MAX_PROB / 100) * 85 {
+            return false;
+        }
+
+        if self.accu_prob >= (PIEQueueConfig::MAX_PROB / 2) * 17 {
+            return true;
+        }
+
+        let rand = self.rng.next_u64();
+        if (rand >> 8) < local_prob {
+            self.accu_prob = 0;
+            return true;
+        }
+
+        false
+    }
+
+    fn update_prob(&mut self) {
+        if self.last_update_time.elapsed() >= self.config.t_update {
+            self.prob = self.calculate_prob();
+        }
+        while self.last_update_time.elapsed() >= self.config.t_update {
+            self.last_update_time += self.config.t_update;
+        }
+    }
+
+    fn calculate_prob(&mut self) -> u64 {
+        // I simply copied the logic from the original code...
+        let mut update_prob = true;
+        let qdelay: Duration;
+        let qdelay_old: Duration;
+
+        if self.config.dq_rate_estimator {
+            qdelay_old = self.qdelay;
+            self.qdelay_old = self.qdelay;
+
+            if self.avg_dq_rate > 0 {
+                qdelay = Duration::from_nanos(
+                    (((self.bytes_in_q << PIEQueueConfig::PIE_SCALE) / self.avg_dq_rate as usize) << 6)
+                        as u64,
+                );
+            } else {
+                qdelay = Duration::ZERO;
+            }
+        } else {
+            qdelay = self.qdelay;
+            qdelay_old = self.qdelay_old;
+        }
+
+        /* If qdelay is zero and backlog is not, it means backlog is very small,
+         * so we do not update probability in this round.
+         */
+        if qdelay.is_zero() && self.bytes_in_q != 0 {
+            update_prob = false;
+        }
+
+        /* In the algorithm, alpha and beta are between 0 and 2 with typical
+         * value for alpha as 0.125. In this implementation, we use values 0-32
+         * passed from user space to represent this. Also, alpha and beta have
+         * unit of HZ and need to be scaled before they can used to update
+         * probability. alpha/beta are updated locally below by scaling down
+         * by 16 to come to 0-2 range.
+         */
+        let mut alpha = self.config.alpha;
+        let mut beta = self.config.beta;
+
+        /* We scale alpha and beta differently depending on how heavy the
+         * congestion is. Please see RFC 8033 for details.
+         */
+        if self.prob < PIEQueueConfig::MAX_PROB / 10 {
+            alpha >>= 1;
+            beta >>= 1;
+
+            let mut power = 100;
+            while (self.prob < PIEQueueConfig::MAX_PROB / power) && power <= 1000000 {
+                alpha >>= 2;
+                beta >>= 2;
+                power *= 10;
+            }
+        }
+
+        /* alpha and beta should be between 0 and 32, in multiples of 1/16 */
+        let mut delta =
+            alpha as i64 * ((qdelay.as_nanos() as i64 - self.config.target.as_nanos() as i64) >> 6);
+        delta += beta as i64 * ((qdelay.as_nanos() as i64 - qdelay_old.as_nanos() as i64) >> 6);
+
+        /* to ensure we increase probability in steps of no more than 2% */
+        if (delta > (PIEQueueConfig::MAX_PROB / (100 / 2)) as i64) && self.prob >= PIEQueueConfig::MAX_PROB / 10 {
+            delta = ((PIEQueueConfig::MAX_PROB / 100) * 2) as i64;
+        }
+
+        /* Non-linear drop:
+         * Tune drop probability to increase quickly for high delays(>= 250ms)
+         * 250ms is derived through experiments and provides error protection
+         */
+
+        if qdelay > Duration::from_millis(250) {
+            delta += (PIEQueueConfig::MAX_PROB / (100 / 2)) as i64;
+        }
+
+        let mut new_prob = match self.prob as i128 + delta as i128 {
+            r if r > PIEQueueConfig::MAX_PROB as i128 => {
+                /* Prevent normalization error. If probability is at
+                 * maximum value already, we normalize it here, and
+                 * skip the check to do a non-linear drop in the next
+                 * section.
+                 */
+                update_prob = false;
+                PIEQueueConfig::MAX_PROB
+            }
+            r if r < 0 => 0,
+            r => r as u64,
+        };
+
+        /* Non-linear drop in probability: Reduce drop probability quickly if
+         * delay is 0 for 2 consecutive Tupdate periods.
+         */
+        if qdelay.as_nanos() == 0 && qdelay_old.as_nanos() == 0 && update_prob {
+            /* Reduce drop probability to 98.4% */
+            new_prob -= new_prob / 64;
+        }
+
+        self.qdelay = qdelay;
+        self.backlog_old = self.bytes_in_q;
+
+        /* We restart the measurement cycle if the following conditions are met
+         * 1. If the delay has been low for 2 consecutive Tupdate periods
+         * 2. Calculated drop probability is zero
+         * 3. If average dq_rate_estimator is enabled, we have at least one
+         *    estimate for the avg_dq_rate ie., is a non-zero value
+         */
+        if self.qdelay < self.config.target / 2
+            && self.qdelay_old < self.config.target / 2
+            && new_prob == 0
+            && (!self.config.dq_rate_estimator || self.avg_dq_rate > 0)
+        {
+            self.burst_time = Duration::from_millis(150);
+            self.dq_timestamp = Instant::now();
+            self.accu_prob = 0;
+            self.dq_count = None;
+            self.avg_dq_rate = 0;
+        }
+
+        if !self.config.dq_rate_estimator {
+            self.qdelay_old = qdelay;
+        }
+
+        new_prob
+    }
+}
+
+impl<P> PacketQueue<P> for PIEQueue<P>
+where
+    P: Packet,
+{
+    type Config = PIEQueueConfig;
+    fn configure(&mut self, config: Self::Config) {
+        self.config = config;
+    }
+
+    fn enqueue(&mut self, packet: P) {
+        self.update_prob();
+        // Check if overlimit
+        if self
+            .config
+            .packet_limit
+            .map_or(true, |limit| self.queue.len() >= limit)
+            || self.config.byte_limit.map_or(true, |limit| {
+                self.bytes_in_q + packet.l3_length() + self.config.bw_type.extra_length() > limit
+            })
+        {
+            // Over limit, can only drop
+            self.accu_prob = 0;
+            // Drop the packet
+            return;
+        }
+
+        let mut control_buffer = PIEPacketControlBuffer::new(packet);
+
+        if self.drop_early(control_buffer.packet.l3_length() as u64) {
+            // Need drop, decide whether actual drop or just mark
+            if control_buffer.ect != Ipv4Ecn::ZERO && self.prob <= PIEQueueConfig::MAX_PROB / 10 {
+                // Set ce as drop
+                control_buffer.set_ce();
+            } else {
+                // Drop the packet
+                return;
+            }
+        }
+
+        if !self.config.dq_rate_estimator {
+            control_buffer.packet.set_timestamp(Instant::now());
+        }
+
+        self.bytes_in_q += control_buffer.packet.l3_length() + self.config.bw_type.extra_length();
+        self.packets_in_q += 1;
+        self.queue.push_back(control_buffer);
+    }
+
+    fn dequeue(&mut self) -> Option<P> {
+        let dequeued_packet_cb = match self.queue.pop_front() {
+            None => return None,
+            Some(packet) => packet,
+        };
+        self.packets_in_q -= 1;
+        self.bytes_in_q -=
+            dequeued_packet_cb.packet.l3_length() + self.config.bw_type.extra_length();
+
+        let now = Instant::now();
+        let dtime: Duration;
+
+        /* If dq_rate_estimator is disabled, calculate qdelay using the
+         * packet timestamp.
+         */
+        if !self.config.dq_rate_estimator {
+            self.qdelay = now - dequeued_packet_cb.packet.get_timestamp();
+
+            dtime = now - self.dq_timestamp;
+
+            self.dq_timestamp = now;
+
+            if self.bytes_in_q == 0 {
+                self.qdelay = Duration::ZERO;
+            }
+
+            if dtime.is_zero() {
+                return Some(dequeued_packet_cb.packet);
+            }
+
+            // Do burst allowance reduction
+            if self.burst_time > Duration::ZERO {
+                if self.burst_time > dtime {
+                    self.burst_time -= dtime;
+                } else {
+                    self.burst_time = Duration::ZERO;
+                }
+            }
+            return Some(dequeued_packet_cb.packet);
+        }
+
+        /* If current queue is about 10 packets or more and is not conducting measurment
+         * we have enough packets to calculate the drain rate. Save
+         * current time as dq_tstamp and start measurement cycle.
+         */
+        if self.bytes_in_q >= PIEQueueConfig::QUEUE_THRESHOLD as usize && self.dq_count.is_none() {
+            self.dq_timestamp = Instant::now();
+            self.dq_count = Some(0);
+        }
+
+        /* Calculate the average drain rate from this value. If queue length
+         * has receded to a small value viz., <= QUEUE_THRESHOLD bytes, reset
+         * in measurment to false as we don't have enough packets to calculate the
+         * drain rate anymore. The following if block is entered only when we
+         * have a substantial queue built up (QUEUE_THRESHOLD bytes or more)
+         * and we calculate the drain rate for the threshold here.  dq_count is
+         * in bytes, hence rate is in
+         * bytes/psched_time.
+         */
+        if let Some(mut dq_count) = self.dq_count {
+            dq_count += dequeued_packet_cb.packet.l3_length() as u64;
+            self.dq_count = Some(dq_count);
+
+            if dq_count >= PIEQueueConfig::QUEUE_THRESHOLD as u64 {
+                let count = dq_count << PIEQueueConfig::PIE_SCALE;
+
+                dtime = now - self.dq_timestamp;
+
+                if dtime == Duration::ZERO {
+                    return Some(dequeued_packet_cb.packet);
+                }
+
+                // dtime.as_nanos() >> 6 is in unit of the linux 'tick'
+                let avg_rate = count as u128 / (dtime.as_nanos() >> 6);
+
+                if self.avg_dq_rate == 0 {
+                    self.avg_dq_rate = avg_rate as u32;
+                } else {
+                    self.avg_dq_rate =
+                        (self.avg_dq_rate - (self.avg_dq_rate >> 3)) + (avg_rate >> 3) as u32;
+                }
+
+                /* If the queue has receded below the threshold, we hold
+                 * on to the last drain rate calculated, else we reset
+                 * dq_count to 0 to re-enter the if block when the next
+                 * packet is dequeued
+                 */
+                if self.bytes_in_q < PIEQueueConfig::QUEUE_THRESHOLD as usize {
+                    self.dq_count = None;
+                } else {
+                    self.dq_count = Some(0);
+                    self.dq_timestamp = Instant::now();
+                }
+
+                // Do burst allowance reduction
+                if self.burst_time > Duration::ZERO {
+                    if self.burst_time > dtime {
+                        self.burst_time -= dtime;
+                    } else {
+                        self.burst_time = Duration::ZERO;
+                    }
+                }
+            }
+        }
+        Some(dequeued_packet_cb.packet)
     }
 }
