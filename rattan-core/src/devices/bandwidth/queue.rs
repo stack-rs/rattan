@@ -1673,13 +1673,14 @@ where
     }
 
     fn enqueue(&mut self, packet: P) {
+        trace!("PIE Enqueued Packet: {}", packet.desc());
         self.update_prob();
         // Check if overlimit
         if self
             .config
             .packet_limit
-            .map_or(true, |limit| self.queue.len() >= limit)
-            || self.config.byte_limit.map_or(true, |limit| {
+            .map_or(false, |limit| self.queue.len() >= limit)
+            || self.config.byte_limit.map_or(false, |limit| {
                 self.bytes_in_q + packet.l3_length() + self.config.bw_type.extra_length() > limit
             })
         {
@@ -1716,6 +1717,8 @@ where
             None => return None,
             Some(packet) => packet,
         };
+
+        trace!("Dequeued packet: {}", dequeued_packet_cb.packet.desc());
         self.packets_in_q -= 1;
         self.bytes_in_q -=
             dequeued_packet_cb.packet.l3_length() + self.config.bw_type.extra_length();
