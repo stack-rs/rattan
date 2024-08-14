@@ -383,6 +383,9 @@ fn main() -> ExitCode {
         let config = match opts.config {
             Some(ref config_file) => {
                 info!("Loading config from {}", config_file);
+                if !std::path::Path::new(config_file).exists() {
+                    tracing::warn!("Config file {} specified but does not exist", config_file);
+                }
                 let config: RattanConfig<StdPacket> = Figment::new()
                     .merge(Toml::file(config_file))
                     .merge(Env::prefixed("RATTAN_"))
