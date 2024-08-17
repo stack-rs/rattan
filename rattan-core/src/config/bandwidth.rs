@@ -34,6 +34,7 @@ pub enum BwDeviceBuildConfig<P: Packet> {
     DropTail(bandwidth::BwDeviceConfig<P, queue::DropTailQueue<P>>),
     DropHead(bandwidth::BwDeviceConfig<P, queue::DropHeadQueue<P>>),
     CoDel(bandwidth::BwDeviceConfig<P, queue::CoDelQueue<P>>),
+    FqCoDel(bandwidth::BwDeviceConfig<P, queue::FqCoDelQueue<P>>),
     DualPI2(bandwidth::BwDeviceConfig<P, queue::DualPI2Queue<P>>),
     PIE(bandwidth::BwDeviceConfig<P, queue::PIEQueue<P>>),
 }
@@ -61,6 +62,7 @@ impl_bw_device_into_factory!(
     DropTailQueue,
     DropHeadQueue,
     CoDelQueue,
+    FqCoDelQueue,
     DualPI2Queue,
     PIEQueue
 );
@@ -76,6 +78,7 @@ pub enum BwReplayDeviceBuildConfig<P: Packet> {
     DropTail(BwReplayQueueConfig<P, queue::DropTailQueue<P>>),
     DropHead(BwReplayQueueConfig<P, queue::DropHeadQueue<P>>),
     CoDel(BwReplayQueueConfig<P, queue::CoDelQueue<P>>),
+    FqCoDel(BwReplayQueueConfig<P, queue::FqCoDelQueue<P>>),
     DualPI2(BwReplayQueueConfig<P, queue::DualPI2Queue<P>>),
     PIE(BwReplayQueueConfig<P, queue::PIEQueue<P>>),
 }
@@ -230,6 +233,7 @@ impl_bw_replay_device_into_factory!(
     DropTailQueue,
     DropHeadQueue,
     CoDelQueue,
+    FqCoDelQueue,
     DualPI2Queue,
     PIEQueue
 );

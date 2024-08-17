@@ -3,9 +3,13 @@ use etherparse::Ipv4Ecn;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use siphasher::sip::SipHasher13;
 use std::fmt::Debug;
-use tokio::time::{Duration, Instant};
+use std::{collections::VecDeque, sync::Arc};
+use tokio::{
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 use tracing::{debug, trace};
 
 use super::BwType;
@@ -558,6 +562,504 @@ where
                 trace!("Exit dropping state since queue is empty");
                 None
             }
+        }
+    }
+}
+
+// FQ-CoDel Queue Implementation Reference: Linux kernel implementation
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(default))]
+#[derive(Debug, Clone)]
+pub struct FqCoDelQueueConfig {
+    pub packet_limit: Option<usize>,
+    pub byte_limit: Option<usize>,
+    pub mtu: u32,
+
+    pub flows_cnt: u32, // Number of flows (default: 1024)
+    pub quantum: i32,   // quantuam used for dequeue (default: mtu size)
+
+    #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
+    pub interval: Duration, // width of moving time window
+    #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
+    pub target: Duration, // target queue delay
+    pub use_ecn: bool,
+
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "serde_default")
+    )]
+    pub bw_type: BwType,
+}
+
+impl Default for FqCoDelQueueConfig {
+    fn default() -> Self {
+        Self {
+            packet_limit: None,
+            byte_limit: None,
+            mtu: 1500,
+            flows_cnt: 1024,
+            quantum: 1500,
+            interval: Duration::from_millis(100),
+            target: Duration::from_millis(5),
+            use_ecn: true,
+            bw_type: BwType::default(),
+        }
+    }
+}
+
+impl FqCoDelQueueConfig {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
+        packet_limit: A,
+        byte_limit: B,
+        mtu: u32,
+        flows_cnt: u32,
+        quantum: i32,
+        interval: Duration,
+        target: Duration,
+        use_ecn: bool,
+        bw_type: BwType,
+    ) -> Self {
+        Self {
+            packet_limit: packet_limit.into(),
+            byte_limit: byte_limit.into(),
+            mtu,
+            flows_cnt,
+            quantum,
+            interval,
+            target,
+            use_ecn,
+            bw_type,
+        }
+    }
+}
+
+struct FqCoDelFlowTuple {
+    content: [u8; 13],
+}
+
+impl FqCoDelFlowTuple {
+    const SOURCE_IP: usize = 0;
+    const DESTINATION_IP: usize = 4;
+    const SOURCE_PORT: usize = 8;
+    const DESTINATION_PORT: usize = 10;
+    const PROTOCOL: usize = 12;
+    fn new(packet: &impl Packet) -> Self {
+        let mut temp = Self { content: [0; 13] };
+        let header = match packet.ip_hdr() {
+            Some(hdr) => hdr,
+            None => return temp,
+        };
+
+        let ether_header_length: u8 = match packet.ether_hdr() {
+            Some(_) => 14,
+            None => 0,
+        };
+
+        let ip_hdr_length = header.ihl() * 4; // Length in bytes
+        let tcp_start_idx = ether_header_length + ip_hdr_length;
+        let raw_packet = packet.as_slice();
+
+        temp.content[Self::SOURCE_IP..Self::SOURCE_IP + 4].copy_from_slice(&header.source);
+        temp.content[Self::DESTINATION_IP..Self::DESTINATION_IP + 4]
+            .copy_from_slice(&header.destination);
+
+        temp.content[Self::SOURCE_PORT..Self::SOURCE_PORT + 2]
+            .copy_from_slice(&raw_packet[tcp_start_idx as usize..tcp_start_idx as usize + 2]);
+        temp.content[Self::DESTINATION_PORT..Self::DESTINATION_PORT + 2]
+            .copy_from_slice(&raw_packet[tcp_start_idx as usize + 2..tcp_start_idx as usize + 4]);
+
+        temp.content[Self::PROTOCOL] = 4;
+        temp
+    }
+
+    fn into_bytes(self) -> [u8; 13] {
+        self.content
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FqCoDelControlBuffer<P>
+where
+    P: Packet,
+{
+    ect: Ipv4Ecn,
+    packet: P,
+}
+
+impl<P> FqCoDelControlBuffer<P>
+where
+    P: Packet,
+{
+    fn new(packet: P) -> Self {
+        Self {
+            ect: Self::classify(&packet),
+            packet,
+        }
+    }
+
+    fn classify(packet: &P) -> Ipv4Ecn {
+        let ip_header = match packet.ip_hdr() {
+            Some(header) => header,
+            None => return Ipv4Ecn::ZERO,
+        };
+
+        ip_header.ecn
+    }
+
+    fn set_ce(&mut self) -> bool {
+        let mut ip_hdr_idx = 0;
+        if self.packet.ether_hdr().is_some() {
+            ip_hdr_idx += 14;
+        }
+
+        if self.packet.ip_hdr().is_none() {
+            return false; // No ip header, cannot change.
+        }
+
+        let tos_idx = ip_hdr_idx + 1;
+        let check_idx = ip_hdr_idx + 10;
+
+        let packet_buffer = self.packet.as_raw_buffer();
+        let tos = &mut packet_buffer[tos_idx];
+
+        let ecn = (*tos + 1) & Ipv4Ecn::TRHEE.value();
+        /*
+         * After the last operation we have (in binary):
+         * INET_ECN_NOT_ECT => 01
+         * INET_ECN_ECT_1   => 10
+         * INET_ECN_ECT_0   => 11
+         * INET_ECN_CE      => 00
+         */
+        if (ecn & 2) == 0 {
+            return ecn == 0;
+        }
+
+        /*
+         * The following gives us:
+         * INET_ECN_ECT_1 => check += htons(0xFFFD)
+         * INET_ECN_ECT_0 => check += htons(0xFFFE)
+         */
+
+        let tos = &mut packet_buffer[tos_idx];
+        *tos |= Ipv4Ecn::TRHEE.value();
+
+        // Now we calculate the new checksum
+        let check_add: u16 = 0xFFFB + ecn as u16;
+
+        let check_before =
+            u16::from_be_bytes([packet_buffer[check_idx], packet_buffer[check_idx + 1]]);
+
+        let mut check_after = check_before + check_add;
+        if check_after < check_add {
+            check_after += 1;
+        }
+
+        let check_after = check_after.to_be_bytes();
+        packet_buffer[check_idx..check_idx + 2].copy_from_slice(&check_after);
+        self.ect = Ipv4Ecn::TRHEE;
+        true
+    }
+}
+
+// This is essentially a CoDel queue.
+#[derive(Clone, Debug)]
+struct FqCoDelFlow<P>
+where
+    P: Packet,
+{
+    queue: VecDeque<FqCoDelControlBuffer<P>>,
+    bytes_in_flow: usize,
+    packets_in_flow: usize,
+    deficit: i32,
+    dropping: bool,
+    ldelay: Duration,
+    first_above_time: Option<Instant>,
+    drop_next: Instant,
+    count: u32,
+    last_count: u32,
+}
+
+impl<P> FqCoDelFlow<P>
+where
+    P: Packet,
+{
+    fn new() -> Self {
+        Self {
+            queue: VecDeque::new(),
+            bytes_in_flow: 0,
+            packets_in_flow: 0,
+            deficit: 0,
+            dropping: false,
+            ldelay: Duration::ZERO,
+            first_above_time: None,
+            drop_next: Instant::now(),
+            count: 0,
+            last_count: 0,
+        }
+    }
+
+    fn should_drop(
+        &mut self,
+        packet: &FqCoDelControlBuffer<P>,
+        config: &FqCoDelQueueConfig,
+    ) -> bool {
+        self.ldelay = Instant::now() - packet.packet.get_timestamp();
+        if self.ldelay < config.target || self.bytes_in_flow <= config.mtu as usize {
+            self.first_above_time = None;
+            return false;
+        }
+
+        match self.first_above_time {
+            Some(first_above_time) => first_above_time.elapsed() >= Duration::ZERO,
+            None => {
+                self.first_above_time = Some(Instant::now() + config.interval);
+                false
+            }
+        }
+    }
+
+    fn control_law(&self, t: Instant, interval: &Duration) -> Instant {
+        t + interval.div_f64(f64::sqrt(self.count as f64))
+    }
+
+    /// Returns whether this flow should be considered a new flow after enqueue
+    /// (whether the queue was empty before this enqueue action)
+    fn enqueue(&mut self, packet: FqCoDelControlBuffer<P>) -> bool {
+        let is_empty = self.queue.is_empty();
+        self.bytes_in_flow += packet.packet.l3_length();
+        self.packets_in_flow += 1;
+        self.queue.push_back(packet);
+
+        is_empty
+    }
+
+    /// Returns a result, the reduced bytes and the reduced packets
+    fn dequeue(
+        &mut self,
+        byte_count: &mut usize,
+        packet_count: &mut usize,
+        config: &FqCoDelQueueConfig,
+    ) -> Option<FqCoDelControlBuffer<P>> {
+        let mut packet = match self.queue.pop_front() {
+            Some(pkt) => {
+                self.bytes_in_flow -= pkt.packet.l3_length();
+                self.packets_in_flow -= 1;
+                *byte_count -= pkt.packet.l3_length();
+                *packet_count -= 1;
+                pkt
+            }
+            None => {
+                self.dropping = false;
+                return None;
+            }
+        };
+
+        let now = Instant::now();
+        let drop = self.should_drop(&packet, config);
+
+        if self.dropping {
+            if drop {
+                /* sojourn time below target - leave dropping state */
+                self.dropping = false;
+            } else {
+                while self.dropping && now >= self.drop_next {
+                    self.count += 1;
+                    if config.use_ecn && packet.ect != Ipv4Ecn::ZERO {
+                        self.drop_next = self.control_law(self.drop_next, &config.interval);
+                        packet.set_ce();
+                        break;
+                    }
+
+                    packet = match self.queue.pop_front() {
+                        Some(pkt) => {
+                            self.bytes_in_flow -= pkt.packet.l3_length();
+                            self.packets_in_flow -= 1;
+                            *byte_count -= pkt.packet.l3_length();
+                            *packet_count -= 1;
+                            pkt
+                        }
+                        None => {
+                            self.dropping = false;
+                            return None;
+                        }
+                    };
+
+                    if self.should_drop(&packet, config) {
+                        self.drop_next = self.control_law(self.drop_next, &config.interval);
+                    } else {
+                        self.dropping = false;
+                    }
+                }
+            }
+        } else if drop {
+            if config.use_ecn && packet.ect != Ipv4Ecn::ZERO {
+                packet.set_ce();
+            } else {
+                packet = match self.queue.pop_front() {
+                    Some(pkt) => {
+                        self.bytes_in_flow -= pkt.packet.l3_length();
+                        self.packets_in_flow -= 1;
+                        *byte_count -= pkt.packet.l3_length();
+                        *packet_count -= 1;
+                        pkt
+                    }
+                    None => {
+                        self.dropping = false;
+                        return None;
+                    }
+                };
+
+                // This is for status update
+                let _should_drop = self.should_drop(&packet, config);
+            }
+
+            self.dropping = true;
+            let delta = self.count - self.last_count;
+
+            if delta > 1 && now - self.drop_next < 16 * config.interval {
+                self.count = delta;
+            } else {
+                self.count = 1;
+            }
+
+            self.last_count = self.count;
+            self.drop_next = self.control_law(now, &config.interval);
+        }
+
+        Some(packet)
+    }
+}
+#[derive(Debug)]
+pub struct FqCoDelQueue<P>
+where
+    P: Packet,
+{
+    config: FqCoDelQueueConfig,
+    flows: Vec<Arc<Mutex<Box<FqCoDelFlow<P>>>>>,
+    new_flows: VecDeque<Arc<Mutex<Box<FqCoDelFlow<P>>>>>,
+    old_flows: VecDeque<Arc<Mutex<Box<FqCoDelFlow<P>>>>>,
+    bytes_in_queue: usize,
+    packets_in_queue: usize,
+
+    hasher: SipHasher13,
+}
+
+impl<P> FqCoDelQueue<P>
+where
+    P: Packet,
+{
+    pub fn new(config: FqCoDelQueueConfig) -> Self {
+        let mut rng = StdRng::seed_from_u64(42);
+        let flows: Vec<Arc<Mutex<Box<FqCoDelFlow<_>>>>> = (0..config.flows_cnt)
+            .map(|_| Arc::new(Mutex::new(Box::new(FqCoDelFlow::<P>::new()))))
+            .collect();
+
+        Self {
+            config,
+            flows,
+            new_flows: VecDeque::new(),
+            old_flows: VecDeque::new(),
+            bytes_in_queue: 0,
+            packets_in_queue: 0,
+
+            hasher: SipHasher13::new_with_key(
+                &(((rng.next_u64() as u128) << 64) + rng.next_u64() as u128).to_le_bytes(),
+            ),
+        }
+    }
+}
+
+impl<P> PacketQueue<P> for FqCoDelQueue<P>
+where
+    P: Packet,
+{
+    type Config = FqCoDelQueueConfig;
+
+    fn configure(&mut self, config: Self::Config) {
+        self.config = config;
+    }
+
+    fn enqueue(&mut self, packet: P) {
+        if self
+            .config
+            .packet_limit
+            .map_or(false, |limit| self.packets_in_queue >= limit)
+            || self.config.byte_limit.map_or(false, |limit| {
+                self.bytes_in_queue + packet.l3_length() + self.config.bw_type.extra_length()
+                    > limit
+            })
+        {
+            // Over limit, can only drop
+            // Drop the packet
+            return;
+        }
+
+        let flow_tuple = FqCoDelFlowTuple::new(&packet);
+        let tuple_bytes = flow_tuple.into_bytes();
+        let hash = self.hasher.hash(&tuple_bytes);
+        let idx = ((hash * self.config.flows_cnt as u64) >> 32) as u32;
+
+        let mut control_buff = FqCoDelControlBuffer::new(packet);
+        control_buff.packet.set_timestamp(Instant::now());
+
+        let mut flow = self.flows[idx as usize].blocking_lock();
+
+        self.bytes_in_queue += control_buff.packet.l3_length() + self.config.bw_type.extra_length();
+        self.packets_in_queue += 1;
+        let is_new = (*flow).enqueue(control_buff);
+        if is_new {
+            flow.deficit = self.config.quantum;
+            self.new_flows.push_back(self.flows[idx as usize].clone());
+        }
+    }
+
+    fn dequeue(&mut self) -> Option<P> {
+        loop {
+            let (flow_arc, from_new) = match self.new_flows.pop_front() {
+                Some(flow) => (flow, true),
+                None => match self.old_flows.pop_front() {
+                    Some(flow) => (flow, false),
+                    None => return None,
+                },
+            };
+
+            let mut flow = flow_arc.blocking_lock();
+            if flow.deficit <= 0 {
+                flow.deficit += self.config.quantum;
+                drop(flow);
+                self.old_flows.push_back(flow_arc);
+                continue;
+            }
+
+            let dequeued_packet = match flow.dequeue(
+                &mut self.bytes_in_queue,
+                &mut self.packets_in_queue,
+                &self.config,
+            ) {
+                Some(pkt) => {
+                    flow.deficit -= pkt.packet.l3_length() as i32;
+                    pkt
+                }
+                None => {
+                    if from_new && !self.old_flows.is_empty() {
+                        // Prevent the starvation of old queues
+                        drop(flow);
+                        self.old_flows.push_back(flow_arc);
+                    }
+                    // Is there is also no flow in old flows, simply drop this flow
+                    continue;
+                }
+            };
+            drop(flow);
+            /* The c code is actually peeking the old/new flow queue. If we got
+             * here, we have to put it back to the front of what it belongs
+             */
+            if from_new {
+                self.new_flows.push_front(flow_arc);
+            } else {
+                self.old_flows.push_front(flow_arc);
+            }
+            return Some(dequeued_packet.packet);
         }
     }
 }
@@ -1550,8 +2052,8 @@ where
 
             if self.avg_dq_rate > 0 {
                 qdelay = Duration::from_nanos(
-                    (((self.bytes_in_q << PIEQueueConfig::PIE_SCALE) / self.avg_dq_rate as usize) << 6)
-                        as u64,
+                    (((self.bytes_in_q << PIEQueueConfig::PIE_SCALE) / self.avg_dq_rate as usize)
+                        << 6) as u64,
                 );
             } else {
                 qdelay = Duration::ZERO;
@@ -1599,7 +2101,9 @@ where
         delta += beta as i64 * ((qdelay.as_nanos() as i64 - qdelay_old.as_nanos() as i64) >> 6);
 
         /* to ensure we increase probability in steps of no more than 2% */
-        if (delta > (PIEQueueConfig::MAX_PROB / (100 / 2)) as i64) && self.prob >= PIEQueueConfig::MAX_PROB / 10 {
+        if (delta > (PIEQueueConfig::MAX_PROB / (100 / 2)) as i64)
+            && self.prob >= PIEQueueConfig::MAX_PROB / 10
+        {
             delta = ((PIEQueueConfig::MAX_PROB / 100) * 2) as i64;
         }
 

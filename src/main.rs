@@ -21,7 +21,7 @@ use rattan_core::config::{
 };
 use rattan_core::devices::bandwidth::queue::{
     CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, DualPI2QueueConfig,
-    InfiniteQueueConfig, PIEQueueConfig
+    FqCoDelQueueConfig, InfiniteQueueConfig, PIEQueueConfig,
 };
 use rattan_core::devices::bandwidth::BwDeviceConfig;
 use rattan_core::devices::StdPacket;
@@ -207,6 +207,7 @@ enum QueueType {
     DropTail,
     DropHead,
     CoDel,
+    FqCoDel,
     DualPI2,
     Pie,
 }
@@ -424,6 +425,13 @@ fn main() -> ExitCode {
                         Some(QueueType::CoDel) => {
                             bw_q_args_into_config!(CoDel, opts.uplink_queue_args.clone(), bandwidth)
                         }
+                        Some(QueueType::FqCoDel) => {
+                            bw_q_args_into_config!(
+                                FqCoDel,
+                                opts.uplink_queue_args.clone(),
+                                bandwidth
+                            )
+                        }
                         Some(QueueType::DualPI2) => {
                             bw_q_args_into_config!(
                                 DualPI2,
@@ -432,11 +440,7 @@ fn main() -> ExitCode {
                             )
                         }
                         Some(QueueType::Pie) => {
-                            bw_q_args_into_config!(
-                                PIE,
-                                opts.uplink_queue_args.clone(),
-                                bandwidth
-                            )
+                            bw_q_args_into_config!(PIE, opts.uplink_queue_args.clone(), bandwidth)
                         }
                     };
                     uplink_count += 1;
@@ -467,6 +471,13 @@ fn main() -> ExitCode {
                         Some(QueueType::CoDel) => {
                             bwreplay_q_args_into_config!(
                                 CoDel,
+                                opts.uplink_queue_args.clone(),
+                                trace_file
+                            )
+                        }
+                        Some(QueueType::FqCoDel) => {
+                            bwreplay_q_args_into_config!(
+                                FqCoDel,
                                 opts.uplink_queue_args.clone(),
                                 trace_file
                             )
@@ -518,6 +529,13 @@ fn main() -> ExitCode {
                                 bandwidth
                             )
                         }
+                        Some(QueueType::FqCoDel) => {
+                            bw_q_args_into_config!(
+                                FqCoDel,
+                                opts.downlink_queue_args.clone(),
+                                bandwidth
+                            )
+                        }
                         Some(QueueType::DualPI2) => {
                             bw_q_args_into_config!(
                                 DualPI2,
@@ -526,11 +544,7 @@ fn main() -> ExitCode {
                             )
                         }
                         Some(QueueType::Pie) => {
-                            bw_q_args_into_config!(
-                                PIE,
-                                opts.downlink_queue_args.clone(),
-                                bandwidth
-                            )
+                            bw_q_args_into_config!(PIE, opts.downlink_queue_args.clone(), bandwidth)
                         }
                     };
                     downlink_count += 1;
@@ -561,6 +575,13 @@ fn main() -> ExitCode {
                         Some(QueueType::CoDel) => {
                             bwreplay_q_args_into_config!(
                                 CoDel,
+                                opts.downlink_queue_args.clone(),
+                                trace_file
+                            )
+                        }
+                        Some(QueueType::FqCoDel) => {
+                            bwreplay_q_args_into_config!(
+                                FqCoDel,
                                 opts.downlink_queue_args.clone(),
                                 trace_file
                             )
