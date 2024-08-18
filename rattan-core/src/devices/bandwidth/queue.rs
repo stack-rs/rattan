@@ -1,6 +1,7 @@
 use crate::devices::Packet;
 use etherparse::Ipv4Ecn;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
+use serde::de;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use siphasher::sip::SipHasher13;
@@ -582,6 +583,7 @@ pub struct FqCoDelQueueConfig {
     #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
     pub target: Duration, // target queue delay
     pub use_ecn: bool,
+    pub drop_batch_size: u32, // Max number of packets to drop when queue is full
 
     #[cfg_attr(
         feature = "serde",
@@ -601,6 +603,7 @@ impl Default for FqCoDelQueueConfig {
             interval: Duration::from_millis(100),
             target: Duration::from_millis(5),
             use_ecn: true,
+            drop_batch_size: 64,
             bw_type: BwType::default(),
         }
     }
@@ -617,6 +620,7 @@ impl FqCoDelQueueConfig {
         interval: Duration,
         target: Duration,
         use_ecn: bool,
+        drop_batch_size: u32,
         bw_type: BwType,
     ) -> Self {
         Self {
@@ -628,6 +632,7 @@ impl FqCoDelQueueConfig {
             interval,
             target,
             use_ecn,
+            drop_batch_size,
             bw_type,
         }
     }
@@ -822,6 +827,26 @@ where
         t + interval.div_f64(f64::sqrt(self.count as f64))
     }
 
+    // Return dequeued packet and dequeued byte
+    fn dequeue_from_head(&mut self, packet_count: usize, bytes_count: usize) -> (usize, usize) {
+        let mut count = 0;
+        let mut byte = 0;
+        while count < packet_count || byte < bytes_count {
+            let packet = match self.queue.pop_front() {
+                Some(pkt) => pkt,
+                None => break,
+            };
+
+            byte += packet.packet.l3_length();
+            count += 1;
+        }
+
+        self.bytes_in_flow -= byte;
+        self.packets_in_flow -= count;
+        self.count += count as u32;
+        (count, byte)
+    }
+
     /// Returns whether this flow should be considered a new flow after enqueue
     /// (whether the queue was empty before this enqueue action)
     fn enqueue(&mut self, packet: FqCoDelControlBuffer<P>) -> bool {
@@ -833,7 +858,6 @@ where
         is_empty
     }
 
-    /// Returns a result, the reduced bytes and the reduced packets
     fn dequeue(
         &mut self,
         byte_count: &mut usize,
@@ -967,6 +991,28 @@ where
             ),
         }
     }
+
+    fn fq_codel_drop(&mut self) {
+        let mut max_backlog = 0;
+        let mut idx = 0;
+        for i in 0..self.config.flows_cnt as usize {
+            let flow = self.flows[i].blocking_lock();
+            if flow.bytes_in_flow > max_backlog {
+                max_backlog = flow.bytes_in_flow;
+                idx = i;
+            }
+        }
+
+        /* Our goal is to drop half of this fat flow backlog */
+        let threshold = max_backlog >> 1;
+
+        let mut flow = self.flows[idx].blocking_lock();
+        let (dequeued_count, dequeued_byte) =
+            flow.dequeue_from_head(self.config.drop_batch_size as usize, threshold);
+
+        self.bytes_in_queue -= dequeued_byte;
+        self.packets_in_queue -= dequeued_count;
+    }
 }
 
 impl<P> PacketQueue<P> for FqCoDelQueue<P>
@@ -989,8 +1035,8 @@ where
                     > limit
             })
         {
-            // Over limit, can only drop
-            // Drop the packet
+            // Over limit
+            self.fq_codel_drop();
             return;
         }
 
