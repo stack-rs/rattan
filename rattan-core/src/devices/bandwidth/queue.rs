@@ -1,16 +1,13 @@
 use crate::devices::Packet;
 use etherparse::Ipv4Ecn;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
-use serde::de;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use siphasher::sip::SipHasher13;
+use std::borrow::BorrowMut;
+use std::collections::VecDeque;
 use std::fmt::Debug;
-use std::{collections::VecDeque, sync::Arc};
-use tokio::{
-    sync::Mutex,
-    time::{Duration, Instant},
-};
+use tokio::time::{Duration, Instant};
 use tracing::{debug, trace};
 
 use super::BwType;
@@ -767,7 +764,7 @@ where
 }
 
 // This is essentially a CoDel queue.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct FqCoDelFlow<P>
 where
     P: Packet,
@@ -959,9 +956,9 @@ where
     P: Packet,
 {
     config: FqCoDelQueueConfig,
-    flows: Vec<Arc<Mutex<Box<FqCoDelFlow<P>>>>>,
-    new_flows: VecDeque<Arc<Mutex<Box<FqCoDelFlow<P>>>>>,
-    old_flows: VecDeque<Arc<Mutex<Box<FqCoDelFlow<P>>>>>,
+    flows: Vec<FqCoDelFlow<P>>,
+    new_flows: VecDeque<u32>, // The index of new flows
+    old_flows: VecDeque<u32>, // The index of old flows
     bytes_in_queue: usize,
     packets_in_queue: usize,
 
@@ -974,8 +971,8 @@ where
 {
     pub fn new(config: FqCoDelQueueConfig) -> Self {
         let mut rng = StdRng::seed_from_u64(42);
-        let flows: Vec<Arc<Mutex<Box<FqCoDelFlow<_>>>>> = (0..config.flows_cnt)
-            .map(|_| Arc::new(Mutex::new(Box::new(FqCoDelFlow::<P>::new()))))
+        let flows: Vec<FqCoDelFlow<_>> = (0..config.flows_cnt)
+            .map(|_| FqCoDelFlow::<P>::new())
             .collect();
 
         Self {
@@ -996,9 +993,8 @@ where
         let mut max_backlog = 0;
         let mut idx = 0;
         for i in 0..self.config.flows_cnt as usize {
-            let flow = self.flows[i].blocking_lock();
-            if flow.bytes_in_flow > max_backlog {
-                max_backlog = flow.bytes_in_flow;
+            if self.flows[i].bytes_in_flow > max_backlog {
+                max_backlog = self.flows[i].bytes_in_flow;
                 idx = i;
             }
         }
@@ -1006,9 +1002,9 @@ where
         /* Our goal is to drop half of this fat flow backlog */
         let threshold = max_backlog >> 1;
 
-        let mut flow = self.flows[idx].blocking_lock();
+        // let mut flow = self.flows[idx].blocking_lock();
         let (dequeued_count, dequeued_byte) =
-            flow.dequeue_from_head(self.config.drop_batch_size as usize, threshold);
+            self.flows[idx].dequeue_from_head(self.config.drop_batch_size as usize, threshold);
 
         self.bytes_in_queue -= dequeued_byte;
         self.packets_in_queue -= dequeued_count;
@@ -1042,38 +1038,35 @@ where
 
         let flow_tuple = FqCoDelFlowTuple::new(&packet);
         let tuple_bytes = flow_tuple.into_bytes();
-        let hash = self.hasher.hash(&tuple_bytes);
-        let idx = ((hash * self.config.flows_cnt as u64) >> 32) as u32;
+        let hash = self.hasher.hash(&tuple_bytes) as u32;
+        let idx = ((hash as u64 * self.config.flows_cnt as u64) >> 32) as u32;
 
         let mut control_buff = FqCoDelControlBuffer::new(packet);
         control_buff.packet.set_timestamp(Instant::now());
 
-        let mut flow = self.flows[idx as usize].blocking_lock();
-
         self.bytes_in_queue += control_buff.packet.l3_length() + self.config.bw_type.extra_length();
         self.packets_in_queue += 1;
-        let is_new = (*flow).enqueue(control_buff);
+        let is_new = self.flows[idx as usize].enqueue(control_buff);
         if is_new {
-            flow.deficit = self.config.quantum;
-            self.new_flows.push_back(self.flows[idx as usize].clone());
+            self.flows[idx as usize].deficit = self.config.quantum;
+            self.new_flows.push_back(idx);
         }
     }
 
     fn dequeue(&mut self) -> Option<P> {
         loop {
-            let (flow_arc, from_new) = match self.new_flows.pop_front() {
-                Some(flow) => (flow, true),
+            let (flow_idx, from_new) = match self.new_flows.pop_front() {
+                Some(idx) => (idx, true),
                 None => match self.old_flows.pop_front() {
-                    Some(flow) => (flow, false),
+                    Some(idx) => (idx, false),
                     None => return None,
                 },
             };
 
-            let mut flow = flow_arc.blocking_lock();
+            let flow = self.flows[flow_idx as usize].borrow_mut();
             if flow.deficit <= 0 {
                 flow.deficit += self.config.quantum;
-                drop(flow);
-                self.old_flows.push_back(flow_arc);
+                self.old_flows.push_back(flow_idx);
                 continue;
             }
 
@@ -1089,21 +1082,19 @@ where
                 None => {
                     if from_new && !self.old_flows.is_empty() {
                         // Prevent the starvation of old queues
-                        drop(flow);
-                        self.old_flows.push_back(flow_arc);
+                        self.old_flows.push_back(flow_idx);
                     }
                     // Is there is also no flow in old flows, simply drop this flow
                     continue;
                 }
             };
-            drop(flow);
             /* The c code is actually peeking the old/new flow queue. If we got
              * here, we have to put it back to the front of what it belongs
              */
             if from_new {
-                self.new_flows.push_front(flow_arc);
+                self.new_flows.push_front(flow_idx);
             } else {
-                self.old_flows.push_front(flow_arc);
+                self.old_flows.push_front(flow_idx);
             }
             return Some(dequeued_packet.packet);
         }
