@@ -33,7 +33,6 @@ use rattan_core::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
-use tracing_subscriber::filter::{self, FilterFn};
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -129,14 +128,14 @@ pub struct Arguments {
     #[arg(long, global = true, value_name = "JSON", requires = "downlink-queue")]
     downlink_queue_args: Option<String>,
 
-    /// Enable packet logging
+    /// Enable logging to file
     #[arg(long)]
-    packet_log: bool,
-    // This "requires" field uses an underscore '_' instead of a dash '-' since "packet_log" is a
+    file_log: bool,
+    // This "requires" field uses an underscore '_' instead of a dash '-' since "file_log" is a
     // field name instead of a group name
-    /// Packet log path, default to $CACHE_DIR/rattan/packet.log
-    #[arg(long, value_name = "Log File", requires = "packet_log")]
-    packet_log_path: Option<String>,
+    /// File log path, default to $CACHE_DIR/rattan/core.log
+    #[arg(long, value_name = "Log File", requires = "file_log")]
+    file_log_path: Option<String>,
 
     /// Command to run in left ns. Only used when in isolated mode
     #[arg(long = "left", num_args = 0..)]
@@ -283,19 +282,13 @@ fn main() -> ExitCode {
     // }
 
     // Install Tracing Subscriber
-    let subscriber = tracing_subscriber::registry().with(
-        tracing_subscriber::fmt::layer()
-            .with_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| "warn".into()),
-            )
-            .with_filter(filter::filter_fn(|metadata| {
-                !metadata.target().ends_with("packet")
-            })),
-    );
-    let _guard: Option<_> = if opts.packet_log {
+    let subscriber =
+        tracing_subscriber::registry().with(tracing_subscriber::fmt::layer().with_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
+        ));
+    let _guard: Option<_> = if opts.file_log {
         if let Some((log_dir, file_name)) = opts
-            .packet_log_path
+            .file_log_path
             .and_then(|path| {
                 let path = std::path::PathBuf::from(path);
                 let file_name = path.file_name().and_then(|f| f.to_str());
@@ -311,7 +304,7 @@ fn main() -> ExitCode {
                         p.push("rattan");
                         p
                     })
-                    .map(|log_dir| (log_dir, "packet.log".to_string()))
+                    .map(|log_dir| (log_dir, "core.log".to_string()))
             })
         {
             if let Err(e) = std::fs::create_dir_all(&log_dir) {
@@ -331,17 +324,12 @@ fn main() -> ExitCode {
             };
             // let file_logger = tracing_appender::rolling::daily(log_dir, file_name_prefix);
             let (non_blocking, guard) = tracing_appender::non_blocking(file_logger);
-            let file_log_filter = FilterFn::new(|metadata| {
-                // Only enable spans or events with the target "interesting_things"
-                metadata.target().ends_with("::packet_log")
-            });
-            let env_filter = tracing_subscriber::EnvFilter::try_from_env("RATTAN_PACKET_LOG")
-                .unwrap_or_else(|_| "trace".into());
+            let env_filter = tracing_subscriber::EnvFilter::try_from_env("RATTAN_LOG")
+                .unwrap_or_else(|_| "info".into());
             subscriber
                 .with(
                     tracing_subscriber::fmt::layer()
                         .with_writer(non_blocking)
-                        .with_filter(file_log_filter)
                         .with_filter(env_filter),
                 )
                 .init();
@@ -683,7 +671,7 @@ fn main() -> ExitCode {
                         client_handle.args(arguments);
                     } else {
                         client_handle.arg(opts.shell.shell().as_ref());
-                        if matches!(opts.shell, TaskShell::Bash) {
+                        if opts.shell.shell().ends_with("/bash") {
                             client_handle
                                 .env("PROMPT_COMMAND", "PS1=\"[rattan] $PS1\" PROMPT_COMMAND=");
                         }
