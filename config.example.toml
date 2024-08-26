@@ -39,6 +39,18 @@
 #
 
 
+# ----- General Section -----
+# This section determines how to build the rattan itself in general.
+[general]
+
+# Configure the path to store compressed packet log.
+# This logging feature will only be enabled when the `packet_log` field is specified.
+# The meta data of flows will be stored in the file of name `packet_log`.flows
+# packet_log = "./example.log"
+
+# ----- General Section End -----
+
+
 # ----- Environment Section -----
 # This section determines how to build the environment.
 [env]

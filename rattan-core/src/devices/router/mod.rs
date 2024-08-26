@@ -1,6 +1,7 @@
 use crate::error::{Error, RoutingTableError};
 use async_trait::async_trait;
 use ipnet::IpNet;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::{
     net::{IpAddr, Ipv4Addr},

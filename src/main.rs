@@ -14,15 +14,18 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
 use paste::paste;
-use rattan_core::devices::bandwidth::queue::{
-    CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
-};
 use rattan_core::devices::bandwidth::BwDeviceConfig;
 use rattan_core::devices::StdPacket;
 use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::netem_trace::{Bandwidth, Delay};
 use rattan_core::radix::RattanRadix;
+use rattan_core::{
+    config::RattanGeneralConfig,
+    devices::bandwidth::queue::{
+        CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
+    },
+};
 use rattan_core::{
     config::{
         BwDeviceBuildConfig, BwReplayDeviceBuildConfig, BwReplayQueueConfig,
@@ -587,6 +590,7 @@ fn main() -> ExitCode {
                         memory: None,
                         cpu: Some(vec![2]),
                     },
+                    general: RattanGeneralConfig::new(),
                 }
             }
         };

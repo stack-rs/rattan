@@ -7,16 +7,76 @@ use crate::{
         io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender},
         veth::VethDevice,
     },
+    radix::{
+        log::{PktAction, TCPLogEntry},
+        RattanLogOp, LOGGING_TX,
+    },
 };
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    sync::{atomic::AtomicU32, Arc},
+};
 
 use async_trait::async_trait;
+use bitfield::{BitRange, BitRangeMut};
+use parking_lot::RwLock;
 #[cfg(feature = "serde")]
 use serde::Deserialize;
-use tokio::io::unix::AsyncFd;
+use tokio::{io::unix::AsyncFd, sync::mpsc::UnboundedSender};
 use tracing::{debug, error, instrument};
 
-use super::{ControlInterface, Egress, Ingress};
+use super::{ControlInterface, Egress, FlowDesc, Ingress};
+
+#[derive(Debug, Clone, Copy)]
+#[repr(transparent)]
+pub struct VirtualEthernetId(u16);
+
+impl VirtualEthernetId {
+    pub fn new() -> Self {
+        Self(0)
+    }
+
+    pub fn set_ns_id(&mut self, ns_id: u8) {
+        self.0.set_bit_range(15, 8, ns_id);
+    }
+
+    pub fn set_ns_id_copied(&mut self, ns_id: u8) -> Self {
+        let mut new = *self;
+        new.set_ns_id(ns_id);
+        new
+    }
+
+    pub fn get_ns_id(&self) -> u8 {
+        self.0.bit_range(15, 8)
+    }
+
+    pub fn set_veth_id(&mut self, id: u8) {
+        self.0.set_bit_range(7, 0, id);
+    }
+
+    pub fn set_veth_id_copied(&mut self, id: u8) -> Self {
+        let mut new = *self;
+        new.set_veth_id(id);
+        new
+    }
+
+    pub fn get_veth_id(&self) -> u8 {
+        self.0.bit_range(7, 0)
+    }
+}
+
+impl Default for VirtualEthernetId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Display for VirtualEthernetId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ns{}-veth{}", self.get_ns_id(), self.get_veth_id())
+    }
+}
 
 pub struct VirtualEthernetIngress<D>
 where
@@ -25,7 +85,9 @@ where
     D::Sender: Send + Sync,
 {
     sender: tokio::sync::mpsc::Sender<D::Packet>,
-    id: Arc<String>,
+    id: VirtualEthernetId,
+    log_tx: Option<UnboundedSender<RattanLogOp>>,
+    base_ts: i64,
 }
 
 impl<D> VirtualEthernetIngress<D>
@@ -34,7 +96,12 @@ where
     D::Packet: Packet + Send + Sync,
     D::Sender: Send + Sync,
 {
-    pub fn new(dev_sender: Vec<Arc<D::Sender>>, id: Arc<String>) -> Self {
+    pub fn new(
+        dev_sender: Vec<Arc<D::Sender>>,
+        id: VirtualEthernetId,
+        log_tx: Option<UnboundedSender<RattanLogOp>>,
+        base_ts: i64,
+    ) -> Self {
         let mut senders: Vec<tokio::sync::mpsc::Sender<D::Packet>> = vec![];
         let (dev_tx, dev_rx) = tokio::sync::mpsc::channel(1024);
 
@@ -45,7 +112,12 @@ where
         }
 
         tokio::spawn(Self::demux(dev_rx, senders.clone()));
-        Self { sender: dev_tx, id }
+        Self {
+            sender: dev_tx,
+            id,
+            log_tx,
+            base_ts,
+        }
     }
 
     async fn demux(
@@ -79,7 +151,9 @@ where
     fn clone(&self) -> Self {
         Self {
             sender: self.sender.clone(),
-            id: self.id.clone(),
+            id: self.id,
+            log_tx: self.log_tx.clone(),
+            base_ts: self.base_ts,
         }
     }
 }
@@ -91,12 +165,49 @@ where
     D::Sender: Send + Sync,
 {
     fn enqueue(&self, packet: D::Packet) -> Result<(), Error> {
-        let ts = get_clock_ns();
-        tracing::trace!(target: "veth::ingress::packet_log", "At {} veth {} send pkt len {} desc {}", ts, self.id, packet.length(), packet.desc());
+        log_packet(&self.log_tx, &packet, PktAction::Send, self.base_ts);
         Ok(self
             .sender
             .try_send(packet)
             .map_err(|e| TokioRuntimeError::MpscError(e.to_string()))?)
+    }
+}
+
+struct FlowMap {
+    map: RwLock<HashMap<FlowDesc, u32>>,
+    id: AtomicU32,
+}
+
+impl FlowMap {
+    fn new(veth_id: VirtualEthernetId) -> Self {
+        let mut id = 0_u32;
+        id.set_bit_range(31, 16, veth_id.0);
+        Self {
+            map: RwLock::new(HashMap::new()),
+            id: AtomicU32::new(id),
+        }
+    }
+
+    fn get_id(
+        &self,
+        desc: FlowDesc,
+        log_tx: Option<&UnboundedSender<RattanLogOp>>,
+        base_ts: i64,
+    ) -> u32 {
+        {
+            let map = self.map.read();
+            if let Some(meta) = map.get(&desc) {
+                return *meta;
+            }
+        }
+        let mut map = self.map.write();
+        let id = self.id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        map.insert(desc.clone(), id);
+        if let Some(tx) = log_tx {
+            let op = crate::radix::RattanLogOp::Flow(id, base_ts, desc);
+            let _ = tx.send(op);
+        }
+        id
     }
 }
 
@@ -106,7 +217,7 @@ where
     D::Packet: Packet + Send + Sync,
 {
     receiver: tokio::sync::mpsc::Receiver<D::Packet>,
-    _id: String,
+    _id: VirtualEthernetId,
 }
 
 impl<D> VirtualEthernetEgress<D>
@@ -114,16 +225,24 @@ where
     D: InterfaceDriver,
     D::Packet: Packet + Send + Sync,
 {
-    pub fn new(driver: Vec<D>, id: String) -> Result<Self, Error> {
+    pub fn new(
+        driver: Vec<D>,
+        id: VirtualEthernetId,
+        log_tx: Option<UnboundedSender<RattanLogOp>>,
+        base_ts: i64,
+    ) -> Result<Self, Error> {
         let (tx, rx) = tokio::sync::mpsc::channel(1024);
+        let flow_map = Arc::new(FlowMap::new(id));
 
         for d in driver.into_iter() {
             let notify = AsyncFd::new(d.raw_fd())?;
             tokio::spawn(Self::recv(
-                id.clone(),
+                flow_map.clone(),
                 notify,
                 d.into_receiver(),
                 tx.clone(),
+                log_tx.clone(),
+                base_ts,
             ));
         }
 
@@ -134,18 +253,23 @@ where
     }
 
     async fn recv(
-        id: String,
+        flow_map: Arc<FlowMap>,
         notify: AsyncFd<i32>,
         mut receiver: D::Receiver,
         sender: tokio::sync::mpsc::Sender<D::Packet>,
+        log_tx: Option<UnboundedSender<RattanLogOp>>,
+        base_ts: i64,
     ) {
         loop {
             let mut _guard = notify.readable().await.unwrap();
             match _guard.try_io(|_fd| receiver.receive()) {
                 Ok(packet) => match packet {
-                    Ok(Some(p)) => {
-                        let ts = get_clock_ns();
-                        tracing::trace!(target: "veth::egress::packet_log", "At {} veth {} recv pkt len {} desc {}", ts, id, p.length(), p.desc());
+                    Ok(Some(mut p)) => {
+                        if let Some(desc) = p.flow_desc() {
+                            let id = flow_map.get_id(desc, log_tx.as_ref(), base_ts);
+                            p.set_flow_id(id);
+                        }
+                        log_packet(&log_tx, &p, PktAction::Recv, base_ts);
                         let _ = sender.send(p).await;
                     }
                     Err(e) => error!("recv error: {}", e),
@@ -154,6 +278,65 @@ where
                 Err(_would_block) => continue,
             }
         }
+    }
+}
+
+fn log_packet<T: Packet>(
+    log_tx: &Option<UnboundedSender<RattanLogOp>>,
+    p: &T,
+    action: PktAction,
+    base_ts: i64,
+) {
+    if let Some(ref tx) = log_tx {
+        let ts = ((get_clock_ns() - base_ts) / 1000)
+            .max(0)
+            .min(u32::MAX as i64) as u32;
+        let mut entry = TCPLogEntry::new();
+        entry.general_pkt_entry.pkt_length = p.length() as u16;
+        entry.general_pkt_entry.header.set_pkt_action(action as u8);
+        entry.general_pkt_entry.ts = ts;
+        entry.tcp_entry.flow_id = p.get_flow_id();
+
+        // Inspect packet buffer
+        if let Ok(ether_hdr) = etherparse::Ethernet2HeaderSlice::from_slice(p.as_slice()) {
+            #[allow(clippy::single_match)]
+            match ether_hdr.ether_type() {
+                etherparse::EtherType::IPV4 => {
+                    match etherparse::Ipv4HeaderSlice::from_slice(
+                        p.as_slice().get(ether_hdr.slice().len()..).unwrap_or(&[]),
+                    ) {
+                        Ok(ip_hdr) => {
+                            entry.tcp_entry.ip_id = ip_hdr.identification();
+                            entry.tcp_entry.ip_frag_offset = ip_hdr.fragments_offset().value();
+                            entry.tcp_entry.checksum = ip_hdr.header_checksum();
+                            #[allow(clippy::single_match)]
+                            match ip_hdr.protocol() {
+                                etherparse::IpNumber::TCP => {
+                                    if let Ok(tcp_hdr) = etherparse::TcpHeaderSlice::from_slice(
+                                        p.as_slice()
+                                            .get(ether_hdr.slice().len() + ip_hdr.slice().len()..)
+                                            .unwrap_or(&[]),
+                                    ) {
+                                        entry.tcp_entry.seq = tcp_hdr.sequence_number();
+                                        entry.tcp_entry.ack = tcp_hdr.acknowledgment_number();
+                                        entry.tcp_entry.flags = *tcp_hdr.slice().get(13).unwrap();
+                                        let entry_bytes = entry.as_bytes().to_owned();
+                                        let _ =
+                                            tx.send(crate::radix::RattanLogOp::Entry(entry_bytes));
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Error parsing IPv4 header: {}", e);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        // tracing::debug!(target: "veth::egress::packet_log", "At {} veth {} recv pkt len {} desc {}", ts, id, p.length(), p.desc());
     }
 }
 
@@ -211,17 +394,21 @@ where
     D::Receiver: Send,
 {
     #[instrument(skip_all, name="VirtualEthernet", fields(name = device.name))]
-    pub fn new(device: Arc<VethDevice>, id: String) -> Result<Self, Error> {
+    pub fn new(device: Arc<VethDevice>, id: VirtualEthernetId) -> Result<Self, Error> {
         debug!("New VirtualEthernet");
         let driver = D::bind_device(device.clone())?;
         let dev_senders = driver.iter().map(|d| d.sender()).collect();
+        let log_tx = LOGGING_TX.get().cloned();
+        let base_ts = get_clock_ns();
         Ok(Self {
             _device: device,
             ingress: Arc::new(VirtualEthernetIngress::new(
                 dev_senders,
-                Arc::new(id.clone()),
+                id,
+                log_tx.clone(),
+                base_ts,
             )),
-            egress: VirtualEthernetEgress::new(driver, id)?,
+            egress: VirtualEthernetEgress::new(driver, id, log_tx, base_ts)?,
             control_interface: Arc::new(VirtualEthernetControlInterface {
                 _config: VirtualEthernetConfig {},
             }),

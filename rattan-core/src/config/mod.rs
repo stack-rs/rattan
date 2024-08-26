@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::{devices::Packet, env::StdNetEnvConfig};
 
@@ -35,6 +35,8 @@ pub struct RattanConfig<P: Packet> {
     pub links: HashMap<String, String>,
     #[cfg_attr(feature = "serde", serde(default))]
     pub resource: RattanResourceConfig,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub general: RattanGeneralConfig,
 }
 
 impl<P: Packet> Default for RattanConfig<P> {
@@ -46,6 +48,7 @@ impl<P: Packet> Default for RattanConfig<P> {
             devices: HashMap::new(),
             links: HashMap::new(),
             resource: RattanResourceConfig::new(),
+            general: RattanGeneralConfig::new(),
         }
     }
 }
@@ -65,6 +68,24 @@ pub struct RattanResourceConfig {
 }
 
 impl RattanResourceConfig {
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
+
+#[cfg_attr(
+    feature = "serde",
+    serde_with::skip_serializing_none,
+    derive(Serialize, Deserialize),
+    serde(bound = "")
+)]
+#[derive(Clone, Debug, Default)]
+pub struct RattanGeneralConfig {
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub packet_log: Option<PathBuf>,
+}
+
+impl RattanGeneralConfig {
     pub fn new() -> Self {
         Default::default()
     }

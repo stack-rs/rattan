@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use etherparse::{Ethernet2Header, Ipv4Header};
 #[cfg(feature = "serde")]
-use serde::Deserialize;
-use std::{fmt::Debug, sync::Arc};
+use serde::{Deserialize, Serialize};
+use std::{fmt::Debug, net::Ipv4Addr, sync::Arc};
 use tokio::time::Instant;
 
 use crate::error::Error;
@@ -13,6 +13,12 @@ pub mod external;
 pub mod loss;
 pub mod router;
 pub mod shadow;
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub enum FlowDesc {
+    TCP(Ipv4Addr, Ipv4Addr, u16, u16),
+}
 
 pub trait Packet: Debug + 'static + Send {
     type PacketGenerator;
@@ -40,12 +46,22 @@ pub trait Packet: Debug + 'static + Send {
     fn desc(&self) -> String {
         String::new()
     }
+
+    fn flow_desc(&self) -> Option<FlowDesc> {
+        None
+    }
+
+    fn set_flow_id(&mut self, _flow_id: u32) {}
+    fn get_flow_id(&self) -> u32 {
+        0
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct StdPacket {
     buf: Vec<u8>,
     timestamp: Instant,
+    flow_id: u32,
 }
 
 impl Packet for StdPacket {
@@ -55,6 +71,7 @@ impl Packet for StdPacket {
         Self {
             buf: Vec::with_capacity(maximum),
             timestamp: Instant::now(),
+            flow_id: 0,
         }
     }
 
@@ -62,6 +79,7 @@ impl Packet for StdPacket {
         Self {
             buf: buf.to_vec(),
             timestamp: Instant::now(),
+            flow_id: 0,
         }
     }
 
@@ -184,6 +202,54 @@ impl Packet for StdPacket {
             desc.push_str("[Unknown]");
         }
         desc
+    }
+
+    fn flow_desc(&self) -> Option<FlowDesc> {
+        if let Ok(ether_hdr) = etherparse::Ethernet2HeaderSlice::from_slice(self.buf.as_slice()) {
+            match ether_hdr.ether_type() {
+                etherparse::EtherType::IPV4 => {
+                    match etherparse::Ipv4HeaderSlice::from_slice(
+                        self.buf
+                            .as_slice()
+                            .get(ether_hdr.slice().len()..)
+                            .unwrap_or(&[]),
+                    ) {
+                        Ok(ip_hdr) => match ip_hdr.protocol() {
+                            etherparse::IpNumber::TCP => {
+                                if let Ok(tcp_hdr) = etherparse::TcpHeaderSlice::from_slice(
+                                    self.buf
+                                        .as_slice()
+                                        .get(ether_hdr.slice().len() + ip_hdr.slice().len()..)
+                                        .unwrap_or(&[]),
+                                ) {
+                                    Some(FlowDesc::TCP(
+                                        ip_hdr.source_addr(),
+                                        ip_hdr.destination_addr(),
+                                        tcp_hdr.source_port(),
+                                        tcp_hdr.destination_port(),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        },
+                        Err(_) => None,
+                    }
+                }
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    fn set_flow_id(&mut self, flow_id: u32) {
+        self.flow_id = flow_id;
+    }
+
+    fn get_flow_id(&self) -> u32 {
+        self.flow_id
     }
 }
 
