@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
+    path::PathBuf,
     process::{ExitCode, Stdio, Termination},
     sync::{atomic::AtomicBool, Arc},
 };
@@ -14,18 +15,15 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
 use paste::paste;
+use rattan_core::devices::bandwidth::queue::{
+    CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
+};
 use rattan_core::devices::bandwidth::BwDeviceConfig;
 use rattan_core::devices::StdPacket;
 use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::netem_trace::{Bandwidth, Delay};
 use rattan_core::radix::RattanRadix;
-use rattan_core::{
-    config::RattanGeneralConfig,
-    devices::bandwidth::queue::{
-        CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
-    },
-};
 use rattan_core::{
     config::{
         BwDeviceBuildConfig, BwReplayDeviceBuildConfig, BwReplayQueueConfig,
@@ -69,15 +67,6 @@ pub struct Arguments {
 
     #[command(subcommand)]
     subcommand: Option<CliCommand>,
-
-    #[cfg(feature = "http")]
-    /// Enable HTTP control server
-    #[arg(long)]
-    http: bool,
-    #[cfg(feature = "http")]
-    /// HTTP control server port (default: 8086)
-    #[arg(short, long, value_name = "Port")]
-    port: Option<u16>,
 
     /// Uplink packet loss
     #[arg(long, global = true, value_name = "Loss")]
@@ -130,6 +119,19 @@ pub struct Arguments {
     /// Downlink queue arguments
     #[arg(long, global = true, value_name = "JSON", requires = "downlink-queue")]
     downlink_queue_args: Option<String>,
+
+    #[cfg(feature = "http")]
+    /// Enable HTTP control server (overwrite config)
+    #[arg(long)]
+    http: bool,
+    #[cfg(feature = "http")]
+    /// HTTP control server port (overwrite config) (default: 8086)
+    #[arg(short, long, value_name = "Port")]
+    port: Option<u16>,
+
+    /// The file to store compressed packet log (overwrite config) (default: None)
+    #[arg(long, value_name = "Packet Log File")]
+    packet_log: Option<PathBuf>,
 
     /// Enable logging to file
     #[arg(long)]
@@ -371,7 +373,7 @@ fn main() -> ExitCode {
 
     // Main CLI
     let main_cli = || -> rattan_core::error::Result<()> {
-        let config = match opts.config {
+        let mut config = match opts.config {
             Some(ref config_file) => {
                 info!("Loading config from {}", config_file);
                 if !std::path::Path::new(config_file).exists() {
@@ -386,16 +388,6 @@ fn main() -> ExitCode {
                 config
             }
             None => {
-                #[cfg(feature = "http")]
-                let mut http_config = HttpConfig {
-                    enable: opts.http,
-                    ..Default::default()
-                };
-                #[cfg(feature = "http")]
-                if let Some(port) = opts.port {
-                    http_config.port = port;
-                }
-
                 let mut devices_config = HashMap::<String, DeviceBuildConfig<StdPacket>>::new();
                 let mut links_config = HashMap::<String, String>::new();
                 let mut uplink_count = 0;
@@ -582,19 +574,31 @@ fn main() -> ExitCode {
                         server_cores: vec![3],
                         ..Default::default()
                     },
-                    #[cfg(feature = "http")]
-                    http: http_config,
                     devices: devices_config,
                     links: links_config,
                     resource: RattanResourceConfig {
                         memory: None,
                         cpu: Some(vec![2]),
                     },
-                    general: RattanGeneralConfig::new(),
+                    ..Default::default()
                 }
             }
         };
+
+        // Overwrite config with CLI options
+        #[cfg(feature = "http")]
+        if opts.http {
+            config.http.enable = true;
+        }
+        #[cfg(feature = "http")]
+        if let Some(port) = opts.port {
+            config.http.port = port;
+        }
+        if let Some(packet_log) = opts.packet_log {
+            config.general.packet_log = Some(packet_log);
+        }
         debug!(?config);
+
         if config.devices.is_empty() {
             warn!("No devices specified in config");
         }
