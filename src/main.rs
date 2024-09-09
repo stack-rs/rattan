@@ -29,14 +29,7 @@ use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::netem_trace::{Bandwidth, Delay};
 use rattan_core::radix::RattanRadix;
-use rattan_core::{
-    config::{
-        BwDeviceBuildConfig, BwReplayDeviceBuildConfig, BwReplayQueueConfig,
-        DelayDeviceBuildConfig, DeviceBuildConfig, LossDeviceBuildConfig, RattanConfig,
-        RattanResourceConfig,
-    },
-    radix::TaskResultNotify,
-};
+use rattan_core::radix::TaskResultNotify;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::Layer;
