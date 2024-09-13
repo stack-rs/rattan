@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use futures::TryStreamExt;
-use netlink_packet_route::{address::AddressAttribute, link::LinkAttribute};
+use netlink_packet_route::{address::AddressAttribute, link::LinkAttribute, route::RouteScope};
 use once_cell::sync::OnceCell;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
@@ -442,11 +442,23 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     info!("Set default route");
 
     debug!("Set default route for left namespace");
+
+    debug!("Set left interface[1] as default interface");
     add_route_with_netns(
-        None,
+        right_veth_pairs[1].right.ip_addr,
         None,
         left_veth_pairs[1].left.index,
         left_netns.clone(),
+        RouteScope::Link,
+    )?;
+
+    debug!("Set left interface[1]'s ip as default route");
+    add_route_with_netns(
+        None,
+        Some(right_veth_pairs[1].right.ip_addr.0),
+        left_veth_pairs[1].left.index,
+        left_netns.clone(),
+        RouteScope::Universe,
     )?;
 
     debug!("Set default route for right namespace");
@@ -458,15 +470,24 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
                     None,
                     right_veth_pairs[1].right.index,
                     right_netns.clone(),
+                    RouteScope::Link,
                 )?;
             }
         }
         _ => {
             add_route_with_netns(
-                None,
+                left_veth_pairs[1].left.ip_addr,
                 None,
                 right_veth_pairs[1].right.index,
                 right_netns.clone(),
+                RouteScope::Link,
+            )?;
+            add_route_with_netns(
+                None,
+                Some(left_veth_pairs[1].left.ip_addr.0),
+                right_veth_pairs[1].right.index,
+                right_netns.clone(),
+                RouteScope::Universe,
             )?;
         }
     }

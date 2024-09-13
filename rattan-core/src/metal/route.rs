@@ -9,7 +9,10 @@ use super::{
 };
 use futures::TryStreamExt;
 use ipnet::{Ipv4Net, Ipv6Net};
-use netlink_packet_route::link::{LinkAttribute, LinkLayerType};
+use netlink_packet_route::{
+    link::{LinkAttribute, LinkLayerType},
+    route::RouteScope,
+};
 use tracing::{debug, error, span, warn, Level};
 
 fn execute_rtnetlink_with_new_thread<F>(netns: Arc<NetNs>, f: F) -> Result<(), Error>
@@ -42,6 +45,7 @@ pub fn add_route_with_netns<
     gateway: U,
     outif_id: V,
     netns: Arc<NetNs>,
+    scope: RouteScope,
 ) -> Result<(), Error> {
     let dest = dest.into();
     let gateway = gateway.into();
@@ -55,18 +59,23 @@ pub fn add_route_with_netns<
     execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
         match dest {
             Some((IpAddr::V4(dest_v4), prefix_length)) => {
-                let mut handle = rtnl_handle.route().add().v4().destination_prefix(
-                    Ipv4Net::new(dest_v4, prefix_length)
-                        .map_err(|_| {
-                            Error::ConfigError(format!(
-                                "IPv4 prefix length {} is invalid",
-                                prefix_length
-                            ))
-                        })?
-                        .trunc()
-                        .addr(),
-                    prefix_length,
-                );
+                let mut handle = rtnl_handle
+                    .route()
+                    .add()
+                    .v4()
+                    .scope(scope)
+                    .destination_prefix(
+                        Ipv4Net::new(dest_v4, prefix_length)
+                            .map_err(|_| {
+                                Error::ConfigError(format!(
+                                    "IPv4 prefix length {} is invalid",
+                                    prefix_length
+                                ))
+                            })?
+                            .trunc()
+                            .addr(),
+                        prefix_length,
+                    );
                 if let Some(gateway) = gateway {
                     if let IpAddr::V4(gateway_v4) = gateway {
                         handle = handle.gateway(gateway_v4);
@@ -83,18 +92,23 @@ pub fn add_route_with_netns<
                 rt.block_on(handle.execute())
             }
             Some((IpAddr::V6(dest_v6), prefix_length)) => {
-                let mut handle = rtnl_handle.route().add().v6().destination_prefix(
-                    Ipv6Net::new(dest_v6, prefix_length)
-                        .map_err(|_| {
-                            Error::ConfigError(format!(
-                                "IPv6 prefix length {} is invalid",
-                                prefix_length
-                            ))
-                        })?
-                        .trunc()
-                        .addr(),
-                    prefix_length,
-                );
+                let mut handle = rtnl_handle
+                    .route()
+                    .add()
+                    .v6()
+                    .scope(scope)
+                    .destination_prefix(
+                        Ipv6Net::new(dest_v6, prefix_length)
+                            .map_err(|_| {
+                                Error::ConfigError(format!(
+                                    "IPv6 prefix length {} is invalid",
+                                    prefix_length
+                                ))
+                            })?
+                            .trunc()
+                            .addr(),
+                        prefix_length,
+                    );
                 if let Some(gateway) = gateway {
                     if let IpAddr::V6(gateway_v6) = gateway {
                         handle = handle.gateway(gateway_v6);
@@ -111,7 +125,7 @@ pub fn add_route_with_netns<
                 rt.block_on(handle.execute())
             }
             None => {
-                let mut handle = rtnl_handle.route().add();
+                let mut handle = rtnl_handle.route().add().scope(scope);
                 if let Some(if_id) = outif_id {
                     handle = handle.output_interface(if_id);
                 }
@@ -125,7 +139,7 @@ pub fn add_route_with_netns<
                     _ => {
                         let res = rt.block_on(handle.v4().execute());
                         if res.is_ok() {
-                            let mut handle = rtnl_handle.route().add();
+                            let mut handle = rtnl_handle.route().add().scope(scope);
                             if let Some(if_id) = outif_id {
                                 handle = handle.output_interface(if_id);
                             }
