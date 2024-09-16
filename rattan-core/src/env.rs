@@ -443,7 +443,7 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
 
     debug!("Set default route for left namespace");
 
-    debug!("Set left interface as default interface");
+    debug!("Set left interface[1] as default interface");
     add_route_with_netns(
         right_veth_pairs[1].right.ip_addr,
         None,
@@ -452,7 +452,7 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         RouteScope::Link,
     )?;
 
-    debug!("Set left interface's ip as default route");
+    debug!("Set left interface[1]'s ip as default route");
     add_route_with_netns(
         None,
         Some(right_veth_pairs[1].right.ip_addr.0),
@@ -476,8 +476,15 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         }
         _ => {
             add_route_with_netns(
+                left_veth_pairs[1].left.ip_addr,
                 None,
+                right_veth_pairs[1].right.index,
+                right_netns.clone(),
+                RouteScope::Link,
+            )?;
+            add_route_with_netns(
                 None,
+                Some(left_veth_pairs[1].left.ip_addr.0),
                 right_veth_pairs[1].right.index,
                 right_netns.clone(),
                 RouteScope::Universe,
