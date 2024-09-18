@@ -37,9 +37,6 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-#[cfg(feature = "http")]
-use rattan_core::control::http::HttpConfig;
-
 // mod docker;
 
 // const CONFIG_PORT_BASE: u16 = 8086;

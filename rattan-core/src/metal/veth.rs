@@ -508,7 +508,7 @@ impl std::str::FromStr for MacAddr {
         let mut array = [0u8; 6];
 
         let mut nth = 0;
-        for byte in input.split(|c| c == ':' || c == '-') {
+        for byte in input.split([':', '-']) {
             if nth == 6 {
                 return Err(MacParseError::InvalidLength);
             }
