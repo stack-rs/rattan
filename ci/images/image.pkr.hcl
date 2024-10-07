@@ -145,7 +145,7 @@ build {
     ]
     inline_shebang = "/bin/bash -e"
     skip_clean = true
-    valid_exit_codes = [0, 123] # it's ok if the kernel is already what we want
+    valid_exit_codes = [0, 123, 141] # it's ok if the kernel is already what we want
   }
   provisioner "shell" {
     inline = [
