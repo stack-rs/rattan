@@ -1,4 +1,5 @@
 use bitfield::{BitRange, BitRangeMut};
+use plain::Plain;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -82,7 +83,13 @@ impl TCPLogEntry {
             )
         }
     }
+
+    pub fn from_bytes(buf: &[u8]) -> &Self {
+        plain::from_bytes(buf).expect("The buffer is either too short or not aligned!")
+    }
 }
+
+unsafe impl Plain for TCPLogEntry {}
 
 impl Default for TCPLogEntry {
     fn default() -> Self {
@@ -125,6 +132,8 @@ impl LogEntryHeader {
     }
 }
 
+unsafe impl Plain for LogEntryHeader {}
+
 impl Default for LogEntryHeader {
     fn default() -> Self {
         Self::new()
@@ -139,6 +148,8 @@ pub struct GeneralPktEntry {
     pub ts: u32,
     pub pkt_length: u16,
 }
+
+unsafe impl Plain for GeneralPktEntry {}
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -192,6 +203,8 @@ impl GeneralPktHeader {
     }
 }
 
+unsafe impl Plain for GeneralPktHeader {}
+
 impl Default for GeneralPktHeader {
     fn default() -> Self {
         Self::new()
@@ -211,6 +224,8 @@ pub struct TCPProtocolEntry {
     pub flags: u8,
     pub padding: u8,
 }
+
+unsafe impl Plain for TCPProtocolEntry {}
 
 #[derive(Debug, Clone, Copy)]
 #[repr(transparent)]
@@ -246,6 +261,8 @@ impl ProtocolHeader {
         }
     }
 }
+
+unsafe impl Plain for ProtocolHeader {}
 
 impl Default for ProtocolHeader {
     fn default() -> Self {
