@@ -101,6 +101,7 @@ ping_verify() {
 	echo "Ping Test: Loss $loss; Delay $delay ms"
 	RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' \
 		cargo run --release -q -p rattan -- \
+		link \
 		--uplink-delay ${delay}ms \
 		--downlink-delay ${delay}ms \
 		--downlink-loss $loss \
@@ -149,6 +150,7 @@ iperf_verify() {
 	bandwidth=$(expr 12 \* $bw_mul \* 1000000)
 	RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' \
 		cargo run --release -q -p rattan -- \
+		link \
 		--uplink-delay ${delay}ms \
 		--downlink-delay ${delay}ms \
 		--downlink-loss $loss \

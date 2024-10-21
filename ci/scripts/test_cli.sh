@@ -9,6 +9,7 @@ WORKDIR=$(
 echo "CLI Test #1"
 RUST_LOG=info \
     cargo run --release -q -p rattan -- \
+    link \
     --uplink-delay 10ms \
     --downlink-delay 20ms \
     --uplink-loss 0.01 \
