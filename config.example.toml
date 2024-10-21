@@ -322,11 +322,12 @@ cores = [1]
 # ----- Commands Section -----
 # This section describes the commands to run in rattan.
 #
-# When in `Compatible` mode, only the left key is used,
+# When in `Compatible` mode, only the left and shell keys are used,
 # and the commands will run in the `ns-left` network namespace.
 #
-# When in `Isolated` mode, both the left and right keys are used,
+# When in `Isolated` mode, only the left and right keys are used,
 # and the commands will run in the `ns-left` and `ns-right` network namespace, respectively.
 [commands]
 left = ["echo", "hello world"]
 # right = ["echo", "hello world"]
+shell = "Default"

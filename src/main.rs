@@ -1,6 +1,5 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
     path::PathBuf,
     process::{ExitCode, Stdio, Termination},
     sync::{atomic::AtomicBool, Arc},
@@ -14,29 +13,17 @@ use figment::{
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
-use paste::paste;
-use rattan_core::devices::bandwidth::queue::{
-    CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
-};
-use rattan_core::devices::bandwidth::BwDeviceConfig;
+
 use rattan_core::devices::StdPacket;
-use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
+use rattan_core::env::StdNetEnvMode;
 use rattan_core::metal::io::af_packet::AfPacketDriver;
-use rattan_core::netem_trace::{Bandwidth, Delay};
 use rattan_core::radix::RattanRadix;
-use rattan_core::{
-    config::{
-        BwDeviceBuildConfig, BwReplayDeviceBuildConfig, BwReplayQueueConfig,
-        DelayDeviceBuildConfig, DeviceBuildConfig, LossDeviceBuildConfig, RattanConfig,
-        RattanResourceConfig,
-    },
-    radix::TaskResultNotify,
-};
+use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, warn};
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod channel;
 // mod docker;
 
 // const CONFIG_PORT_BASE: u16 = 8086;
@@ -54,104 +41,40 @@ pub struct Arguments {
     // Run in docker mode
     // #[arg(long)]
     // docker: bool,
-    /// Use config file and ignore other options
-    #[arg(short, long, value_name = "Config File")]
-    config: Option<String>,
-
-    /// Mode to run in
-    #[arg(short, long, value_enum, default_value_t = Mode::Compatible)]
-    mode: Mode,
-
     #[command(subcommand)]
-    subcommand: Option<CliCommand>,
+    subcommand: CliCommand,
 
-    /// Uplink packet loss
-    #[arg(long, global = true, value_name = "Loss")]
-    uplink_loss: Option<f64>,
-    /// Downlink packet loss
-    #[arg(long, global = true, value_name = "Loss")]
-    downlink_loss: Option<f64>,
+    /// Generate config file instead of running a instance
+    ///
+    /// If this flag is set, the program will only generate the config to stdout and exit.
+    #[arg(long, global = true)]
+    generate: bool,
 
-    /// Uplink delay
-    #[arg(long, global = true, value_name = "Delay", value_parser = humantime::parse_duration)]
-    uplink_delay: Option<Delay>,
-    /// Downlink delay
-    #[arg(long, global = true, value_name = "Delay", value_parser = humantime::parse_duration)]
-    downlink_delay: Option<Delay>,
-
-    /// Uplink bandwidth
-    #[arg(long, global = true, value_name = "Bandwidth", group = "uplink-bw", value_parser = human_bandwidth::parse_bandwidth)]
-    uplink_bandwidth: Option<Bandwidth>,
-    /// Uplink trace file
-    #[arg(long, global = true, value_name = "Trace File", group = "uplink-bw")]
-    uplink_trace: Option<String>,
-    /// Uplink queue type
-    #[arg(
-        long,
-        global = true,
-        value_name = "Queue Type",
-        group = "uplink-queue",
-        requires = "uplink-bw"
-    )]
-    uplink_queue: Option<QueueType>,
-    /// Uplink queue arguments
-    #[arg(long, global = true, value_name = "JSON", requires = "uplink-queue")]
-    uplink_queue_args: Option<String>,
-
-    /// Downlink bandwidth
-    #[arg(long, global = true, value_name = "Bandwidth", group = "downlink-bw", value_parser = human_bandwidth::parse_bandwidth)]
-    downlink_bandwidth: Option<Bandwidth>,
-    /// Downlink trace file
-    #[arg(long, global = true, value_name = "Trace File", group = "downlink-bw")]
-    downlink_trace: Option<String>,
-    /// Downlink queue type
-    #[arg(
-        long,
-        global = true,
-        value_name = "Queue Type",
-        group = "downlink-queue",
-        requires = "downlink-bw"
-    )]
-    downlink_queue: Option<QueueType>,
-    /// Downlink queue arguments
-    #[arg(long, global = true, value_name = "JSON", requires = "downlink-queue")]
-    downlink_queue_args: Option<String>,
+    /// Generate config file to the specified path instead of stdout
+    #[arg(long, requires = "generate", global = true, value_name = "File")]
+    generate_path: Option<PathBuf>,
 
     #[cfg(feature = "http")]
     /// Enable HTTP control server (overwrite config)
-    #[arg(long)]
+    #[arg(long, global = true)]
     http: bool,
     #[cfg(feature = "http")]
     /// HTTP control server port (overwrite config) (default: 8086)
-    #[arg(short, long, value_name = "Port")]
+    #[arg(short, long, value_name = "Port", global = true)]
     port: Option<u16>,
 
     /// The file to store compressed packet log (overwrite config) (default: None)
-    #[arg(long, value_name = "Packet Log File")]
+    #[arg(long, value_name = "File", global = true)]
     packet_log: Option<PathBuf>,
 
     /// Enable logging to file
-    #[arg(long)]
+    #[arg(long, global = true)]
     file_log: bool,
     // This "requires" field uses an underscore '_' instead of a dash '-' since "file_log" is a
     // field name instead of a group name
     /// File log path, default to $CACHE_DIR/rattan/core.log
-    #[arg(long, value_name = "Log File", requires = "file_log")]
-    file_log_path: Option<String>,
-
-    /// Command to run in left ns. Only used when in isolated mode
-    #[arg(long = "left", num_args = 0..)]
-    left_command: Option<Vec<String>>,
-    /// Command to run in right ns. Only used when in isolated mode
-    #[arg(long = "right", num_args = 0..)]
-    right_command: Option<Vec<String>>,
-
-    /// Shell used to run if no command is specified. Only used when in compatible mode
-    #[arg(short, long, value_enum, default_value_t = TaskShell::Default)]
-    shell: TaskShell,
-    /// Command to run. Only used when in compatible mode
-    #[arg(last = true)]
-    command: Option<Vec<String>>,
+    #[arg(long, value_name = "File", requires = "file_log", global = true)]
+    file_log_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,45 +83,45 @@ pub struct TaskCommands {
     pub left: Option<Vec<String>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub right: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub shell: Option<TaskShell>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisplayTaskCommands {
+    pub commands: TaskCommands,
 }
 
 #[derive(Subcommand, Debug, Clone)]
 enum CliCommand {
-    /// Generate the config.
-    Generate(GenerateArgs),
+    /// Run a templated channel with command line arguments.
+    Link(channel::ChannelArgs),
+    /// Run the instance according to the config.
+    Run(RunArgs),
 }
 
 #[derive(Args, Debug, Default, Clone)]
 #[command(rename_all = "kebab-case")]
-pub struct GenerateArgs {
-    /// The output file path of the config. Default to stdout.
-    #[arg(short, long)]
-    pub output: Option<String>,
+pub struct RunArgs {
+    /// Use config file to run a instance.
+    #[arg(short, long, value_name = "Config File")]
+    pub config: PathBuf,
+    /// Command to run in left ns. Can be used in compatible and isolated mode
+    #[arg(long = "left", num_args = 0..)]
+    left_command: Option<Vec<String>>,
+    /// Command to run in right ns. Only used in isolated mode
+    #[arg(long = "right", num_args = 0..)]
+    right_command: Option<Vec<String>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, ValueEnum)]
+#[derive(Debug, Serialize, Deserialize, Clone, ValueEnum, Copy, Default)]
 pub enum TaskShell {
+    #[default]
     Default,
     Sh,
     Bash,
     Zsh,
     Fish,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, ValueEnum, Copy)]
-pub enum Mode {
-    Compatible,
-    Isolated,
-    Container,
-}
-
-#[derive(ValueEnum, Clone, Debug)]
-#[value(rename_all = "lower")]
-enum QueueType {
-    Infinite,
-    DropTail,
-    DropHead,
-    CoDel,
 }
 
 impl TaskShell {
@@ -216,68 +139,10 @@ impl TaskShell {
     }
 }
 
-impl From<Mode> for StdNetEnvMode {
-    fn from(mode: Mode) -> Self {
-        match mode {
-            Mode::Compatible => StdNetEnvMode::Compatible,
-            Mode::Isolated => StdNetEnvMode::Isolated,
-            Mode::Container => StdNetEnvMode::Container,
-        }
-    }
-}
-
-// Deserialize queue args and create BwDeviceBuildConfig
-// $q_type: queue type (key in `QueueType`)
-// $q_args: queue args
-// $bw: bandwidth for BwDevice
-macro_rules! bw_q_args_into_config {
-    ($q_type:ident, $q_args:expr, $bw:expr) => {
-        paste!(
-            match serde_json::from_str::<[<$q_type QueueConfig>]> (&$q_args.unwrap_or("{}".to_string())) {
-                Ok(queue_config) => DeviceBuildConfig::Bw(BwDeviceBuildConfig::$q_type(
-                    if $q_args.is_none() {
-                        BwDeviceConfig::new($bw, None, None)
-                    } else {
-                        BwDeviceConfig::new($bw, queue_config, None)
-                    }
-                )),
-                Err(e) => {
-                    error!("Failed to parse queue args {:?}: {}", $q_args, e);
-                    return Err(rattan_core::error::Error::ConfigError(format!("Failed to parse queue args {:?}: {}", $q_args, e)));
-                }
-            }
-        )
-    };
-}
-
-// Deserialize queue args and create BwReplayDeviceBuildConfig
-// $q_type: queue type (key in `QueueType`)
-// $q_args: queue args
-// $mahimahi_trace: mahimahi_trace for BwReplayDevice
-macro_rules! bwreplay_q_args_into_config {
-    ($q_type:ident, $q_args:expr, $trace_file:expr) => {
-        paste!(
-            match serde_json::from_str::<[<$q_type QueueConfig>]> (&$q_args.unwrap_or("{}".to_string())) {
-                Ok(queue_config) => DeviceBuildConfig::BwReplay(BwReplayDeviceBuildConfig::$q_type(
-                    if $q_args.is_none() {
-                        BwReplayQueueConfig::new($trace_file, None, None)
-                    } else {
-                        BwReplayQueueConfig::new($trace_file, queue_config, None)
-                    }
-                )),
-                Err(e) => {
-                    error!("Failed to parse queue args {:?}: {}", $q_args, e);
-                    return Err(rattan_core::error::Error::ConfigError(format!("Failed to parse queue args {:?}: {}", $q_args, e)));
-                }
-            }
-        )
-    };
-}
-
 fn main() -> ExitCode {
     // Parse Arguments
-    let mut opts = Arguments::parse();
-    debug!("{:?}", opts);
+    let opts = Arguments::parse();
+    tracing::debug!("{:?}", opts);
     // if opts.docker {
     //     docker::docker_main(opts).unwrap();
     //     return;
@@ -292,7 +157,6 @@ fn main() -> ExitCode {
         if let Some((log_dir, file_name)) = opts
             .file_log_path
             .and_then(|path| {
-                let path = std::path::PathBuf::from(path);
                 let file_name = path.file_name().and_then(|f| f.to_str());
                 let log_dir = path
                     .parent()
@@ -310,7 +174,7 @@ fn main() -> ExitCode {
             })
         {
             if let Err(e) = std::fs::create_dir_all(&log_dir) {
-                error!("Failed to create log directory: {:?}", e);
+                tracing::error!("Failed to create log directory: {:?}", e);
                 return ExitCode::from(74);
             }
             let file_logger = match std::fs::OpenOptions::new()
@@ -320,7 +184,7 @@ fn main() -> ExitCode {
             {
                 Ok(f) => f,
                 Err(e) => {
-                    error!("Failed to open log file: {:?}", e);
+                    tracing::error!("Failed to open log file: {:?}", e);
                     return ExitCode::from(74);
                 }
             };
@@ -370,215 +234,52 @@ fn main() -> ExitCode {
 
     // Main CLI
     let main_cli = || -> rattan_core::error::Result<()> {
-        let mut config = match opts.config {
-            Some(ref config_file) => {
-                info!("Loading config from {}", config_file);
-                if !std::path::Path::new(config_file).exists() {
-                    tracing::warn!("Config file {} specified but does not exist", config_file);
+        let (mut config, commands) = match opts.subcommand {
+            CliCommand::Run(mut args) => {
+                tracing::info!("Loading config from {}", args.config.display());
+                if !args.config.exists() {
+                    return Err(rattan_core::error::Error::ConfigError(format!(
+                        "Config file {} does not exist",
+                        args.config.display()
+                    )));
                 }
                 let config: RattanConfig<StdPacket> = Figment::new()
-                    .merge(Toml::file(config_file))
+                    .merge(Toml::file(&args.config))
                     .merge(Env::prefixed("RATTAN_"))
                     .extract()
                     .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
-
-                config
+                let commands = Figment::new()
+                    .merge(Toml::file(args.config).nested())
+                    .merge(Serialized::from(
+                        TaskCommands {
+                            left: args.left_command.take(),
+                            right: args.right_command.take(),
+                            shell: None,
+                        },
+                        "commands",
+                    ))
+                    .merge(Env::prefixed("RATTAN_").profile("commands"))
+                    .select("commands")
+                    .extract::<TaskCommands>()
+                    .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
+                (config, commands)
             }
-            None => {
-                let mut devices_config = HashMap::<String, DeviceBuildConfig<StdPacket>>::new();
-                let mut links_config = HashMap::<String, String>::new();
-                let mut uplink_count = 0;
-                let mut downlink_count = 0;
-
-                if let Some(bandwidth) = opts.uplink_bandwidth {
-                    let device_config = match opts.uplink_queue {
-                        Some(QueueType::Infinite) | None => {
-                            DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(
-                                BwDeviceConfig::new(bandwidth, InfiniteQueueConfig::new(), None),
-                            ))
-                        }
-                        Some(QueueType::DropTail) => {
-                            bw_q_args_into_config!(
-                                DropTail,
-                                opts.uplink_queue_args.clone(),
-                                bandwidth
-                            )
-                        }
-                        Some(QueueType::DropHead) => {
-                            bw_q_args_into_config!(
-                                DropHead,
-                                opts.uplink_queue_args.clone(),
-                                bandwidth
-                            )
-                        }
-                        Some(QueueType::CoDel) => {
-                            bw_q_args_into_config!(CoDel, opts.uplink_queue_args.clone(), bandwidth)
-                        }
-                    };
-                    uplink_count += 1;
-                    devices_config.insert(format!("up_{}", uplink_count), device_config);
-                } else if let Some(trace_file) = opts.uplink_trace {
-                    let device_config = match opts.uplink_queue {
-                        Some(QueueType::Infinite) | None => DeviceBuildConfig::BwReplay(
-                            BwReplayDeviceBuildConfig::Infinite(BwReplayQueueConfig::new(
-                                trace_file,
-                                InfiniteQueueConfig::new(),
-                                None,
-                            )),
-                        ),
-                        Some(QueueType::DropTail) => {
-                            bwreplay_q_args_into_config!(
-                                DropTail,
-                                opts.uplink_queue_args.clone(),
-                                trace_file
-                            )
-                        }
-                        Some(QueueType::DropHead) => {
-                            bwreplay_q_args_into_config!(
-                                DropHead,
-                                opts.uplink_queue_args.clone(),
-                                trace_file
-                            )
-                        }
-                        Some(QueueType::CoDel) => {
-                            bwreplay_q_args_into_config!(
-                                CoDel,
-                                opts.uplink_queue_args.clone(),
-                                trace_file
-                            )
-                        }
-                    };
-                    uplink_count += 1;
-                    devices_config.insert(format!("up_{}", uplink_count), device_config);
-                }
-
-                if let Some(bandwidth) = opts.downlink_bandwidth {
-                    let device_config = match opts.downlink_queue {
-                        Some(QueueType::Infinite) | None => {
-                            DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(
-                                BwDeviceConfig::new(bandwidth, InfiniteQueueConfig::new(), None),
-                            ))
-                        }
-                        Some(QueueType::DropTail) => {
-                            bw_q_args_into_config!(
-                                DropTail,
-                                opts.downlink_queue_args.clone(),
-                                bandwidth
-                            )
-                        }
-                        Some(QueueType::DropHead) => {
-                            bw_q_args_into_config!(
-                                DropHead,
-                                opts.downlink_queue_args.clone(),
-                                bandwidth
-                            )
-                        }
-                        Some(QueueType::CoDel) => {
-                            bw_q_args_into_config!(
-                                CoDel,
-                                opts.downlink_queue_args.clone(),
-                                bandwidth
-                            )
-                        }
-                    };
-                    downlink_count += 1;
-                    devices_config.insert(format!("down_{}", downlink_count), device_config);
-                } else if let Some(trace_file) = opts.downlink_trace {
-                    let device_config = match opts.downlink_queue {
-                        Some(QueueType::Infinite) | None => DeviceBuildConfig::BwReplay(
-                            BwReplayDeviceBuildConfig::Infinite(BwReplayQueueConfig::new(
-                                trace_file,
-                                InfiniteQueueConfig::new(),
-                                None,
-                            )),
-                        ),
-                        Some(QueueType::DropTail) => {
-                            bwreplay_q_args_into_config!(
-                                DropTail,
-                                opts.downlink_queue_args.clone(),
-                                trace_file
-                            )
-                        }
-                        Some(QueueType::DropHead) => {
-                            bwreplay_q_args_into_config!(
-                                DropHead,
-                                opts.downlink_queue_args.clone(),
-                                trace_file
-                            )
-                        }
-                        Some(QueueType::CoDel) => {
-                            bwreplay_q_args_into_config!(
-                                CoDel,
-                                opts.downlink_queue_args.clone(),
-                                trace_file
-                            )
-                        }
-                    };
-                    downlink_count += 1;
-                    devices_config.insert(format!("down_{}", downlink_count), device_config);
-                }
-
-                if let Some(delay) = opts.uplink_delay {
-                    let device_config =
-                        DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(delay));
-                    uplink_count += 1;
-                    devices_config.insert(format!("up_{}", uplink_count), device_config);
-                }
-
-                if let Some(delay) = opts.downlink_delay {
-                    let device_config =
-                        DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(delay));
-                    downlink_count += 1;
-                    devices_config.insert(format!("down_{}", downlink_count), device_config);
-                }
-
-                if let Some(loss) = opts.uplink_loss {
-                    let device_config = DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([loss]));
-                    uplink_count += 1;
-                    devices_config.insert(format!("up_{}", uplink_count), device_config);
-                }
-
-                if let Some(loss) = opts.downlink_loss {
-                    let device_config = DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([loss]));
-                    downlink_count += 1;
-                    devices_config.insert(format!("down_{}", downlink_count), device_config);
-                }
-
-                for i in 1..uplink_count {
-                    links_config.insert(format!("up_{}", i), format!("up_{}", i + 1));
-                }
-                for i in 1..downlink_count {
-                    links_config.insert(format!("down_{}", i), format!("down_{}", i + 1));
-                }
-
-                if uplink_count > 0 {
-                    links_config.insert("left".to_string(), "up_1".to_string());
-                    links_config.insert(format!("up_{}", uplink_count), "right".to_string());
-                } else {
-                    links_config.insert("left".to_string(), "right".to_string());
-                }
-                if downlink_count > 0 {
-                    links_config.insert("right".to_string(), "down_1".to_string());
-                    links_config.insert(format!("down_{}", downlink_count), "left".to_string());
-                } else {
-                    links_config.insert("right".to_string(), "left".to_string());
-                }
-
-                RattanConfig::<StdPacket> {
-                    env: StdNetEnvConfig {
-                        mode: opts.mode.into(),
-                        client_cores: vec![1],
-                        server_cores: vec![3],
-                        ..Default::default()
-                    },
-                    devices: devices_config,
-                    links: links_config,
-                    resource: RattanResourceConfig {
-                        memory: None,
-                        cpu: Some(vec![2]),
-                    },
-                    ..Default::default()
-                }
+            CliCommand::Link(mut args) => {
+                let commands = Figment::new()
+                    .merge(Serialized::from(
+                        TaskCommands {
+                            left: args.command.take(),
+                            right: None,
+                            shell: Some(args.shell),
+                        },
+                        "commands",
+                    ))
+                    .merge(Env::prefixed("RATTAN_").profile("commands"))
+                    .select("commands")
+                    .extract::<TaskCommands>()
+                    .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
+                let config = args.build_rattan_config()?;
+                (config, commands)
             }
         };
 
@@ -594,52 +295,33 @@ fn main() -> ExitCode {
         if let Some(packet_log) = opts.packet_log {
             config.general.packet_log = Some(packet_log);
         }
-        debug!(?config);
+        tracing::debug!(?config);
 
+        // Generate config
+        if opts.generate {
+            // DONE: generate commands as well
+            let mut toml_string = toml::to_string_pretty(&config)
+                .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
+            let display_commands = DisplayTaskCommands { commands };
+            let command_string = toml::to_string_pretty(&display_commands)
+                .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
+
+            toml_string.push_str(format!("\n{}", command_string).as_str());
+            if let Some(output) = opts.generate_path {
+                std::fs::write(output, toml_string)?;
+            } else {
+                println!("{}", toml_string);
+            }
+            return Ok(());
+        }
+
+        // Check if the config can correctly spawn
         if config.devices.is_empty() {
-            warn!("No devices specified in config");
+            tracing::warn!("No devices specified in config");
         }
         if config.links.is_empty() {
-            warn!("No links specified in config");
+            tracing::warn!("No links specified in config");
         }
-
-        if let Some(cmd) = opts.subcommand {
-            match cmd {
-                CliCommand::Generate(args) => {
-                    let toml_string = toml::to_string_pretty(&config)
-                        .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
-                    if let Some(output) = args.output {
-                        std::fs::write(output, toml_string)?;
-                    } else {
-                        println!("{}", toml_string);
-                    }
-                    return Ok(());
-                }
-            }
-        }
-
-        let commands = {
-            let config = {
-                if let Some(config_file) = opts.config {
-                    Figment::new().merge(Toml::file(config_file).nested())
-                } else {
-                    Figment::new()
-                }
-            };
-            config
-                .merge(Serialized::from(
-                    TaskCommands {
-                        left: opts.left_command.take(),
-                        right: opts.right_command.take(),
-                    },
-                    "commands",
-                ))
-                .merge(Env::prefixed("RATTAN_").profile("commands"))
-                .select("commands")
-                .extract::<TaskCommands>()
-                .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?
-        };
-
         if config.env.mode == StdNetEnvMode::Container {
             return Err(rattan_core::error::Error::ConfigError(
                 "Container mode is not supported yet".to_string(),
@@ -653,6 +335,7 @@ fn main() -> ExitCode {
             ));
         }
 
+        // Start Rattan
         let mut radix = RattanRadix::<AfPacketDriver>::new(config)?;
         radix.spawn_rattan()?;
         radix.start_rattan()?;
@@ -670,25 +353,24 @@ fn main() -> ExitCode {
                     });
                     client_handle.env("RATTAN_EXT", ip_list[0].to_string());
                     client_handle.env("RATTAN_BASE", ip_list[1].to_string());
-                    if let Some(arguments) = opts.command {
-                        client_handle.args(arguments);
-                    } else if let Some(arguments) = commands.left {
+                    if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     } else {
-                        client_handle.arg(opts.shell.shell().as_ref());
-                        if opts.shell.shell().ends_with("/bash") {
+                        let shell = commands.shell.unwrap_or_default();
+                        client_handle.arg(shell.shell().as_ref());
+                        if shell.shell().ends_with("/bash") {
                             client_handle
                                 .env("PROMPT_COMMAND", "PS1=\"[rattan] $PS1\" PROMPT_COMMAND=");
                         }
                     }
-                    info!("Running {:?}", client_handle);
+                    tracing::info!("Running {:?}", client_handle);
                     let mut client_handle = client_handle
                         .stdin(Stdio::inherit())
                         .stdout(Stdio::inherit())
                         .stderr(Stdio::inherit())
                         .spawn()?;
                     let pid = client_handle.id() as i32;
-                    debug!("Left pid: {}", pid);
+                    tracing::debug!("Left pid: {}", pid);
                     let _ = LEFT_PID.set(pid);
                     let status = client_handle.wait()?;
                     left_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -698,7 +380,7 @@ fn main() -> ExitCode {
                     Ok(Ok(status)) => {
                         if let Some(code) = status.code() {
                             if code == 0 {
-                                info!("Left handle {}", status);
+                                tracing::info!("Left handle {}", status);
                                 Ok(())
                             } else {
                                 Err(rattan_core::error::Error::Custom(format!(
@@ -735,14 +417,14 @@ fn main() -> ExitCode {
                     if let Some(arguments) = commands.right {
                         server_handle.args(arguments);
                     }
-                    info!("Running {:?}", server_handle);
+                    tracing::info!("Running in right NS {:?}", server_handle);
                     let mut server_handle = server_handle
                         .stdin(Stdio::null())
                         .stdout(Stdio::null())
                         .stderr(Stdio::null())
                         .spawn()?;
                     let pid = server_handle.id() as i32;
-                    debug!("Right pid: {}", pid);
+                    tracing::debug!("Right pid: {}", pid);
                     let _ = RIGHT_PID.set(pid);
                     let status = server_handle.wait()?;
                     right_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -759,14 +441,14 @@ fn main() -> ExitCode {
                     if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     }
-                    info!("Running {:?}", client_handle);
+                    tracing::info!("Running in left NS {:?}", client_handle);
                     let mut client_handle = client_handle
                         .stdin(Stdio::null())
                         .stdout(Stdio::null())
                         .stderr(Stdio::null())
                         .spawn()?;
                     let pid = client_handle.id() as i32;
-                    debug!("Left pid: {}", pid);
+                    tracing::debug!("Left pid: {}", pid);
                     let _ = LEFT_PID.set(pid);
                     let status = client_handle.wait()?;
                     left_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -781,7 +463,7 @@ fn main() -> ExitCode {
                                 Ok(Ok(status)) => {
                                     if let Some(code) = status.code() {
                                         if code == 0 {
-                                            info!("Left handle {}", status);
+                                            tracing::info!("Left handle {}", status);
                                         } else {
                                             left_res = left_res.and_then(|_| {
                                                 Err(format!("Left handle {}", status))
@@ -798,9 +480,11 @@ fn main() -> ExitCode {
                                     });
                                     // TODO: we may also add other arguments to disable the killing of the other half
                                     if right_handle.is_finished() {
-                                        warn!("Right handle is already finished");
+                                        tracing::warn!("Right handle is already finished");
                                     } else {
-                                        warn!("Try to send SIGTERM to right spawned thread");
+                                        tracing::warn!(
+                                            "Try to send SIGTERM to right spawned thread"
+                                        );
                                         if let Some(pid) = RIGHT_PID.get() {
                                             let _ =
                                                 signal::kill(Pid::from_raw(*pid), Signal::SIGTERM)
@@ -824,7 +508,7 @@ fn main() -> ExitCode {
                                 Ok(Ok(status)) => {
                                     if let Some(code) = status.code() {
                                         if code == 0 {
-                                            info!("Right handle {}", status);
+                                            tracing::info!("Right handle {}", status);
                                         } else {
                                             right_res = right_res.and_then(|_| {
                                                 Err(format!("Right handle {}", status))
@@ -852,7 +536,7 @@ fn main() -> ExitCode {
                                 Ok(Ok(status)) => {
                                     if let Some(code) = status.code() {
                                         if code == 0 {
-                                            info!("Right handle {}", status);
+                                            tracing::info!("Right handle {}", status);
                                         } else {
                                             right_res = right_res.and_then(|_| {
                                                 Err(format!("Right handle {}", status))
@@ -869,9 +553,11 @@ fn main() -> ExitCode {
                                     });
                                     // TODO: we may also add other arguments to disable the killing of the other half
                                     if left_handle.is_finished() {
-                                        warn!("Left handle is already finished");
+                                        tracing::warn!("Left handle is already finished");
                                     } else {
-                                        warn!("Try to send SIGTERM to left spawned thread");
+                                        tracing::warn!(
+                                            "Try to send SIGTERM to left spawned thread"
+                                        );
                                         if let Some(pid) = LEFT_PID.get() {
                                             let _ =
                                                 signal::kill(Pid::from_raw(*pid), Signal::SIGTERM)
@@ -895,7 +581,7 @@ fn main() -> ExitCode {
                                 Ok(Ok(status)) => {
                                     if let Some(code) = status.code() {
                                         if code == 0 {
-                                            info!("Left handle {}", status);
+                                            tracing::info!("Left handle {}", status);
                                         } else {
                                             left_res = left_res.and_then(|_| {
                                                 Err(format!("Left handle {}", status))
@@ -949,7 +635,7 @@ fn main() -> ExitCode {
     match main_cli() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            error!("{}", e);
+            tracing::error!("{}", e);
             e.report()
         }
     }
