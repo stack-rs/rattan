@@ -279,14 +279,13 @@ fn test_droptail_queue() {
                     .block_on(
                         op_endpoint.exec(RattanOp::ConfigCell(
                             "up_bw".to_string(),
-                            serde_json::to_value(BwCellConfig::<
-                                StdPacket,
-                                DropTailQueue<StdPacket>,
-                            >::new(
-                                Bandwidth::from_kbps(800),
-                                DropTailQueueConfig::new(10, None, BwType::default()),
-                                None,
-                            ))
+                            serde_json::to_value(
+                                BwCellConfig::<StdPacket, DropTailQueue<StdPacket>>::new(
+                                    Bandwidth::from_kbps(800),
+                                    DropTailQueueConfig::new(10, None, BwType::default()),
+                                    None,
+                                ),
+                            )
                             .unwrap(),
                         )),
                     )
@@ -317,14 +316,13 @@ fn test_droptail_queue() {
                     .block_on(
                         op_endpoint.exec(RattanOp::ConfigCell(
                             "up_bw".to_string(),
-                            serde_json::to_value(BwCellConfig::<
-                                StdPacket,
-                                DropTailQueue<StdPacket>,
-                            >::new(
-                                Bandwidth::from_kbps(40),
-                                DropTailQueueConfig::new(None, 500, BwType::default()),
-                                None,
-                            ))
+                            serde_json::to_value(
+                                BwCellConfig::<StdPacket, DropTailQueue<StdPacket>>::new(
+                                    Bandwidth::from_kbps(40),
+                                    DropTailQueueConfig::new(None, 500, BwType::default()),
+                                    None,
+                                ),
+                            )
                             .unwrap(),
                         )),
                     )
@@ -451,14 +449,13 @@ fn test_drophead_queue() {
                     .block_on(
                         op_endpoint.exec(RattanOp::ConfigCell(
                             "up_bw".to_string(),
-                            serde_json::to_value(BwCellConfig::<
-                                StdPacket,
-                                DropHeadQueue<StdPacket>,
-                            >::new(
-                                Bandwidth::from_kbps(800),
-                                DropHeadQueueConfig::new(10, None, BwType::default()),
-                                None,
-                            ))
+                            serde_json::to_value(
+                                BwCellConfig::<StdPacket, DropHeadQueue<StdPacket>>::new(
+                                    Bandwidth::from_kbps(800),
+                                    DropHeadQueueConfig::new(10, None, BwType::default()),
+                                    None,
+                                ),
+                            )
                             .unwrap(),
                         )),
                     )
@@ -491,14 +488,13 @@ fn test_drophead_queue() {
                     .block_on(
                         op_endpoint.exec(RattanOp::ConfigCell(
                             "up_bw".to_string(),
-                            serde_json::to_value(BwCellConfig::<
-                                StdPacket,
-                                DropHeadQueue<StdPacket>,
-                            >::new(
-                                Bandwidth::from_kbps(40),
-                                DropHeadQueueConfig::new(None, 500, BwType::default()),
-                                None,
-                            ))
+                            serde_json::to_value(
+                                BwCellConfig::<StdPacket, DropHeadQueue<StdPacket>>::new(
+                                    Bandwidth::from_kbps(40),
+                                    DropHeadQueueConfig::new(None, 500, BwType::default()),
+                                    None,
+                                ),
+                            )
                             .unwrap(),
                         )),
                     )

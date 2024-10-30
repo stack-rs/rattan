@@ -4,11 +4,6 @@ use clap::{Args, ValueEnum};
 use netem_trace::{Bandwidth, Delay};
 use paste::paste;
 use rattan_core::{
-    config::{
-        BwCellBuildConfig, BwReplayCellBuildConfig, BwReplayQueueConfig,
-        DelayCellBuildConfig, CellBuildConfig, LossCellBuildConfig, RattanConfig,
-        RattanResourceConfig,
-    },
     cells::{
         bandwidth::{
             queue::{
@@ -17,6 +12,10 @@ use rattan_core::{
             BwCellConfig,
         },
         StdPacket,
+    },
+    config::{
+        BwCellBuildConfig, BwReplayCellBuildConfig, BwReplayQueueConfig, CellBuildConfig,
+        DelayCellBuildConfig, LossCellBuildConfig, RattanConfig, RattanResourceConfig,
     },
     env::{StdNetEnvConfig, StdNetEnvMode},
 };

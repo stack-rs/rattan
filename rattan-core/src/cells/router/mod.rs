@@ -9,7 +9,7 @@ use std::{
 };
 use tracing::warn;
 
-use super::{ControlInterface, Cell, Egress, Ingress, Packet};
+use super::{Cell, ControlInterface, Egress, Ingress, Packet};
 
 pub mod routing;
 pub use routing::*;

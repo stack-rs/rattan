@@ -17,8 +17,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, span, trace, warn, Instrument, Level};
 
 use crate::{
-    control::{RattanController, RattanNotify, RattanOp, RattanOpEndpoint, RattanOpResult},
     cells::{Cell, Egress, Ingress, Packet},
+    control::{RattanController, RattanNotify, RattanOp, RattanOpEndpoint, RattanOpResult},
     error::{Error, RattanCoreError},
     metal::io::common::InterfaceDriver,
 };

@@ -5,11 +5,6 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use netem_trace::Bandwidth;
-use rattan_core::config::{
-    BwCellBuildConfig, DelayCellBuildConfig, CellBuildConfig, LossCellBuildConfig,
-    RattanConfig,
-};
-use rattan_core::control::RattanOp;
 use rattan_core::cells::{
     bandwidth::{
         queue::{InfiniteQueue, InfiniteQueueConfig},
@@ -19,6 +14,10 @@ use rattan_core::cells::{
     loss::LossCellConfig,
     StdPacket,
 };
+use rattan_core::config::{
+    BwCellBuildConfig, CellBuildConfig, DelayCellBuildConfig, LossCellBuildConfig, RattanConfig,
+};
+use rattan_core::control::RattanOp;
 use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;

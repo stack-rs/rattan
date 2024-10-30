@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use crate::{
-    core::CellFactory,
     cells::{
         router::{self, SimpleRoutingTable},
         Ingress, Packet,
     },
+    core::CellFactory,
 };
 
 pub type RouterCellBuildConfig = router::RouterCellConfig;

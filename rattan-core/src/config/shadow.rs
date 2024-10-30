@@ -1,6 +1,6 @@
 use crate::{
-    core::CellFactory,
     cells::{shadow, Packet},
+    core::CellFactory,
 };
 
 pub type ShadowCellBuildConfig = shadow::ShadowCellConfig;

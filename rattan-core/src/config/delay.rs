@@ -8,8 +8,8 @@ use netem_trace::{model::DelayTraceConfig, DelayTrace};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    core::CellFactory,
     cells::{delay, Packet},
+    core::CellFactory,
     error::Error,
 };
 

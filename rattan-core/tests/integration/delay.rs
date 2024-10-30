@@ -1,8 +1,8 @@
+use rattan_core::cells::{delay::DelayCellConfig, StdPacket};
 /// This test need to be run as root (CAP_NET_ADMIN, CAP_SYS_ADMIN and CAP_SYS_RAW)
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test delay --all-features -- --nocapture
-use rattan_core::config::{DelayCellBuildConfig, CellBuildConfig, RattanConfig};
+use rattan_core::config::{CellBuildConfig, DelayCellBuildConfig, RattanConfig};
 use rattan_core::control::RattanOp;
-use rattan_core::cells::{delay::DelayCellConfig, StdPacket};
 use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;

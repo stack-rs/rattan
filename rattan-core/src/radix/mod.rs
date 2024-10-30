@@ -16,13 +16,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, span, warn, Level};
 
 use crate::{
-    config::{CellBuildConfig, RattanConfig},
-    control::{RattanOp, RattanOpEndpoint, RattanOpResult},
-    core::{CellFactory, RattanCore},
     cells::{
         external::{VirtualEthernet, VirtualEthernetId},
         Cell, Packet,
     },
+    config::{CellBuildConfig, RattanConfig},
+    control::{RattanOp, RattanOpEndpoint, RattanOpResult},
+    core::{CellFactory, RattanCore},
     env::{get_std_env, StdNetEnv, StdNetEnvMode},
     error::Error,
     metal::{io::common::InterfaceDriver, netns::NetNsGuard},

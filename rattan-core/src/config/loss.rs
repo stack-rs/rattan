@@ -8,8 +8,8 @@ use rand::{rngs::StdRng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    core::CellFactory,
     cells::{loss, Packet},
+    core::CellFactory,
     error::Error,
 };
 

@@ -1,12 +1,11 @@
 use bandwidth::Bandwidth;
 use rattan_core::{
-    config::{
-        BwCellBuildConfig, DelayCellBuildConfig, CellBuildConfig, LossCellBuildConfig,
-        RattanConfig,
-    },
     cells::{
         bandwidth::{queue::InfiniteQueueConfig, BwCellConfig},
         StdPacket,
+    },
+    config::{
+        BwCellBuildConfig, CellBuildConfig, DelayCellBuildConfig, LossCellBuildConfig, RattanConfig,
     },
     env::{StdNetEnvConfig, StdNetEnvMode},
     metal::io::af_packet::AfPacketDriver,

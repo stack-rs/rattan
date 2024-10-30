@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use rattan_core::{
-    config::{BwCellBuildConfig, CellBuildConfig, RattanConfig},
     cells::{
         bandwidth::{queue::InfiniteQueueConfig, BwCellConfig},
         StdPacket,
     },
+    config::{BwCellBuildConfig, CellBuildConfig, RattanConfig},
     env::{StdNetEnvConfig, StdNetEnvMode},
     metal::io::af_packet::AfPacketDriver,
     radix::RattanRadix,

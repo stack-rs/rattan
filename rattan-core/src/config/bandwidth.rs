@@ -8,7 +8,6 @@ use netem_trace::{model::BwTraceConfig, BwTrace};
 use tracing::{debug, error};
 
 use crate::{
-    core::CellFactory,
     cells::{
         bandwidth::{
             self,
@@ -17,6 +16,7 @@ use crate::{
         },
         Packet,
     },
+    core::CellFactory,
     error::Error,
 };
 
