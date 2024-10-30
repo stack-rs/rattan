@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use rattan_core::{
-    config::{BwDeviceBuildConfig, DeviceBuildConfig, RattanConfig},
-    devices::{
-        bandwidth::{queue::InfiniteQueueConfig, BwDeviceConfig},
+    config::{BwCellBuildConfig, CellBuildConfig, RattanConfig},
+    cells::{
+        bandwidth::{queue::InfiniteQueueConfig, BwCellConfig},
         StdPacket,
     },
     env::{StdNetEnvConfig, StdNetEnvMode},
@@ -22,17 +22,17 @@ fn prepare_env() -> RattanRadix<AfPacketDriver> {
         },
         ..Default::default()
     };
-    config.devices.insert(
+    config.cells.insert(
         "up_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
             None,
             InfiniteQueueConfig::new(),
             None,
         ))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
             None,
             InfiniteQueueConfig::new(),
             None,

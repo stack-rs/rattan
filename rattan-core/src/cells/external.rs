@@ -1,11 +1,11 @@
-/// External devices are all devices not created by Rattan.
-/// Network interfaces, physical or virtual, are examples of external devices.
+/// External cells are all cells not created by Rattan.
+/// Network interfaces, physical or virtual, are examples of external cells.
 use crate::{
-    devices::{Device, Packet},
+    cells::{Cell, Packet},
     error::{Error, TokioRuntimeError},
     metal::{
         io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender},
-        veth::VethDevice,
+        veth::VethCell,
     },
     radix::{
         log::{PktAction, TCPLogEntry},
@@ -380,7 +380,7 @@ where
     D::Sender: Send + Sync,
     D::Receiver: Send,
 {
-    _device: Arc<VethDevice>,
+    _cell: Arc<VethCell>,
     ingress: Arc<VirtualEthernetIngress<D>>,
     egress: VirtualEthernetEgress<D>,
     control_interface: Arc<VirtualEthernetControlInterface>,
@@ -393,15 +393,15 @@ where
     D::Sender: Send + Sync,
     D::Receiver: Send,
 {
-    #[instrument(skip_all, name="VirtualEthernet", fields(name = device.name))]
-    pub fn new(device: Arc<VethDevice>, id: VirtualEthernetId) -> Result<Self, Error> {
+    #[instrument(skip_all, name="VirtualEthernet", fields(name = cell.name))]
+    pub fn new(cell: Arc<VethCell>, id: VirtualEthernetId) -> Result<Self, Error> {
         debug!("New VirtualEthernet");
-        let driver = D::bind_device(device.clone())?;
+        let driver = D::bind_cell(cell.clone())?;
         let dev_senders = driver.iter().map(|d| d.sender()).collect();
         let log_tx = LOGGING_TX.get().cloned();
         let base_ts = get_clock_ns();
         Ok(Self {
-            _device: device,
+            _cell: cell,
             ingress: Arc::new(VirtualEthernetIngress::new(
                 dev_senders,
                 id,
@@ -416,7 +416,7 @@ where
     }
 }
 
-impl<D> Device<D::Packet> for VirtualEthernet<D>
+impl<D> Cell<D::Packet> for VirtualEthernet<D>
 where
     D: InterfaceDriver + Send + 'static,
     D::Packet: Packet + Send + Sync + 'static,

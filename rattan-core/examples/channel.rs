@@ -1,11 +1,11 @@
 use bandwidth::Bandwidth;
 use rattan_core::{
     config::{
-        BwDeviceBuildConfig, DelayDeviceBuildConfig, DeviceBuildConfig, LossDeviceBuildConfig,
+        BwCellBuildConfig, DelayCellBuildConfig, CellBuildConfig, LossCellBuildConfig,
         RattanConfig,
     },
-    devices::{
-        bandwidth::{queue::InfiniteQueueConfig, BwDeviceConfig},
+    cells::{
+        bandwidth::{queue::InfiniteQueueConfig, BwCellConfig},
         StdPacket,
     },
     env::{StdNetEnvConfig, StdNetEnvMode},
@@ -35,37 +35,37 @@ fn main() {
         ..Default::default()
     };
 
-    config.devices.insert(
+    config.cells.insert(
         "up_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
             None,
             InfiniteQueueConfig::new(),
             None,
         ))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
             None,
             InfiniteQueueConfig::new(),
             None,
         ))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "up_delay".to_string(),
-        DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(Duration::from_millis(0))),
+        CellBuildConfig::Delay(DelayCellBuildConfig::new(Duration::from_millis(0))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_delay".to_string(),
-        DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(Duration::from_millis(0))),
+        CellBuildConfig::Delay(DelayCellBuildConfig::new(Duration::from_millis(0))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "up_loss".to_string(),
-        DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([])),
+        CellBuildConfig::Loss(LossCellBuildConfig::new([])),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_loss".to_string(),
-        DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([])),
+        CellBuildConfig::Loss(LossCellBuildConfig::new([])),
     );
     config.links = HashMap::from([
         ("left".to_string(), "up_bw".to_string()),
@@ -84,7 +84,7 @@ fn main() {
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
-    // Before config the BwDevice, the bandwidth should be around 1Gbps
+    // Before config the BwCell, the bandwidth should be around 1Gbps
     {
         let right_handle = radix
             .right_spawn(None, || {

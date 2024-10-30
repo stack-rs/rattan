@@ -14,7 +14,7 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
 
-use rattan_core::devices::StdPacket;
+use rattan_core::cells::StdPacket;
 use rattan_core::env::StdNetEnvMode;
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
@@ -316,8 +316,8 @@ fn main() -> ExitCode {
         }
 
         // Check if the config can correctly spawn
-        if config.devices.is_empty() {
-            tracing::warn!("No devices specified in config");
+        if config.cells.is_empty() {
+            tracing::warn!("No cells specified in config");
         }
         if config.links.is_empty() {
             tracing::warn!("No links specified in config");

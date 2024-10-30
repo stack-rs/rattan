@@ -1,5 +1,5 @@
 ---
-source: rattan-core/src/devices/loss.rs
+source: rattan-core/src/cells/loss.rs
 expression: loss_seq
 ---
 [

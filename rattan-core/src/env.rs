@@ -3,7 +3,7 @@ use crate::{
     metal::{
         netns::NetNs,
         route::{add_arp_entry_with_netns, add_route_with_netns, set_loopback_up_with_netns},
-        veth::{MacAddr, VethDevice, VethPair, VethPairBuilder},
+        veth::{MacAddr, VethCell, VethPair, VethPairBuilder},
     },
 };
 use futures::TryStreamExt;
@@ -527,13 +527,13 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
 
 #[derive(Debug)]
 pub struct ContainerEnv {
-    pub veth_list: Vec<VethDevice>,
-    pub fake_peer: Arc<VethDevice>,
+    pub veth_list: Vec<VethCell>,
+    pub fake_peer: Arc<VethCell>,
 }
 
 #[instrument(skip_all, level = "debug")]
 pub fn get_container_env() -> crate::error::Result<ContainerEnv> {
-    debug!("Getting all veth devices");
+    debug!("Getting all veth cells");
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -545,7 +545,7 @@ pub fn get_container_env() -> crate::error::Result<ContainerEnv> {
     let (conn, rtnl_handle, _) = rtnetlink::new_connection()?;
     rt.spawn(conn);
 
-    // Get all link device
+    // Get all link cell
     let mut links = rtnl_handle.link().get().execute();
     let mut veth_list = vec![];
     rt.block_on(async {
@@ -569,7 +569,7 @@ pub fn get_container_env() -> crate::error::Result<ContainerEnv> {
                 }
             }
 
-            // Skip lo devices
+            // Skip lo cells
             if let (Some(name), Some(mac_addr)) = (name, mac_addr) {
                 if name.starts_with("lo") {
                     continue;
@@ -592,7 +592,7 @@ pub fn get_container_env() -> crate::error::Result<ContainerEnv> {
                         continue;
                     }
 
-                    let veth = VethDevice {
+                    let veth = VethCell {
                         name,
                         index,
                         mac_addr,
@@ -601,7 +601,7 @@ pub fn get_container_env() -> crate::error::Result<ContainerEnv> {
                         namespace,
                     };
 
-                    debug!(?veth, "Get veth device");
+                    debug!(?veth, "Get veth cell");
                     veth_list.push(veth);
                 }
             }
@@ -611,7 +611,7 @@ pub fn get_container_env() -> crate::error::Result<ContainerEnv> {
     // FIXME: add arp for each veth
     veth_list.sort_by(|a, b| a.index.cmp(&b.index));
 
-    // FIXME: fake a peer veth device to get mac address
+    // FIXME: fake a peer veth cell to get mac address
     let mut fake_peer = veth_list[0].clone();
     fake_peer.mac_addr = MacAddr::from_str("ff:ff:ff:ff:ff:ff").unwrap();
     let fake_peer = Arc::new(fake_peer);

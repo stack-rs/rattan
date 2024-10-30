@@ -285,7 +285,7 @@ pub trait ControlInterface: Send + Sync + 'static {
 
 #[cfg(feature = "serde")]
 pub trait JsonControlInterface: Send + Sync {
-    fn config_device(&self, payload: serde_json::Value) -> Result<(), Error>;
+    fn config_cell(&self, payload: serde_json::Value) -> Result<(), Error>;
 }
 
 #[cfg(feature = "serde")]
@@ -293,7 +293,7 @@ impl<T> JsonControlInterface for T
 where
     T: ControlInterface,
 {
-    fn config_device(&self, payload: serde_json::Value) -> Result<(), Error> {
+    fn config_cell(&self, payload: serde_json::Value) -> Result<(), Error> {
         match serde_json::from_value(payload) {
             Ok(payload) => self.set_config(payload),
             Err(e) => Err(Error::ConfigError(e.to_string())),
@@ -302,7 +302,7 @@ where
 }
 
 #[async_trait]
-pub trait Device<P>
+pub trait Cell<P>
 where
     P: Packet,
 {

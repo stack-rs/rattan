@@ -3,7 +3,7 @@ use plain::Plain;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::devices::FlowDesc;
+use crate::cells::FlowDesc;
 
 pub enum RattanLogOp {
     Entry(Vec<u8>),

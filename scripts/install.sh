@@ -34,7 +34,7 @@ EOF
 
 usage() {
     cat >&2 <<EOL
-Install rattan and grant necessary privileges
+Install rattan and grant necessary capabilities
 Usage:
 $myname options RATTAN_BINARY_PATH ...
 

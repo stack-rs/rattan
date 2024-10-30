@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::{devices::Packet, env::StdNetEnvConfig};
+use crate::{cells::Packet, env::StdNetEnvConfig};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,7 @@ pub struct RattanConfig<P: Packet> {
     #[cfg_attr(feature = "http", serde(default))]
     pub http: HttpConfig,
     #[cfg_attr(feature = "serde", serde(default))]
-    pub devices: HashMap<String, DeviceBuildConfig<P>>,
+    pub cells: HashMap<String, CellBuildConfig<P>>,
     #[cfg_attr(feature = "serde", serde(default))]
     pub links: HashMap<String, String>,
     #[cfg_attr(feature = "serde", serde(default))]
@@ -45,7 +45,7 @@ impl<P: Packet> Default for RattanConfig<P> {
             env: StdNetEnvConfig::default(),
             #[cfg(feature = "http")]
             http: HttpConfig::default(),
-            devices: HashMap::new(),
+            cells: HashMap::new(),
             links: HashMap::new(),
             resource: RattanResourceConfig::new(),
             general: RattanGeneralConfig::new(),
@@ -97,14 +97,14 @@ impl RattanGeneralConfig {
     serde(bound = "", tag = "type")
 )]
 #[derive(Clone, Debug)]
-pub enum DeviceBuildConfig<P: Packet> {
-    Bw(BwDeviceBuildConfig<P>),
-    BwReplay(BwReplayDeviceBuildConfig<P>),
-    Delay(DelayDeviceBuildConfig),
-    DelayReplay(DelayReplayDeviceBuildConfig),
-    Loss(LossDeviceBuildConfig),
-    LossReplay(LossReplayDeviceBuildConfig),
-    Shadow(ShadowDeviceBuildConfig),
-    Router(RouterDeviceBuildConfig),
+pub enum CellBuildConfig<P: Packet> {
+    Bw(BwCellBuildConfig<P>),
+    BwReplay(BwReplayCellBuildConfig<P>),
+    Delay(DelayCellBuildConfig),
+    DelayReplay(DelayReplayCellBuildConfig),
+    Loss(LossCellBuildConfig),
+    LossReplay(LossReplayCellBuildConfig),
+    Shadow(ShadowCellBuildConfig),
+    Router(RouterCellBuildConfig),
     Custom,
 }

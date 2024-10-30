@@ -8,18 +8,18 @@ use futures::TryStreamExt;
 use rand::{rngs::StdRng, SeedableRng};
 use rattan::{
     core::{RattanMachine, RattanMachineConfig},
-    devices::{
-        bandwidth::{queue::InfiniteQueue, BwDevice, BwDeviceConfig, MAX_BANDWIDTH},
+    cells::{
+        bandwidth::{queue::InfiniteQueue, BwCell, BwCellConfig, MAX_BANDWIDTH},
         external::VirtualEthernet,
     },
     env::get_container_env,
     metal::{io::AfPacketDriver, netns::NetNs},
 };
 use rattan::{
-    devices::{
-        delay::{DelayDevice, DelayDeviceConfig},
-        loss::{LossDevice, LossDeviceConfig},
-        ControlInterface, Device, StdPacket,
+    cells::{
+        delay::{DelayCell, DelayCellConfig},
+        loss::{LossCell, LossCellConfig},
+        ControlInterface, Cell, StdPacket,
     },
     netem_trace::Bandwidth,
 };
@@ -155,33 +155,33 @@ pub fn docker_main(opts: CommandArgs) -> anyhow::Result<()> {
             async move {
                 let rng = StdRng::seed_from_u64(42);
 
-                let left_device = VirtualEthernet::<StdPacket, AfPacketDriver>::new(Arc::new(
+                let left_cell = VirtualEthernet::<StdPacket, AfPacketDriver>::new(Arc::new(
                     container_env.veth_list[0].clone(),
                 ));
-                let right_device = VirtualEthernet::<StdPacket, AfPacketDriver>::new(Arc::new(
+                let right_cell = VirtualEthernet::<StdPacket, AfPacketDriver>::new(Arc::new(
                     container_env.veth_list[1].clone(),
                 ));
 
-                let (left_device_rx, left_device_tx) = machine.add_device(left_device);
-                info!(left_device_rx, left_device_tx);
-                let (right_device_rx, right_device_tx) = machine.add_device(right_device);
-                info!(right_device_rx, right_device_tx);
-                let mut left_fd = vec![left_device_rx];
-                let mut right_fd = vec![right_device_rx];
+                let (left_cell_rx, left_cell_tx) = machine.add_cell(left_cell);
+                info!(left_cell_rx, left_cell_tx);
+                let (right_cell_rx, right_cell_tx) = machine.add_cell(right_cell);
+                info!(right_cell_rx, right_cell_tx);
+                let mut left_fd = vec![left_cell_rx];
+                let mut right_fd = vec![right_cell_rx];
                 if let Some(bandwidth) = bandwidth {
-                    let left_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
-                    let right_bw_device = BwDevice::new(MAX_BANDWIDTH, InfiniteQueue::new());
-                    let left_bw_ctl = left_bw_device.control_interface();
-                    let right_bw_ctl = right_bw_device.control_interface();
+                    let left_bw_cell = BwCell::new(MAX_BANDWIDTH, InfiniteQueue::new());
+                    let right_bw_cell = BwCell::new(MAX_BANDWIDTH, InfiniteQueue::new());
+                    let left_bw_ctl = left_bw_cell.control_interface();
+                    let right_bw_ctl = right_bw_cell.control_interface();
                     left_bw_ctl
-                        .set_config(BwDeviceConfig::new(bandwidth, None))
+                        .set_config(BwCellConfig::new(bandwidth, None))
                         .unwrap();
                     right_bw_ctl
-                        .set_config(BwDeviceConfig::new(bandwidth, None))
+                        .set_config(BwCellConfig::new(bandwidth, None))
                         .unwrap();
-                    let (left_bw_rx, left_bw_tx) = machine.add_device(left_bw_device);
+                    let (left_bw_rx, left_bw_tx) = machine.add_cell(left_bw_cell);
                     info!(left_bw_rx, left_bw_tx);
-                    let (right_bw_rx, right_bw_tx) = machine.add_device(right_bw_device);
+                    let (right_bw_rx, right_bw_tx) = machine.add_cell(right_bw_cell);
                     info!(right_bw_rx, right_bw_tx);
                     left_fd.push(left_bw_tx);
                     left_fd.push(left_bw_rx);
@@ -189,19 +189,19 @@ pub fn docker_main(opts: CommandArgs) -> anyhow::Result<()> {
                     right_fd.push(right_bw_rx);
                 }
                 if let Some(delay) = delay {
-                    let left_delay_device = DelayDevice::<StdPacket>::new();
-                    let right_delay_device = DelayDevice::<StdPacket>::new();
-                    let left_delay_ctl = left_delay_device.control_interface();
-                    let right_delay_ctl = right_delay_device.control_interface();
+                    let left_delay_cell = DelayCell::<StdPacket>::new();
+                    let right_delay_cell = DelayCell::<StdPacket>::new();
+                    let left_delay_ctl = left_delay_cell.control_interface();
+                    let right_delay_ctl = right_delay_cell.control_interface();
                     left_delay_ctl
-                        .set_config(DelayDeviceConfig::new(delay))
+                        .set_config(DelayCellConfig::new(delay))
                         .unwrap();
                     right_delay_ctl
-                        .set_config(DelayDeviceConfig::new(delay))
+                        .set_config(DelayCellConfig::new(delay))
                         .unwrap();
-                    let (left_delay_rx, left_delay_tx) = machine.add_device(left_delay_device);
+                    let (left_delay_rx, left_delay_tx) = machine.add_cell(left_delay_cell);
                     info!(left_delay_rx, left_delay_tx);
-                    let (right_delay_rx, right_delay_tx) = machine.add_device(right_delay_device);
+                    let (right_delay_rx, right_delay_tx) = machine.add_cell(right_delay_cell);
                     info!(right_delay_rx, right_delay_tx);
                     left_fd.push(left_delay_tx);
                     left_fd.push(left_delay_rx);
@@ -209,15 +209,15 @@ pub fn docker_main(opts: CommandArgs) -> anyhow::Result<()> {
                     right_fd.push(right_delay_rx);
                 }
                 if let Some(loss) = loss {
-                    let left_loss_device = LossDevice::<StdPacket, StdRng>::new(rng.clone());
-                    let right_loss_device = LossDevice::<StdPacket, StdRng>::new(rng);
-                    let right_loss_ctl = right_loss_device.control_interface();
+                    let left_loss_cell = LossCell::<StdPacket, StdRng>::new(rng.clone());
+                    let right_loss_cell = LossCell::<StdPacket, StdRng>::new(rng);
+                    let right_loss_ctl = right_loss_cell.control_interface();
                     right_loss_ctl
-                        .set_config(LossDeviceConfig::new([loss]))
+                        .set_config(LossCellConfig::new([loss]))
                         .unwrap();
-                    let (left_loss_rx, left_loss_tx) = machine.add_device(left_loss_device);
+                    let (left_loss_rx, left_loss_tx) = machine.add_cell(left_loss_cell);
                     info!(left_loss_rx, left_loss_tx);
-                    let (right_loss_rx, right_loss_tx) = machine.add_device(right_loss_device);
+                    let (right_loss_rx, right_loss_tx) = machine.add_cell(right_loss_cell);
                     info!(right_loss_rx, right_loss_tx);
                     left_fd.push(left_loss_tx);
                     left_fd.push(left_loss_rx);
@@ -225,19 +225,19 @@ pub fn docker_main(opts: CommandArgs) -> anyhow::Result<()> {
                     right_fd.push(right_loss_rx);
                 }
 
-                left_fd.push(right_device_tx);
+                left_fd.push(right_cell_tx);
                 if left_fd.len() % 2 != 0 {
-                    panic!("Wrong number of devices");
+                    panic!("Wrong number of cells");
                 }
                 for i in 0..left_fd.len() / 2 {
-                    machine.link_device(left_fd[i * 2], left_fd[i * 2 + 1]);
+                    machine.link_cell(left_fd[i * 2], left_fd[i * 2 + 1]);
                 }
-                right_fd.push(left_device_tx);
+                right_fd.push(left_cell_tx);
                 if right_fd.len() % 2 != 0 {
-                    panic!("Wrong number of devices");
+                    panic!("Wrong number of cells");
                 }
                 for i in 0..right_fd.len() / 2 {
-                    machine.link_device(right_fd[i * 2], right_fd[i * 2 + 1]);
+                    machine.link_cell(right_fd[i * 2], right_fd[i * 2 + 1]);
                 }
 
                 let config = RattanMachineConfig {

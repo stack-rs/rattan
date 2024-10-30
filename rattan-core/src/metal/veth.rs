@@ -12,8 +12,8 @@ use tracing::{debug, error, info, instrument, span, Level};
 use super::ioctl::disable_checksum_offload;
 
 pub struct IpVethPair {
-    pub left: Arc<Mutex<IpVethDevice>>,
-    pub right: Arc<Mutex<IpVethDevice>>,
+    pub left: Arc<Mutex<IpVethCell>>,
+    pub right: Arc<Mutex<IpVethCell>>,
 }
 
 impl IpVethPair {
@@ -35,7 +35,7 @@ impl IpVethPair {
             ))
         } else {
             let pair = IpVethPair {
-                left: Arc::new(Mutex::new(IpVethDevice {
+                left: Arc::new(Mutex::new(IpVethCell {
                     name: name.as_ref().to_string(),
                     index: if_nametoindex(name.as_ref())?,
                     mac_addr: None,
@@ -43,7 +43,7 @@ impl IpVethPair {
                     peer: None,
                     namespace: NetNs::current()?,
                 })),
-                right: Arc::new(Mutex::new(IpVethDevice {
+                right: Arc::new(Mutex::new(IpVethCell {
                     name: peer_name.as_ref().to_string(),
                     index: if_nametoindex(peer_name.as_ref())?,
                     mac_addr: None,
@@ -94,17 +94,17 @@ impl Drop for IpVethPair {
     }
 }
 
-pub struct IpVethDevice {
+pub struct IpVethCell {
     pub name: String,
     pub index: u32,
     pub mac_addr: Option<MacAddr>,
     pub ip_addr: Option<(IpAddr, u8)>,
-    pub peer: Option<Weak<Mutex<IpVethDevice>>>,
+    pub peer: Option<Weak<Mutex<IpVethCell>>>,
     namespace: std::sync::Arc<NetNs>,
 }
 
-impl IpVethDevice {
-    pub fn peer(&self) -> Arc<Mutex<IpVethDevice>> {
+impl IpVethCell {
+    pub fn peer(&self) -> Arc<Mutex<IpVethCell>> {
         self.peer.as_ref().unwrap().upgrade().unwrap()
     }
 
@@ -237,17 +237,17 @@ impl IpVethDevice {
 
 #[derive(Debug)]
 pub struct VethPair {
-    pub left: Arc<VethDevice>,
-    pub right: Arc<VethDevice>,
+    pub left: Arc<VethCell>,
+    pub right: Arc<VethCell>,
 }
 
 #[derive(Debug, Clone)]
-pub struct VethDevice {
+pub struct VethCell {
     pub name: String,
     pub index: u32,
     pub mac_addr: MacAddr,
     pub ip_addr: (IpAddr, u8),
-    pub peer: OnceCell<Weak<VethDevice>>,
+    pub peer: OnceCell<Weak<VethCell>>,
     pub namespace: Arc<NetNs>,
 }
 
@@ -335,7 +335,7 @@ impl VethPairBuilder {
             .map_err(|e| VethError::CreateVethPairError(e.to_string()))?;
 
         let pair = VethPair {
-            left: Arc::new(VethDevice {
+            left: Arc::new(VethCell {
                 name: name.clone().0,
                 index: if_nametoindex(name.clone().0.as_str())?,
                 mac_addr: mac_addr.0,
@@ -343,7 +343,7 @@ impl VethPairBuilder {
                 peer: OnceCell::new(),
                 namespace: self.namespace.0.unwrap_or(NetNs::current()?),
             }),
-            right: Arc::new(VethDevice {
+            right: Arc::new(VethCell {
                 name: name.clone().1,
                 index: if_nametoindex(name.clone().1.as_str())?,
                 mac_addr: mac_addr.1,
@@ -355,18 +355,18 @@ impl VethPairBuilder {
         pair.left.peer.set(Arc::downgrade(&pair.right)).unwrap();
         pair.right.peer.set(Arc::downgrade(&pair.left)).unwrap();
 
-        for device in [pair.left.clone(), pair.right.clone()] {
+        for cell in [pair.left.clone(), pair.right.clone()] {
             // Set namespace
             rtnl_handle
                 .link()
-                .set(device.index)
-                .setns_by_fd(device.namespace.as_raw_fd())
+                .set(cell.index)
+                .setns_by_fd(cell.namespace.as_raw_fd())
                 .execute()
                 .await
                 .map_err(|e| VethError::SetError(e.to_string()))?;
 
             // Enter namespace
-            let _ns_guard: NetNsGuard = NetNsGuard::new(device.namespace.clone())?;
+            let _ns_guard: NetNsGuard = NetNsGuard::new(cell.namespace.clone())?;
             std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime spawn
             let (conn, rtnl_handle, _) = rtnetlink::new_connection()?;
             tokio_handle.spawn(conn);
@@ -374,8 +374,8 @@ impl VethPairBuilder {
             // Set mac address
             rtnl_handle
                 .link()
-                .set(device.index)
-                .address(Vec::from(device.mac_addr.bytes))
+                .set(cell.index)
+                .address(Vec::from(cell.mac_addr.bytes))
                 .execute()
                 .await
                 .map_err(|e| VethError::SetError(e.to_string()))?;
@@ -383,7 +383,7 @@ impl VethPairBuilder {
             // Set ip address
             rtnl_handle
                 .address()
-                .add(device.index, device.ip_addr.0, device.ip_addr.1)
+                .add(cell.index, cell.ip_addr.0, cell.ip_addr.1)
                 .execute()
                 .await
                 .map_err(|e| VethError::SetError(e.to_string()))?;
@@ -391,14 +391,14 @@ impl VethPairBuilder {
             // Set up
             rtnl_handle
                 .link()
-                .set(device.index)
+                .set(cell.index)
                 .up()
                 .execute()
                 .await
                 .map_err(|e| VethError::SetError(e.to_string()))?;
 
             // Disable checksum offload
-            disable_checksum_offload(device.name.as_str())?;
+            disable_checksum_offload(cell.name.as_str())?;
         }
 
         info!(
@@ -471,8 +471,8 @@ impl Drop for VethPair {
     }
 }
 
-impl VethDevice {
-    pub fn peer(&self) -> Arc<VethDevice> {
+impl VethCell {
+    pub fn peer(&self) -> Arc<VethCell> {
         self.peer.get().unwrap().upgrade().unwrap()
     }
 }

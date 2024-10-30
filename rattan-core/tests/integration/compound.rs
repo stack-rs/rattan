@@ -6,17 +6,17 @@ use std::time::Duration;
 
 use netem_trace::Bandwidth;
 use rattan_core::config::{
-    BwDeviceBuildConfig, DelayDeviceBuildConfig, DeviceBuildConfig, LossDeviceBuildConfig,
+    BwCellBuildConfig, DelayCellBuildConfig, CellBuildConfig, LossCellBuildConfig,
     RattanConfig,
 };
 use rattan_core::control::RattanOp;
-use rattan_core::devices::{
+use rattan_core::cells::{
     bandwidth::{
         queue::{InfiniteQueue, InfiniteQueueConfig},
-        BwDeviceConfig,
+        BwCellConfig,
     },
-    delay::DelayDeviceConfig,
-    loss::LossDeviceConfig,
+    delay::DelayCellConfig,
+    loss::LossCellConfig,
     StdPacket,
 };
 use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
@@ -37,37 +37,37 @@ fn test_compound() {
         },
         ..Default::default()
     };
-    config.devices.insert(
+    config.cells.insert(
         "up_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
             None,
             InfiniteQueueConfig::new(),
             None,
         ))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
             None,
             InfiniteQueueConfig::new(),
             None,
         ))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "up_delay".to_string(),
-        DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(Duration::from_millis(0))),
+        CellBuildConfig::Delay(DelayCellBuildConfig::new(Duration::from_millis(0))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_delay".to_string(),
-        DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(Duration::from_millis(0))),
+        CellBuildConfig::Delay(DelayCellBuildConfig::new(Duration::from_millis(0))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "up_loss".to_string(),
-        DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([])),
+        CellBuildConfig::Loss(LossCellBuildConfig::new([])),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_loss".to_string(),
-        DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([])),
+        CellBuildConfig::Loss(LossCellBuildConfig::new([])),
     );
     config.links = HashMap::from([
         ("left".to_string(), "up_bw".to_string()),
@@ -83,7 +83,7 @@ fn test_compound() {
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
-    // Before config the BwDevice, the bandwidth should be around 1Gbps
+    // Before config the BwCell, the bandwidth should be around 1Gbps
     {
         let _span = span!(Level::INFO, "iperf_no_limit").entered();
         info!("try to iperf with no bandwidth limit");
@@ -136,15 +136,15 @@ fn test_compound() {
         info!("bitrate: {:?}", Bandwidth::from_bps(bitrate));
     }
 
-    // After set the BwDevice, the bandwidth should be between 80-100Mbps
+    // After set the BwCell, the bandwidth should be between 80-100Mbps
     std::thread::sleep(std::time::Duration::from_millis(100));
     {
         let _span = span!(Level::INFO, "iperf_with_limit").entered();
         info!("try to iperf with bandwidth limit set to 100Mbps");
         radix
-            .op_block_exec(RattanOp::ConfigDevice(
+            .op_block_exec(RattanOp::ConfigCell(
                 "up_bw".to_string(),
-                serde_json::to_value(BwDeviceConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
+                serde_json::to_value(BwCellConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
                     Bandwidth::from_mbps(100),
                     None,
                     None,
@@ -153,9 +153,9 @@ fn test_compound() {
             ))
             .unwrap();
         radix
-            .op_block_exec(RattanOp::ConfigDevice(
+            .op_block_exec(RattanOp::ConfigCell(
                 "down_bw".to_string(),
-                serde_json::to_value(BwDeviceConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
+                serde_json::to_value(BwCellConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
                     Bandwidth::from_mbps(100),
                     None,
                     None,
@@ -164,21 +164,21 @@ fn test_compound() {
             ))
             .unwrap();
         radix
-            .op_block_exec(RattanOp::ConfigDevice(
+            .op_block_exec(RattanOp::ConfigCell(
                 "up_delay".to_string(),
-                serde_json::to_value(DelayDeviceConfig::new(Duration::from_millis(5))).unwrap(),
+                serde_json::to_value(DelayCellConfig::new(Duration::from_millis(5))).unwrap(),
             ))
             .unwrap();
         radix
-            .op_block_exec(RattanOp::ConfigDevice(
+            .op_block_exec(RattanOp::ConfigCell(
                 "down_delay".to_string(),
-                serde_json::to_value(DelayDeviceConfig::new(Duration::from_millis(10))).unwrap(),
+                serde_json::to_value(DelayCellConfig::new(Duration::from_millis(10))).unwrap(),
             ))
             .unwrap();
         radix
-            .op_block_exec(RattanOp::ConfigDevice(
+            .op_block_exec(RattanOp::ConfigCell(
                 "up_loss".to_string(),
-                serde_json::to_value(LossDeviceConfig::new(vec![0.001; 10])).unwrap(),
+                serde_json::to_value(LossCellConfig::new(vec![0.001; 10])).unwrap(),
             ))
             .unwrap();
 

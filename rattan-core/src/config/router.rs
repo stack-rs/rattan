@@ -1,23 +1,23 @@
 use std::sync::Arc;
 
 use crate::{
-    core::DeviceFactory,
-    devices::{
+    core::CellFactory,
+    cells::{
         router::{self, SimpleRoutingTable},
         Ingress, Packet,
     },
 };
 
-pub type RouterDeviceBuildConfig = router::RouterDeviceConfig;
+pub type RouterCellBuildConfig = router::RouterCellConfig;
 
-impl RouterDeviceBuildConfig {
+impl RouterCellBuildConfig {
     pub fn into_factory<P: Packet>(
         self,
         receivers: Vec<Arc<dyn Ingress<P>>>,
-    ) -> impl DeviceFactory<router::RouterDevice<P, SimpleRoutingTable>> {
+    ) -> impl CellFactory<router::RouterCell<P, SimpleRoutingTable>> {
         move |handle| {
             let _guard = handle.enter();
-            router::RouterDevice::new(receivers, self.routing_table)
+            router::RouterCell::new(receivers, self.routing_table)
         }
     }
 }

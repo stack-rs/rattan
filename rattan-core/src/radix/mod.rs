@@ -16,12 +16,12 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, span, warn, Level};
 
 use crate::{
-    config::{DeviceBuildConfig, RattanConfig},
+    config::{CellBuildConfig, RattanConfig},
     control::{RattanOp, RattanOpEndpoint, RattanOpResult},
-    core::{DeviceFactory, RattanCore},
-    devices::{
+    core::{CellFactory, RattanCore},
+    cells::{
         external::{VirtualEthernet, VirtualEthernetId},
-        Device, Packet,
+        Cell, Packet,
     },
     env::{get_std_env, StdNetEnv, StdNetEnvMode},
     error::Error,
@@ -270,25 +270,25 @@ where
             http_thread_handle,
         };
         radix.init_veth()?; // build veth pair at the beginning
-        radix.load_devices_config(config.devices)?;
-        radix.link_devices(config.links)?;
+        radix.load_cells_config(config.cells)?;
+        radix.link_cells(config.links)?;
         Ok(radix)
     }
 
-    pub fn build_device<V, F>(
+    pub fn build_cell<V, F>(
         &mut self,
         id: String,
         builder: F,
     ) -> Result<Arc<V::ControlInterfaceType>, Error>
     where
-        V: Device<D::Packet>,
-        F: DeviceFactory<V>,
+        V: Cell<D::Packet>,
+        F: CellFactory<V>,
     {
-        self.rattan.build_device(id, builder)
+        self.rattan.build_cell(id, builder)
     }
 
-    pub fn link_device(&mut self, rx_id: String, tx_id: String) {
-        self.rattan.link_device(rx_id, tx_id);
+    pub fn link_cell(&mut self, rx_id: String, tx_id: String) {
+        self.rattan.link_cell(rx_id, tx_id);
     }
 
     pub fn init_veth(&mut self) -> Result<(), Error> {
@@ -302,7 +302,7 @@ where
             } else {
                 format!("left{i}")
             };
-            self.build_device(name.clone(), move |rt| {
+            self.build_cell(name.clone(), move |rt| {
                 let _guard = rt.enter();
                 let _ns_guard = NetNsGuard::new(rattan_ns);
                 let mut id = VirtualEthernetId::new();
@@ -320,7 +320,7 @@ where
             } else {
                 format!("right{i}")
             };
-            self.build_device(name.clone(), move |rt| {
+            self.build_cell(name.clone(), move |rt| {
                 let _guard = rt.enter();
                 let _ns_guard = NetNsGuard::new(rattan_ns);
                 let mut id = VirtualEthernetId::new();
@@ -333,64 +333,64 @@ where
         Ok(())
     }
 
-    pub fn load_devices_config<I>(&mut self, devices: I) -> Result<(), Error>
+    pub fn load_cells_config<I>(&mut self, cells: I) -> Result<(), Error>
     where
-        I: IntoIterator<Item = (String, DeviceBuildConfig<D::Packet>)>,
+        I: IntoIterator<Item = (String, CellBuildConfig<D::Packet>)>,
     {
         let mut router_configs = vec![];
 
-        // build devices, EXCEPT routers
-        for (id, device_config) in devices {
-            match device_config {
-                DeviceBuildConfig::Bw(bw_config) => match bw_config {
-                    crate::config::BwDeviceBuildConfig::Infinite(config) => {
-                        self.build_device(id, config.into_factory())?;
+        // build cells, EXCEPT routers
+        for (id, cell_config) in cells {
+            match cell_config {
+                CellBuildConfig::Bw(bw_config) => match bw_config {
+                    crate::config::BwCellBuildConfig::Infinite(config) => {
+                        self.build_cell(id, config.into_factory())?;
                     }
-                    crate::config::BwDeviceBuildConfig::DropTail(config) => {
-                        self.build_device(id, config.into_factory())?;
+                    crate::config::BwCellBuildConfig::DropTail(config) => {
+                        self.build_cell(id, config.into_factory())?;
                     }
-                    crate::config::BwDeviceBuildConfig::DropHead(config) => {
-                        self.build_device(id, config.into_factory())?;
+                    crate::config::BwCellBuildConfig::DropHead(config) => {
+                        self.build_cell(id, config.into_factory())?;
                     }
-                    crate::config::BwDeviceBuildConfig::CoDel(config) => {
-                        self.build_device(id, config.into_factory())?;
-                    }
-                },
-                DeviceBuildConfig::BwReplay(bw_replay_config) => match bw_replay_config {
-                    crate::config::BwReplayDeviceBuildConfig::Infinite(config) => {
-                        self.build_device(id, config.into_factory())?;
-                    }
-                    crate::config::BwReplayDeviceBuildConfig::DropTail(config) => {
-                        self.build_device(id, config.into_factory())?;
-                    }
-                    crate::config::BwReplayDeviceBuildConfig::DropHead(config) => {
-                        self.build_device(id, config.into_factory())?;
-                    }
-                    crate::config::BwReplayDeviceBuildConfig::CoDel(config) => {
-                        self.build_device(id, config.into_factory())?;
+                    crate::config::BwCellBuildConfig::CoDel(config) => {
+                        self.build_cell(id, config.into_factory())?;
                     }
                 },
-                DeviceBuildConfig::Delay(config) => {
-                    self.build_device(id, config.into_factory())?;
+                CellBuildConfig::BwReplay(bw_replay_config) => match bw_replay_config {
+                    crate::config::BwReplayCellBuildConfig::Infinite(config) => {
+                        self.build_cell(id, config.into_factory())?;
+                    }
+                    crate::config::BwReplayCellBuildConfig::DropTail(config) => {
+                        self.build_cell(id, config.into_factory())?;
+                    }
+                    crate::config::BwReplayCellBuildConfig::DropHead(config) => {
+                        self.build_cell(id, config.into_factory())?;
+                    }
+                    crate::config::BwReplayCellBuildConfig::CoDel(config) => {
+                        self.build_cell(id, config.into_factory())?;
+                    }
+                },
+                CellBuildConfig::Delay(config) => {
+                    self.build_cell(id, config.into_factory())?;
                 }
-                DeviceBuildConfig::DelayReplay(config) => {
-                    self.build_device(id, config.into_factory())?;
+                CellBuildConfig::DelayReplay(config) => {
+                    self.build_cell(id, config.into_factory())?;
                 }
-                DeviceBuildConfig::Loss(config) => {
-                    self.build_device(id, config.into_factory())?;
+                CellBuildConfig::Loss(config) => {
+                    self.build_cell(id, config.into_factory())?;
                 }
-                DeviceBuildConfig::LossReplay(config) => {
-                    self.build_device(id, config.into_factory())?;
+                CellBuildConfig::LossReplay(config) => {
+                    self.build_cell(id, config.into_factory())?;
                 }
-                DeviceBuildConfig::Shadow(config) => {
-                    self.build_device(id, config.into_factory())?;
+                CellBuildConfig::Shadow(config) => {
+                    self.build_cell(id, config.into_factory())?;
                 }
-                DeviceBuildConfig::Router(config) => {
-                    // ignore routers, build them after other devices
+                CellBuildConfig::Router(config) => {
+                    // ignore routers, build them after other cells
                     router_configs.push((id, config));
                 }
-                DeviceBuildConfig::Custom => {
-                    debug!("Skip build custom device: {}", id);
+                CellBuildConfig::Custom => {
+                    debug!("Skip build custom cell: {}", id);
                 }
             }
         }
@@ -402,18 +402,18 @@ where
                 .iter()
                 .map(|id| self.rattan.get_receiver(id))
                 .collect::<Result<_, _>>()?;
-            self.build_device(id, config.into_factory(receivers))?;
+            self.build_cell(id, config.into_factory(receivers))?;
         }
 
         Ok(())
     }
 
-    pub fn link_devices<I>(&mut self, links: I) -> Result<(), Error>
+    pub fn link_cells<I>(&mut self, links: I) -> Result<(), Error>
     where
         I: IntoIterator<Item = (String, String)>,
     {
         for (rx, tx) in links {
-            self.link_device(rx, tx);
+            self.link_cell(rx, tx);
         }
         Ok(())
     }

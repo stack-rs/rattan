@@ -5,13 +5,13 @@ use nix::errno::Errno;
 use nix::sys::epoll::{epoll_create, epoll_ctl, epoll_wait, EpollEvent, EpollFlags};
 use nix::sys::socket::{AddressFamily, SockType};
 use rattan_core::env::{get_std_env, StdNetEnvConfig};
-use rattan_core::metal::veth::{MacAddr, VethDevice};
+use rattan_core::metal::veth::{MacAddr, VethCell};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{mem, ptr};
 use tracing::debug;
 
-fn create_dev_socket(veth: &VethDevice) -> anyhow::Result<i32> {
+fn create_dev_socket(veth: &VethCell) -> anyhow::Result<i32> {
     let raw_socket = unsafe {
         Errno::result(libc::socket(
             AddressFamily::Packet as libc::c_int,

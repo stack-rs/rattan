@@ -8,20 +8,20 @@ use rand::{rngs::StdRng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    core::DeviceFactory,
-    devices::{loss, Packet},
+    core::CellFactory,
+    cells::{loss, Packet},
     error::Error,
 };
 
-pub type LossDeviceBuildConfig = loss::LossDeviceConfig;
+pub type LossCellBuildConfig = loss::LossCellConfig;
 
-impl LossDeviceBuildConfig {
-    pub fn into_factory<P: Packet>(self) -> impl DeviceFactory<loss::LossDevice<P, StdRng>> {
+impl LossCellBuildConfig {
+    pub fn into_factory<P: Packet>(self) -> impl CellFactory<loss::LossCell<P, StdRng>> {
         move |handle| {
             let _guard = handle.enter();
             // let rng = StdRng::from_entropy();
             let rng = StdRng::seed_from_u64(42); // XXX: fixed seed for reproducibility
-            loss::LossDevice::new(self.pattern, rng)
+            loss::LossCell::new(self.pattern, rng)
         }
     }
 }
@@ -32,12 +32,12 @@ impl LossDeviceBuildConfig {
     derive(Serialize, Deserialize)
 )]
 #[derive(Debug, Clone)]
-pub struct LossReplayDeviceBuildConfig {
+pub struct LossReplayCellBuildConfig {
     pub trace: String,
     pub seed: Option<u64>,
 }
 
-impl LossReplayDeviceBuildConfig {
+impl LossReplayCellBuildConfig {
     fn get_trace(&self) -> Result<Box<dyn LossTrace>, Error> {
         let file_path = std::path::Path::new(&self.trace);
         if let Some(ext) = file_path.extension() {
@@ -61,12 +61,12 @@ impl LossReplayDeviceBuildConfig {
         )))
     }
 
-    pub fn into_factory<P: Packet>(self) -> impl DeviceFactory<loss::LossReplayDevice<P, StdRng>> {
+    pub fn into_factory<P: Packet>(self) -> impl CellFactory<loss::LossReplayCell<P, StdRng>> {
         move |handle| {
             let _guard = handle.enter();
             let trace = self.get_trace()?;
             let rng = StdRng::seed_from_u64(self.seed.unwrap_or(42));
-            loss::LossReplayDevice::new(trace, rng)
+            loss::LossReplayCell::new(trace, rng)
         }
     }
 }

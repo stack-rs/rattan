@@ -19,13 +19,13 @@ pub async fn get_link_index(handle: &Handle, name: &str) -> anyhow::Result<u32> 
         .index)
 }
 
-pub struct VethDevice {
+pub struct VethCell {
     pub handle: Handle,
     pub index: u32,
     pub name: String,
 }
 
-impl VethDevice {
+impl VethCell {
     async fn enable(&mut self) -> anyhow::Result<()> {
         Ok(self.handle.link().set(self.index).up().execute().await?)
     }
@@ -54,12 +54,12 @@ impl VethDevice {
     }
 }
 
-pub struct VethDevicePair {
-    left: VethDevice,
-    right: VethDevice,
+pub struct VethCellPair {
+    left: VethCell,
+    right: VethCell,
 }
 
-impl VethDevicePair {
+impl VethCellPair {
     pub async fn new(left_name: &str, right_name: &str) -> anyhow::Result<Self> {
         let (connection, handle, _) = rtnetlink::new_connection().unwrap();
         tokio::spawn(connection);
@@ -77,13 +77,13 @@ impl VethDevicePair {
         let left_index = get_link_index(&handle, &veth_left).await?;
         let right_index = get_link_index(&handle, &veth_right).await?;
 
-        Ok(VethDevicePair {
-            left: VethDevice {
+        Ok(VethCellPair {
+            left: VethCell {
                 handle: handle.clone(),
                 index: left_index,
                 name: veth_left,
             },
-            right: VethDevice {
+            right: VethCell {
                 handle: handle.clone(),
                 index: right_index,
                 name: veth_right,
@@ -122,7 +122,7 @@ impl VethDevicePair {
     }
 }
 
-impl Drop for VethDevicePair {
+impl Drop for VethCellPair {
     fn drop(&mut self) {
         println!("drop veth pair {}/{}", self.left.name, self.right.name);
         let (handle, index, if_name) = (&self.left.handle, self.left.index, &self.left.name);
@@ -147,7 +147,7 @@ fn veth_test() {
         .unwrap();
 
     rt.block_on(async {
-        let mut veth_pair = VethDevicePair::new("test-veth-left", "test-veth-right")
+        let mut veth_pair = VethCellPair::new("test-veth-left", "test-veth-right")
             .await
             .unwrap();
 

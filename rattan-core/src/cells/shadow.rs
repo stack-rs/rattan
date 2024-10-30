@@ -1,5 +1,5 @@
 use super::{ControlInterface, Egress, Ingress};
-use crate::devices::{Device, Packet};
+use crate::cells::{Cell, Packet};
 use crate::error::Error;
 use async_trait::async_trait;
 #[cfg(feature = "serde")]
@@ -11,14 +11,14 @@ use std::{
 use tokio::sync::mpsc;
 
 #[derive(Clone)]
-pub struct ShadowDeviceIngress<P>
+pub struct ShadowCellIngress<P>
 where
     P: Packet,
 {
     ingress: mpsc::UnboundedSender<P>,
 }
 
-impl<P> Ingress<P> for ShadowDeviceIngress<P>
+impl<P> Ingress<P> for ShadowCellIngress<P>
 where
     P: Packet + Send,
 {
@@ -30,13 +30,13 @@ where
     }
 }
 
-pub struct ShadowDeviceEgress<P: Packet> {
+pub struct ShadowCellEgress<P: Packet> {
     egress: mpsc::UnboundedReceiver<P>,
     state: AtomicI32,
 }
 
 #[async_trait]
-impl<P> Egress<P> for ShadowDeviceEgress<P>
+impl<P> Egress<P> for ShadowCellEgress<P>
 where
     P: Packet + Send + Sync,
 {
@@ -55,36 +55,36 @@ where
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Debug, Default, Clone)]
-pub struct ShadowDeviceConfig {}
+pub struct ShadowCellConfig {}
 
-impl ShadowDeviceConfig {
+impl ShadowCellConfig {
     pub fn new() -> Self {
         Self {}
     }
 }
 
-pub struct ShadowDeviceControlInterface {}
+pub struct ShadowCellControlInterface {}
 
-impl ControlInterface for ShadowDeviceControlInterface {
-    type Config = ShadowDeviceConfig;
+impl ControlInterface for ShadowCellControlInterface {
+    type Config = ShadowCellConfig;
     fn set_config(&self, _config: Self::Config) -> Result<(), Error> {
         Ok(())
     }
 }
 
-pub struct ShadowDevice<P: Packet> {
-    ingress: Arc<ShadowDeviceIngress<P>>,
-    egress: ShadowDeviceEgress<P>,
-    control_interface: Arc<ShadowDeviceControlInterface>,
+pub struct ShadowCell<P: Packet> {
+    ingress: Arc<ShadowCellIngress<P>>,
+    egress: ShadowCellEgress<P>,
+    control_interface: Arc<ShadowCellControlInterface>,
 }
 
-impl<P> Device<P> for ShadowDevice<P>
+impl<P> Cell<P> for ShadowCell<P>
 where
     P: Packet + Send + Sync + 'static,
 {
-    type IngressType = ShadowDeviceIngress<P>;
-    type EgressType = ShadowDeviceEgress<P>;
-    type ControlInterfaceType = ShadowDeviceControlInterface;
+    type IngressType = ShadowCellIngress<P>;
+    type EgressType = ShadowCellEgress<P>;
+    type ControlInterfaceType = ShadowCellControlInterface;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -103,19 +103,19 @@ where
     }
 }
 
-impl<P> ShadowDevice<P>
+impl<P> ShadowCell<P>
 where
     P: Packet,
 {
-    pub fn new() -> Result<ShadowDevice<P>, Error> {
+    pub fn new() -> Result<ShadowCell<P>, Error> {
         let (rx, tx) = mpsc::unbounded_channel();
-        Ok(ShadowDevice {
-            ingress: Arc::new(ShadowDeviceIngress { ingress: rx }),
-            egress: ShadowDeviceEgress {
+        Ok(ShadowCell {
+            ingress: Arc::new(ShadowCellIngress { ingress: rx }),
+            egress: ShadowCellEgress {
                 egress: tx,
                 state: AtomicI32::new(0),
             },
-            control_interface: Arc::new(ShadowDeviceControlInterface {}),
+            control_interface: Arc::new(ShadowCellControlInterface {}),
         })
     }
 }
@@ -123,21 +123,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::devices::StdPacket;
+    use crate::cells::StdPacket;
     use rand::{thread_rng, Rng};
     use tracing::{span, Level};
 
     #[test_log::test]
-    fn test_shadow_device() -> Result<(), Error> {
-        let _span = span!(Level::INFO, "test_shadow_device").entered();
+    fn test_shadow_cell() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_shadow_cell").entered();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
         let _guard = rt.enter();
 
-        let device = ShadowDevice::new()?;
-        let ingress = device.sender();
-        let mut egress = device.into_receiver();
+        let cell = ShadowCell::new()?;
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
         egress.reset();
         egress.change_state(2);
 

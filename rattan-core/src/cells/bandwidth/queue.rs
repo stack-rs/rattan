@@ -1,4 +1,4 @@
-use crate::devices::Packet;
+use crate::cells::Packet;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -306,7 +306,7 @@ pub struct CoDelQueueConfig {
     pub interval: Duration, // width of moving time window
     #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
     pub target: Duration, // target queue delay
-    pub mtu: u32,                  // device MTU, or minimal queue backlog in bytes
+    pub mtu: u32,                  // cell MTU, or minimal queue backlog in bytes
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "serde_default")

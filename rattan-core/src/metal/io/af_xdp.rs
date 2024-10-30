@@ -25,7 +25,7 @@ static UMEM: Lazy<Arc<std::sync::Mutex<UMem>>> = Lazy::new(|| {
     ))
 });
 
-use crate::{devices::Packet, metal::veth::VethDevice};
+use crate::{cells::Packet, metal::veth::VethCell};
 
 use super::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender};
 
@@ -125,12 +125,12 @@ impl XDPDriver {
     async fn buffered_send(
         mut receiver: tokio::sync::mpsc::Receiver<XDPPacket>,
         xdp_packet: XDPSocketRef,
-        device: Arc<VethDevice>,
+        cell: Arc<VethCell>,
     ) {
         let mut packets = vec![];
 
         // TODO(minhuw): it should not leave forever. But let is be now.
-        // we should stop the buffered send task when the device exists.
+        // we should stop the buffered send task when the cell exists.
         loop {
             tokio::select! {
                 packet = receiver.recv() => {
@@ -141,13 +141,13 @@ impl XDPDriver {
                     if packets.len() >= 32 {
                         let mut send_packets = vec![];
                         std::mem::swap(&mut packets, &mut send_packets);
-                        let _ = Self::send(&xdp_packet, &device, send_packets).await;
+                        let _ = Self::send(&xdp_packet, &cell, send_packets).await;
                     }
                 },
                 _ = sleep(Duration::from_millis(10)) => {
                     let mut send_packets = vec![];
                     std::mem::swap(&mut packets, &mut send_packets);
-                    let _ = Self::send(&xdp_packet, &device, send_packets).await;
+                    let _ = Self::send(&xdp_packet, &cell, send_packets).await;
                 }
             }
         }
@@ -155,7 +155,7 @@ impl XDPDriver {
 
     async fn send<Iter, T>(
         xdp_socket: &XDPSocketRef,
-        device: &Arc<VethDevice>,
+        cell: &Arc<VethCell>,
         packets: Iter,
     ) -> std::io::Result<usize>
     where
@@ -166,10 +166,10 @@ impl XDPDriver {
         let packets = packets.into_iter().map(|packet| {
             let mut packet: XDPPacket = packet.into();
             let mut ether = packet.ether_hdr().unwrap();
-            ether.source.copy_from_slice(&device.mac_addr.bytes());
+            ether.source.copy_from_slice(&cell.mac_addr.bytes());
             ether
                 .destination
-                .copy_from_slice(&device.peer().mac_addr.bytes());
+                .copy_from_slice(&cell.peer().mac_addr.bytes());
 
             let buf = packet.as_raw_buffer();
             ether.write_to_slice(buf).unwrap();
@@ -192,15 +192,15 @@ impl InterfaceDriver for XDPDriver {
     type Sender = XDPSender;
     type Receiver = XDPReceiver;
 
-    fn bind_device(device: Arc<VethDevice>) -> Result<Vec<Self>, crate::metal::error::MetalError>
+    fn bind_cell(cell: Arc<VethCell>) -> Result<Vec<Self>, crate::metal::error::MetalError>
     where
         Self: Sized,
     {
-        debug!(?device, "bind device to AF_PACKET driver");
+        debug!(?cell, "bind cell to AF_PACKET driver");
 
         let xdp_socket = Arc::new(Mutex::new(
             XskSocketBuilder::<SharedAccessorRef>::new()
-                .ifname(&device.name)
+                .ifname(&cell.name)
                 .queue_index(0)
                 .with_umem(UMEM.clone())
                 .enable_cooperate_schedule()
@@ -212,7 +212,7 @@ impl InterfaceDriver for XDPDriver {
         tokio::spawn(XDPDriver::buffered_send(
             receiver,
             xdp_socket.clone(),
-            device.clone(),
+            cell.clone(),
         ));
 
         Ok(vec![XDPDriver {

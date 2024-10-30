@@ -18,7 +18,7 @@ use tracing::{debug, info, span, trace, warn, Instrument, Level};
 
 use crate::{
     control::{RattanController, RattanNotify, RattanOp, RattanOpEndpoint, RattanOpResult},
-    devices::{Device, Egress, Ingress, Packet},
+    cells::{Cell, Egress, Ingress, Packet},
     error::{Error, RattanCoreError},
     metal::io::common::InterfaceDriver,
 };
@@ -34,9 +34,9 @@ use pcap_file::pcapng::{
 #[cfg(feature = "packet-dump")]
 use std::{fs::File, io::Write, sync::Mutex};
 
-pub trait DeviceFactory<D>: FnOnce(&Handle) -> Result<D, Error> {}
+pub trait CellFactory<D>: FnOnce(&Handle) -> Result<D, Error> {}
 
-impl<T: FnOnce(&Handle) -> Result<D, Error>, D> DeviceFactory<D> for T {}
+impl<T: FnOnce(&Handle) -> Result<D, Error>, D> CellFactory<D> for T {}
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone)]
@@ -138,19 +138,19 @@ where
         self.runtime.block_on(self.op_endpoint.exec(op))
     }
 
-    pub fn build_device<V, F>(
+    pub fn build_cell<V, F>(
         &mut self,
         id: String,
         builder: F,
     ) -> Result<Arc<V::ControlInterfaceType>, Error>
     where
-        V: Device<D::Packet>,
-        F: DeviceFactory<V>,
+        V: Cell<D::Packet>,
+        F: CellFactory<V>,
     {
-        info!("Build device \"{}\"", id);
-        let device = builder(self.runtime.handle())?;
-        let control_interface = device.control_interface();
-        self.register_device(id.clone(), device)?;
+        info!("Build cell \"{}\"", id);
+        let cell = builder(self.runtime.handle())?;
+        let control_interface = cell.control_interface();
+        self.register_cell(id.clone(), cell)?;
         #[cfg(feature = "serde")]
         self.op_block_exec(RattanOp::AddControlInterface(
             id.clone(),
@@ -159,31 +159,31 @@ where
         Ok(control_interface)
     }
 
-    fn register_device(
+    fn register_cell(
         &mut self,
         id: String,
-        device: impl Device<D::Packet>,
+        cell: impl Cell<D::Packet>,
     ) -> Result<(), RattanCoreError> {
         match self.sender.entry(id.clone()) {
             std::collections::hash_map::Entry::Occupied(_) => {
-                return Err(RattanCoreError::AddDeviceError(format!(
-                    "Device with ID {} already exists in sender list",
+                return Err(RattanCoreError::AddCellError(format!(
+                    "Cell with ID {} already exists in sender list",
                     id
                 )));
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(device.sender());
+                entry.insert(cell.sender());
             }
         };
         match self.receiver.entry(id.clone()) {
             std::collections::hash_map::Entry::Occupied(_) => {
-                return Err(RattanCoreError::AddDeviceError(format!(
-                    "Device with ID {} already exists in receiver list",
+                return Err(RattanCoreError::AddCellError(format!(
+                    "Cell with ID {} already exists in receiver list",
                     id
                 )));
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(Box::new(device.into_receiver()));
+                entry.insert(Box::new(cell.into_receiver()));
             }
         };
 
@@ -210,14 +210,14 @@ where
         Ok(())
     }
 
-    pub fn link_device(&mut self, rx_id: String, tx_id: String) {
-        info!("Link device \"{}\" --> \"{}\"", rx_id, tx_id);
-        // Check existence of devices
+    pub fn link_cell(&mut self, rx_id: String, tx_id: String) {
+        info!("Link cell \"{}\" --> \"{}\"", rx_id, tx_id);
+        // Check existence of cells
         if !self.receiver.contains_key(&rx_id) {
-            warn!("Device with ID {} does not exist in devices map", rx_id);
+            warn!("Cell with ID {} does not exist in cells map", rx_id);
         }
         if !self.receiver.contains_key(&tx_id) {
-            warn!("Device with ID {} does not exist in devices map", tx_id);
+            warn!("Cell with ID {} does not exist in cells map", tx_id);
         }
         self.router.insert(rx_id, tx_id);
     }
@@ -276,7 +276,7 @@ where
                             notify = notify_rx.recv() => {
                                 match notify {
                                     Ok(RattanNotify::Start) => {
-                                        rx.reset(); // Reset the device
+                                        rx.reset(); // Reset the cell
                                         rx.change_state(2);
                                         break;
                                     }

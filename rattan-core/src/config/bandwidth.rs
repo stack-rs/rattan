@@ -8,12 +8,12 @@ use netem_trace::{model::BwTraceConfig, BwTrace};
 use tracing::{debug, error};
 
 use crate::{
-    core::DeviceFactory,
-    devices::{
+    core::CellFactory,
+    cells::{
         bandwidth::{
             self,
             queue::{self, PacketQueue},
-            BwDevice, BwReplayDevice, BwType,
+            BwCell, BwReplayCell, BwType,
         },
         Packet,
     },
@@ -29,24 +29,24 @@ use serde::{Deserialize, Serialize};
     serde(bound = "", tag = "queue")
 )]
 #[derive(Clone, Debug)]
-pub enum BwDeviceBuildConfig<P: Packet> {
-    Infinite(bandwidth::BwDeviceConfig<P, queue::InfiniteQueue<P>>),
-    DropTail(bandwidth::BwDeviceConfig<P, queue::DropTailQueue<P>>),
-    DropHead(bandwidth::BwDeviceConfig<P, queue::DropHeadQueue<P>>),
-    CoDel(bandwidth::BwDeviceConfig<P, queue::CoDelQueue<P>>),
+pub enum BwCellBuildConfig<P: Packet> {
+    Infinite(bandwidth::BwCellConfig<P, queue::InfiniteQueue<P>>),
+    DropTail(bandwidth::BwCellConfig<P, queue::DropTailQueue<P>>),
+    DropHead(bandwidth::BwCellConfig<P, queue::DropHeadQueue<P>>),
+    CoDel(bandwidth::BwCellConfig<P, queue::CoDelQueue<P>>),
 }
 
-macro_rules! impl_bw_device_into_factory {
+macro_rules! impl_bw_cell_into_factory {
     ($($queue:ident),*) => {
         $(
-            impl<P: Packet> bandwidth::BwDeviceConfig<P, queue::$queue<P>> {
+            impl<P: Packet> bandwidth::BwCellConfig<P, queue::$queue<P>> {
                 pub fn into_factory(
                     self,
-                ) -> impl DeviceFactory<bandwidth::BwDevice<P, queue::$queue<P>>> {
+                ) -> impl CellFactory<bandwidth::BwCell<P, queue::$queue<P>>> {
                     move |handle| {
                         let _guard = handle.enter();
                         let queue = queue::$queue::<P>::new(self.queue_config.unwrap_or_default());
-                        BwDevice::new(self.bandwidth, queue, self.bw_type.unwrap_or_default())
+                        BwCell::new(self.bandwidth, queue, self.bw_type.unwrap_or_default())
                     }
                 }
             }
@@ -54,7 +54,7 @@ macro_rules! impl_bw_device_into_factory {
     };
 }
 
-impl_bw_device_into_factory!(InfiniteQueue, DropTailQueue, DropHeadQueue, CoDelQueue);
+impl_bw_cell_into_factory!(InfiniteQueue, DropTailQueue, DropHeadQueue, CoDelQueue);
 
 #[cfg_attr(
     feature = "serde",
@@ -62,7 +62,7 @@ impl_bw_device_into_factory!(InfiniteQueue, DropTailQueue, DropHeadQueue, CoDelQ
     serde(bound = "", tag = "queue")
 )]
 #[derive(Clone, Debug)]
-pub enum BwReplayDeviceBuildConfig<P: Packet> {
+pub enum BwReplayCellBuildConfig<P: Packet> {
     Infinite(BwReplayQueueConfig<P, queue::InfiniteQueue<P>>),
     DropTail(BwReplayQueueConfig<P, queue::DropTailQueue<P>>),
     DropHead(BwReplayQueueConfig<P, queue::DropHeadQueue<P>>),
@@ -195,18 +195,18 @@ where
     }
 }
 
-macro_rules! impl_bw_replay_device_into_factory {
+macro_rules! impl_bw_replay_cell_into_factory {
     ($($queue:ident),*) => {
         $(
             impl<P: Packet> BwReplayQueueConfig<P, queue::$queue<P>> {
                 pub fn into_factory(
                     self,
-                ) -> impl DeviceFactory<bandwidth::BwReplayDevice<P, queue::$queue<P>>> {
+                ) -> impl CellFactory<bandwidth::BwReplayCell<P, queue::$queue<P>>> {
                     move |handle| {
                         let _guard = handle.enter();
                         let trace = self.get_trace()?;
                         let queue = queue::$queue::<P>::new(self.queue_config.unwrap_or_default());
-                        BwReplayDevice::new(trace, queue, self.bw_type.unwrap_or_default())
+                        BwReplayCell::new(trace, queue, self.bw_type.unwrap_or_default())
                     }
                 }
             }
@@ -214,4 +214,4 @@ macro_rules! impl_bw_replay_device_into_factory {
     };
 }
 
-impl_bw_replay_device_into_factory!(InfiniteQueue, DropTailQueue, DropHeadQueue, CoDelQueue);
+impl_bw_replay_cell_into_factory!(InfiniteQueue, DropTailQueue, DropHeadQueue, CoDelQueue);

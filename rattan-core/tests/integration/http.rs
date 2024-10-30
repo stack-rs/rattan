@@ -6,17 +6,17 @@ use std::time::Duration;
 
 use netem_trace::Bandwidth;
 use rattan_core::config::{
-    BwDeviceBuildConfig, DelayDeviceBuildConfig, DeviceBuildConfig, LossDeviceBuildConfig,
+    BwCellBuildConfig, DelayCellBuildConfig, CellBuildConfig, LossCellBuildConfig,
     RattanConfig,
 };
 use rattan_core::control::http::HttpConfig;
-use rattan_core::devices::{
+use rattan_core::cells::{
     bandwidth::{
         queue::{InfiniteQueue, InfiniteQueueConfig},
-        BwDeviceConfig,
+        BwCellConfig,
     },
-    delay::DelayDeviceConfig,
-    loss::LossDeviceConfig,
+    delay::DelayCellConfig,
+    loss::LossCellConfig,
     StdPacket,
 };
 use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
@@ -41,37 +41,37 @@ fn test_http() {
         },
         ..Default::default()
     };
-    config.devices.insert(
+    config.cells.insert(
         "up_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
             None,
             InfiniteQueueConfig::new(),
             None,
         ))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
             None,
             InfiniteQueueConfig::new(),
             None,
         ))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "up_delay".to_string(),
-        DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(Duration::from_millis(0))),
+        CellBuildConfig::Delay(DelayCellBuildConfig::new(Duration::from_millis(0))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_delay".to_string(),
-        DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(Duration::from_millis(0))),
+        CellBuildConfig::Delay(DelayCellBuildConfig::new(Duration::from_millis(0))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "up_loss".to_string(),
-        DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([])),
+        CellBuildConfig::Loss(LossCellBuildConfig::new([])),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_loss".to_string(),
-        DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([])),
+        CellBuildConfig::Loss(LossCellBuildConfig::new([])),
     );
     config.links = HashMap::from([
         ("left".to_string(), "up_bw".to_string()),
@@ -87,7 +87,7 @@ fn test_http() {
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
-    // Before config the BwDevice, the bandwidth should be around 1Gbps
+    // Before config the BwCell, the bandwidth should be around 1Gbps
     {
         let _span = span!(Level::INFO, "iperf_no_limit").entered();
         info!("try to iperf with no bandwidth limit");
@@ -140,7 +140,7 @@ fn test_http() {
         info!("bitrate: {:?}", Bandwidth::from_bps(bitrate));
     }
 
-    // After set the BwDevice, the bandwidth should be between 80-100Mbps
+    // After set the BwCell, the bandwidth should be between 80-100Mbps
     std::thread::sleep(std::time::Duration::from_millis(100));
     {
         let _span = span!(Level::INFO, "iperf_with_limit").entered();
@@ -176,7 +176,7 @@ fn test_http() {
         // Test wrong http config
         let resp = client
             .post("http://127.0.0.1:8086/config/up_loss")
-            .json(&BwDeviceConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
+            .json(&BwCellConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
                 Bandwidth::from_mbps(100),
                 None,
                 None,
@@ -191,7 +191,7 @@ fn test_http() {
         );
         let resp = client
             .post("http://127.0.0.1:8086/config/up_bw")
-            .json(&DelayDeviceConfig::new(Duration::from_millis(50)))
+            .json(&DelayCellConfig::new(Duration::from_millis(50)))
             .send()
             .unwrap();
         assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
@@ -201,15 +201,15 @@ fn test_http() {
             resp.text().unwrap()
         );
 
-        // Test not found device
+        // Test not found cell
         let resp = client
             .post("http://127.0.0.1:8086/config/wrong_id")
-            .json(&DelayDeviceConfig::new(Duration::from_millis(50)))
+            .json(&DelayCellConfig::new(Duration::from_millis(50)))
             .send()
             .unwrap();
         assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND);
         info!(
-            "Test not found device response: [{}] {}",
+            "Test not found cell response: [{}] {}",
             resp.status(),
             resp.text().unwrap()
         );
@@ -217,7 +217,7 @@ fn test_http() {
         // Test right http config
         let resp = client
             .post("http://127.0.0.1:8086/config/up_bw")
-            .json(&BwDeviceConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
+            .json(&BwCellConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
                 Bandwidth::from_mbps(100),
                 None,
                 None,
@@ -227,7 +227,7 @@ fn test_http() {
         assert!(resp.status().is_success());
         let resp = client
             .post("http://127.0.0.1:8086/config/down_bw")
-            .json(&BwDeviceConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
+            .json(&BwCellConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
                 Bandwidth::from_mbps(100),
                 None,
                 None,
@@ -237,19 +237,19 @@ fn test_http() {
         assert!(resp.status().is_success());
         let resp = client
             .post("http://127.0.0.1:8086/config/up_delay")
-            .json(&DelayDeviceConfig::new(Duration::from_millis(10)))
+            .json(&DelayCellConfig::new(Duration::from_millis(10)))
             .send()
             .unwrap();
         assert!(resp.status().is_success());
         let resp = client
             .post("http://127.0.0.1:8086/config/down_delay")
-            .json(&DelayDeviceConfig::new(Duration::from_millis(5)))
+            .json(&DelayCellConfig::new(Duration::from_millis(5)))
             .send()
             .unwrap();
         assert!(resp.status().is_success());
         let resp = client
             .post("http://127.0.0.1:8086/config/up_loss")
-            .json(&LossDeviceConfig::new(vec![0.001; 10]))
+            .json(&LossCellConfig::new(vec![0.001; 10]))
             .send()
             .unwrap();
         assert!(resp.status().is_success());

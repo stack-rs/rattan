@@ -123,8 +123,8 @@ pub enum TokioRuntimeError {
 pub enum RattanCoreError {
     #[error("Failed to spawn rattan task, {0}")]
     SpawnError(String),
-    #[error("Failed to add device, {0}")]
-    AddDeviceError(String),
+    #[error("Failed to add cell, {0}")]
+    AddCellError(String),
     #[error("Failed to send notify, {0}")]
     SendNotifyError(String),
     #[error("Unknown interface ID \"{0}\"")]

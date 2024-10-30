@@ -9,13 +9,13 @@ use std::{
 };
 use tracing::warn;
 
-use super::{ControlInterface, Device, Egress, Ingress, Packet};
+use super::{ControlInterface, Cell, Egress, Ingress, Packet};
 
 pub mod routing;
 pub use routing::*;
 
 #[derive(Clone)]
-pub struct RouterDeviceIngress<P, R>
+pub struct RouterCellIngress<P, R>
 where
     P: Packet,
     R: RoutingTable,
@@ -24,7 +24,7 @@ where
     router: Arc<RwLock<R>>,
 }
 
-impl<P, R> Ingress<P> for RouterDeviceIngress<P, R>
+impl<P, R> Ingress<P> for RouterCellIngress<P, R>
 where
     P: Packet + Send,
     R: RoutingTable,
@@ -57,10 +57,10 @@ where
     }
 }
 
-pub struct RouterDeviceEgress {}
+pub struct RouterCellEgress {}
 
 #[async_trait]
-impl<P> Egress<P> for RouterDeviceEgress
+impl<P> Egress<P> for RouterCellEgress
 where
     P: Packet + Send + Sync,
 {
@@ -72,17 +72,17 @@ where
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Debug, Default, Clone)]
-pub struct RouterDeviceConfig {
+pub struct RouterCellConfig {
     pub egress_connections: Vec<String>,
     pub routing_table: PlainRoutingTable,
 }
 
-pub struct RouterDeviceControlInterface<R: RoutingTable> {
+pub struct RouterCellControlInterface<R: RoutingTable> {
     interface_count: usize,
     router: Arc<RwLock<R>>,
 }
 
-impl<R> RouterDeviceControlInterface<R>
+impl<R> RouterCellControlInterface<R>
 where
     R: RoutingTable,
 {
@@ -120,7 +120,7 @@ where
     }
 }
 
-impl<R> ControlInterface for RouterDeviceControlInterface<R>
+impl<R> ControlInterface for RouterCellControlInterface<R>
 where
     R: RoutingTable,
 {
@@ -136,13 +136,13 @@ where
         Ok(())
     }
 }
-pub struct RouterDevice<P: Packet, R: RoutingTable> {
-    ingress: Arc<RouterDeviceIngress<P, R>>,
-    egress: RouterDeviceEgress,
-    control_interface: Arc<RouterDeviceControlInterface<R>>,
+pub struct RouterCell<P: Packet, R: RoutingTable> {
+    ingress: Arc<RouterCellIngress<P, R>>,
+    egress: RouterCellEgress,
+    control_interface: Arc<RouterCellControlInterface<R>>,
 }
 
-impl<P, R> RouterDevice<P, R>
+impl<P, R> RouterCell<P, R>
 where
     P: Packet,
     R: RoutingTable,
@@ -150,14 +150,14 @@ where
     pub fn new(
         egresses: Vec<Arc<dyn Ingress<P>>>,
         table: PlainRoutingTable,
-    ) -> Result<RouterDevice<P, R>, Error> {
+    ) -> Result<RouterCell<P, R>, Error> {
         let interface_count = egresses.len();
         let router = Arc::new(RwLock::new(R::try_from(vec![])?));
-        let ingress = RouterDeviceIngress {
+        let ingress = RouterCellIngress {
             egresses,
             router: router.clone(),
         };
-        let control_interface = Arc::new(RouterDeviceControlInterface {
+        let control_interface = Arc::new(RouterCellControlInterface {
             interface_count,
             router,
         });
@@ -165,22 +165,22 @@ where
         // use set_config now because it checks interface_id, while R::try_from does not
         control_interface.set_config(table)?;
 
-        Ok(RouterDevice {
+        Ok(RouterCell {
             ingress: Arc::new(ingress),
-            egress: RouterDeviceEgress {},
+            egress: RouterCellEgress {},
             control_interface,
         })
     }
 }
 
-impl<P, R> Device<P> for RouterDevice<P, R>
+impl<P, R> Cell<P> for RouterCell<P, R>
 where
     P: Packet + Send + Sync + 'static,
     R: RoutingTable,
 {
-    type IngressType = RouterDeviceIngress<P, R>;
-    type EgressType = RouterDeviceEgress;
-    type ControlInterfaceType = RouterDeviceControlInterface<R>;
+    type IngressType = RouterCellIngress<P, R>;
+    type EgressType = RouterCellEgress;
+    type ControlInterfaceType = RouterCellControlInterface<R>;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -201,7 +201,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::devices::{shadow::ShadowDevice, StdPacket};
+    use crate::cells::{shadow::ShadowCell, StdPacket};
     use etherparse::{PacketBuilder, SlicedPacket, TransportSlice};
     use ipnet::IpNet;
     use rand::{thread_rng, Rng};
@@ -236,8 +236,8 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_router_device() -> Result<(), Error> {
-        let _span = span!(Level::INFO, "test_router_device").entered();
+    fn test_router_cell() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_router_cell").entered();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -252,13 +252,13 @@ mod tests {
             "192.168.1.2".parse().unwrap(),
         ];
 
-        let shadow0 = ShadowDevice::new()?;
-        let shadow1 = ShadowDevice::new()?;
+        let shadow0 = ShadowCell::new()?;
+        let shadow1 = ShadowCell::new()?;
 
         let ingresses: Vec<Arc<dyn Ingress<_>>> =
             vec![shadow0.sender().clone(), shadow1.sender().clone()];
 
-        assert!(RouterDevice::<_, SimpleRoutingTable>::new(
+        assert!(RouterCell::<_, SimpleRoutingTable>::new(
             ingresses.clone(),
             vec![RoutingEntry::new(ips[0], Some(2))]
         )
@@ -270,14 +270,14 @@ mod tests {
         egresses[1].reset();
         egresses[1].change_state(2);
 
-        let device: RouterDevice<StdPacket, SimpleRoutingTable> = RouterDevice::new(
+        let cell: RouterCell<StdPacket, SimpleRoutingTable> = RouterCell::new(
             ingresses,
             vec![
                 RoutingEntry::new(ips[0], Some(0)),
                 RoutingEntry::new(ips[1], Some(1)),
             ],
         )?;
-        let ingress = device.sender();
+        let ingress = cell.sender();
 
         let mut payload = [0u8; 256];
         for _ in 0..100 {
@@ -305,8 +305,8 @@ mod tests {
             "192.168.1.2/32".parse().unwrap(),
         ];
 
-        let shadow0 = ShadowDevice::new()?;
-        let shadow1 = ShadowDevice::new()?;
+        let shadow0 = ShadowCell::new()?;
+        let shadow1 = ShadowCell::new()?;
 
         let ingresses: Vec<Arc<dyn Ingress<_>>> =
             vec![shadow0.sender().clone(), shadow1.sender().clone()];
@@ -316,10 +316,10 @@ mod tests {
         egresses[1].reset();
         egresses[1].change_state(2);
 
-        let device: RouterDevice<StdPacket, SimpleRoutingTable> =
-            RouterDevice::new(ingresses, vec![RoutingEntry::new(ips[0], Some(0))])?;
-        let ingress = device.sender();
-        let control = device.control_interface();
+        let cell: RouterCell<StdPacket, SimpleRoutingTable> =
+            RouterCell::new(ingresses, vec![RoutingEntry::new(ips[0], Some(0))])?;
+        let ingress = cell.sender();
+        let control = cell.control_interface();
         let mut payload = [0u8; 256];
 
         thread_rng().fill(&mut payload);

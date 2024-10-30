@@ -1,4 +1,4 @@
-use crate::devices::{Device, Packet};
+use crate::cells::{Cell, Packet};
 use crate::error::Error;
 use crate::metal::timer::Timer;
 use async_trait::async_trait;
@@ -15,14 +15,14 @@ use tracing::{debug, info};
 
 use super::{ControlInterface, Egress, Ingress};
 
-pub struct DelayDeviceIngress<P>
+pub struct DelayCellIngress<P>
 where
     P: Packet,
 {
     ingress: mpsc::UnboundedSender<P>,
 }
 
-impl<P> Clone for DelayDeviceIngress<P>
+impl<P> Clone for DelayCellIngress<P>
 where
     P: Packet,
 {
@@ -33,7 +33,7 @@ where
     }
 }
 
-impl<P> Ingress<P> for DelayDeviceIngress<P>
+impl<P> Ingress<P> for DelayCellIngress<P>
 where
     P: Packet + Send,
 {
@@ -46,22 +46,22 @@ where
     }
 }
 
-pub struct DelayDeviceEgress<P>
+pub struct DelayCellEgress<P>
 where
     P: Packet,
 {
     egress: mpsc::UnboundedReceiver<P>,
     delay: Delay,
-    config_rx: mpsc::UnboundedReceiver<DelayDeviceConfig>,
+    config_rx: mpsc::UnboundedReceiver<DelayCellConfig>,
     timer: Timer,
     state: AtomicI32,
 }
 
-impl<P> DelayDeviceEgress<P>
+impl<P> DelayCellEgress<P>
 where
     P: Packet + Send + Sync,
 {
-    fn set_config(&mut self, config: DelayDeviceConfig) {
+    fn set_config(&mut self, config: DelayCellConfig) {
         debug!(
             before = ?self.delay,
             after = ?config.delay,
@@ -72,7 +72,7 @@ where
 }
 
 #[async_trait]
-impl<P> Egress<P> for DelayDeviceEgress<P>
+impl<P> Egress<P> for DelayCellEgress<P>
 where
     P: Packet + Send + Sync,
 {
@@ -112,12 +112,12 @@ where
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Default, Clone)]
-pub struct DelayDeviceConfig {
+pub struct DelayCellConfig {
     #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
     pub delay: Delay,
 }
 
-impl DelayDeviceConfig {
+impl DelayCellConfig {
     pub fn new<T: Into<Delay>>(delay: T) -> Self {
         Self {
             delay: delay.into(),
@@ -125,12 +125,12 @@ impl DelayDeviceConfig {
     }
 }
 
-pub struct DelayDeviceControlInterface {
-    config_tx: mpsc::UnboundedSender<DelayDeviceConfig>,
+pub struct DelayCellControlInterface {
+    config_tx: mpsc::UnboundedSender<DelayCellConfig>,
 }
 
-impl ControlInterface for DelayDeviceControlInterface {
-    type Config = DelayDeviceConfig;
+impl ControlInterface for DelayCellControlInterface {
+    type Config = DelayCellConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         info!("Setting delay to {:?}", config.delay);
@@ -141,19 +141,19 @@ impl ControlInterface for DelayDeviceControlInterface {
     }
 }
 
-pub struct DelayDevice<P: Packet> {
-    ingress: Arc<DelayDeviceIngress<P>>,
-    egress: DelayDeviceEgress<P>,
-    control_interface: Arc<DelayDeviceControlInterface>,
+pub struct DelayCell<P: Packet> {
+    ingress: Arc<DelayCellIngress<P>>,
+    egress: DelayCellEgress<P>,
+    control_interface: Arc<DelayCellControlInterface>,
 }
 
-impl<P> Device<P> for DelayDevice<P>
+impl<P> Cell<P> for DelayCell<P>
 where
     P: Packet + Send + Sync + 'static,
 {
-    type IngressType = DelayDeviceIngress<P>;
-    type EgressType = DelayDeviceEgress<P>;
-    type ControlInterfaceType = DelayDeviceControlInterface;
+    type IngressType = DelayCellIngress<P>;
+    type EgressType = DelayCellEgress<P>;
+    type ControlInterfaceType = DelayCellControlInterface;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -172,32 +172,32 @@ where
     }
 }
 
-impl<P> DelayDevice<P>
+impl<P> DelayCell<P>
 where
     P: Packet,
 {
-    pub fn new<D: Into<Option<Delay>>>(delay: D) -> Result<DelayDevice<P>, Error> {
+    pub fn new<D: Into<Option<Delay>>>(delay: D) -> Result<DelayCell<P>, Error> {
         let delay = delay.into().unwrap_or_default();
-        debug!(?delay, "New DelayDevice");
+        debug!(?delay, "New DelayCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
-        Ok(DelayDevice {
-            ingress: Arc::new(DelayDeviceIngress { ingress: rx }),
-            egress: DelayDeviceEgress {
+        Ok(DelayCell {
+            ingress: Arc::new(DelayCellIngress { ingress: rx }),
+            egress: DelayCellEgress {
                 egress: tx,
                 delay,
                 config_rx,
                 timer: Timer::new()?,
                 state: AtomicI32::new(0),
             },
-            control_interface: Arc::new(DelayDeviceControlInterface { config_tx }),
+            control_interface: Arc::new(DelayCellControlInterface { config_tx }),
         })
     }
 }
 
-type DelayReplayDeviceIngress<P> = DelayDeviceIngress<P>;
+type DelayReplayCellIngress<P> = DelayCellIngress<P>;
 
-pub struct DelayReplayDeviceEgress<P>
+pub struct DelayReplayCellEgress<P>
 where
     P: Packet,
 {
@@ -206,13 +206,13 @@ where
     current_delay: Delay,
     next_available: Instant,
     next_change: Instant,
-    config_rx: mpsc::UnboundedReceiver<DelayReplayDeviceConfig>,
+    config_rx: mpsc::UnboundedReceiver<DelayReplayCellConfig>,
     send_timer: Timer,
     change_timer: Timer,
     state: AtomicI32,
 }
 
-impl<P> DelayReplayDeviceEgress<P>
+impl<P> DelayReplayCellEgress<P>
 where
     P: Packet + Send + Sync,
 {
@@ -240,7 +240,7 @@ where
         self.current_delay = delay;
     }
 
-    fn set_config(&mut self, config: DelayReplayDeviceConfig) {
+    fn set_config(&mut self, config: DelayReplayCellConfig) {
         tracing::debug!("Set inner trace config");
         self.trace = config.trace_config.into_model();
         let now = Instant::now();
@@ -248,7 +248,7 @@ where
             // handle null trace outside this function
             tracing::warn!("Setting null trace");
             self.next_change = now;
-            // set state to 0 to indicate the trace goes to end and the device will drop all packets
+            // set state to 0 to indicate the trace goes to end and the cell will drop all packets
             self.change_state(0);
         }
     }
@@ -268,7 +268,7 @@ where
 }
 
 #[async_trait]
-impl<P> Egress<P> for DelayReplayDeviceEgress<P>
+impl<P> Egress<P> for DelayReplayCellEgress<P>
 where
     P: Packet + Send + Sync,
 {
@@ -333,11 +333,11 @@ where
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct DelayReplayDeviceConfig {
+pub struct DelayReplayCellConfig {
     pub trace_config: Box<dyn DelayTraceConfig>,
 }
 
-impl Clone for DelayReplayDeviceConfig {
+impl Clone for DelayReplayCellConfig {
     fn clone(&self) -> Self {
         Self {
             trace_config: self.trace_config.clone(),
@@ -345,7 +345,7 @@ impl Clone for DelayReplayDeviceConfig {
     }
 }
 
-impl DelayReplayDeviceConfig {
+impl DelayReplayCellConfig {
     pub fn new<T: Into<Box<dyn DelayTraceConfig>>>(trace_config: T) -> Self {
         Self {
             trace_config: trace_config.into(),
@@ -353,12 +353,12 @@ impl DelayReplayDeviceConfig {
     }
 }
 
-pub struct DelayReplayDeviceControlInterface {
-    config_tx: mpsc::UnboundedSender<DelayReplayDeviceConfig>,
+pub struct DelayReplayCellControlInterface {
+    config_tx: mpsc::UnboundedSender<DelayReplayCellConfig>,
 }
 
-impl ControlInterface for DelayReplayDeviceControlInterface {
-    type Config = DelayReplayDeviceConfig;
+impl ControlInterface for DelayReplayCellControlInterface {
+    type Config = DelayReplayCellConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         info!("Setting delay replay config");
@@ -369,19 +369,19 @@ impl ControlInterface for DelayReplayDeviceControlInterface {
     }
 }
 
-pub struct DelayReplayDevice<P: Packet> {
-    ingress: Arc<DelayReplayDeviceIngress<P>>,
-    egress: DelayReplayDeviceEgress<P>,
-    control_interface: Arc<DelayReplayDeviceControlInterface>,
+pub struct DelayReplayCell<P: Packet> {
+    ingress: Arc<DelayReplayCellIngress<P>>,
+    egress: DelayReplayCellEgress<P>,
+    control_interface: Arc<DelayReplayCellControlInterface>,
 }
 
-impl<P> Device<P> for DelayReplayDevice<P>
+impl<P> Cell<P> for DelayReplayCell<P>
 where
     P: Packet + Send + Sync + 'static,
 {
-    type IngressType = DelayReplayDeviceIngress<P>;
-    type EgressType = DelayReplayDeviceEgress<P>;
-    type ControlInterfaceType = DelayReplayDeviceControlInterface;
+    type IngressType = DelayReplayCellIngress<P>;
+    type EgressType = DelayReplayCellEgress<P>;
+    type ControlInterfaceType = DelayReplayCellControlInterface;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -400,17 +400,17 @@ where
     }
 }
 
-impl<P> DelayReplayDevice<P>
+impl<P> DelayReplayCell<P>
 where
     P: Packet,
 {
-    pub fn new(trace: Box<dyn DelayTrace>) -> Result<DelayReplayDevice<P>, Error> {
-        tracing::debug!("New DelayReplayDevice");
+    pub fn new(trace: Box<dyn DelayTrace>) -> Result<DelayReplayCell<P>, Error> {
+        tracing::debug!("New DelayReplayCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
-        Ok(DelayReplayDevice {
-            ingress: Arc::new(DelayReplayDeviceIngress { ingress: rx }),
-            egress: DelayReplayDeviceEgress {
+        Ok(DelayReplayCell {
+            ingress: Arc::new(DelayReplayCellIngress { ingress: rx }),
+            egress: DelayReplayCellEgress {
                 egress: tx,
                 trace,
                 current_delay: Delay::ZERO,
@@ -421,7 +421,7 @@ where
                 change_timer: Timer::new()?,
                 state: AtomicI32::new(0),
             },
-            control_interface: Arc::new(DelayReplayDeviceControlInterface { config_tx }),
+            control_interface: Arc::new(DelayReplayCellControlInterface { config_tx }),
         })
     }
 }
@@ -432,7 +432,7 @@ mod tests {
     use std::time::{Duration, Instant};
     use tracing::{span, Level};
 
-    use crate::devices::StdPacket;
+    use crate::cells::StdPacket;
 
     use super::*;
 
@@ -442,8 +442,8 @@ mod tests {
     const DELAY_TEST_TIME: [u64; 8] = [0, 2, 5, 10, 20, 50, 100, 500];
 
     #[test_log::test]
-    fn test_delay_device() -> Result<(), Error> {
-        let _span = span!(Level::INFO, "test_delay_device").entered();
+    fn test_delay_cell() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_delay_cell").entered();
         for testing_delay in DELAY_TEST_TIME {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -451,14 +451,14 @@ mod tests {
 
             let _guard = rt.enter();
 
-            info!("Creating device with {}ms delay", testing_delay);
-            let device = DelayDevice::new(Duration::from_millis(testing_delay))?;
-            let ingress = device.sender();
-            let mut egress = device.into_receiver();
+            info!("Creating cell with {}ms delay", testing_delay);
+            let cell = DelayCell::new(Duration::from_millis(testing_delay))?;
+            let ingress = cell.sender();
+            let mut egress = cell.into_receiver();
             egress.reset();
             egress.change_state(2);
 
-            info!("Testing delay time for {}ms delay device", testing_delay);
+            info!("Testing delay time for {}ms delay cell", testing_delay);
             let mut delays: Vec<f64> = Vec::new();
 
             for _ in 0..10 {
@@ -482,7 +482,7 @@ mod tests {
             }
 
             info!(
-                "Tested delays for {}ms delay device: {:?}",
+                "Tested delays for {}ms delay cell: {:?}",
                 testing_delay, delays
             );
 
@@ -501,19 +501,19 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_delay_device_config_update() -> Result<(), Error> {
-        let _span = span!(Level::INFO, "test_delay_device_config_update").entered();
+    fn test_delay_cell_config_update() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_delay_cell_config_update").entered();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
 
         let _guard = rt.enter();
 
-        info!("Creating device with 10ms delay");
-        let device = DelayDevice::new(Duration::from_millis(10))?;
-        let config_changer = device.control_interface();
-        let ingress = device.sender();
-        let mut egress = device.into_receiver();
+        info!("Creating cell with 10ms delay");
+        let cell = DelayCell::new(Duration::from_millis(10))?;
+        let config_changer = cell.control_interface();
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
         egress.reset();
         egress.change_state(2);
 
@@ -525,7 +525,7 @@ mod tests {
 
         // Wait for 5ms, then change the config to let the delay be longer
         std::thread::sleep(Duration::from_millis(5));
-        config_changer.set_config(DelayDeviceConfig::new(Duration::from_millis(20)))?;
+        config_changer.set_config(DelayCellConfig::new(Duration::from_millis(20)))?;
 
         let received = rt.block_on(async { egress.dequeue().await });
 
@@ -547,7 +547,7 @@ mod tests {
 
         // Wait for 15ms, then change the config back to 10ms
         std::thread::sleep(Duration::from_millis(15));
-        config_changer.set_config(DelayDeviceConfig::new(Duration::from_millis(10)))?;
+        config_changer.set_config(DelayCellConfig::new(Duration::from_millis(10)))?;
 
         let received = rt.block_on(async { egress.dequeue().await });
 
@@ -565,8 +565,8 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_replay_delay_device() -> Result<(), Error> {
-        let _span = span!(Level::INFO, "test_replay_delay_device").entered();
+    fn test_replay_delay_cell() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_replay_delay_cell").entered();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -589,9 +589,9 @@ mod tests {
             Box::new(RepeatedDelayPatternConfig::new().pattern(pattern).count(0))
                 as Box<dyn DelayTraceConfig>;
         let delay_trace = delay_trace_config.into_model();
-        let device = DelayReplayDevice::new(delay_trace)?;
-        let ingress = device.sender();
-        let mut egress = device.into_receiver();
+        let cell = DelayReplayCell::new(delay_trace)?;
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
         egress.reset();
         egress.change_state(2);
         let start_time = tokio::time::Instant::now();
@@ -636,8 +636,8 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_replay_delay_device_change_state() -> Result<(), Error> {
-        let _span = span!(Level::INFO, "test_replay_delay_device").entered();
+    fn test_replay_delay_cell_change_state() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_replay_delay_cell").entered();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -660,9 +660,9 @@ mod tests {
             Box::new(RepeatedDelayPatternConfig::new().pattern(pattern).count(0))
                 as Box<dyn DelayTraceConfig>;
         let delay_trace = delay_trace_config.into_model();
-        let device = DelayReplayDevice::new(delay_trace)?;
-        let ingress = device.sender();
-        let mut egress = device.into_receiver();
+        let cell = DelayReplayCell::new(delay_trace)?;
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
         egress.reset();
         let start_time = tokio::time::Instant::now();
         for _ in 0..10 {

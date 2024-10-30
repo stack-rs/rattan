@@ -1,8 +1,8 @@
 /// This test need to be run as root (CAP_NET_ADMIN, CAP_SYS_ADMIN and CAP_SYS_RAW)
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test delay --all-features -- --nocapture
-use rattan_core::config::{DelayDeviceBuildConfig, DeviceBuildConfig, RattanConfig};
+use rattan_core::config::{DelayCellBuildConfig, CellBuildConfig, RattanConfig};
 use rattan_core::control::RattanOp;
-use rattan_core::devices::{delay::DelayDeviceConfig, StdPacket};
+use rattan_core::cells::{delay::DelayCellConfig, StdPacket};
 use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
@@ -23,13 +23,13 @@ fn test_delay() {
         },
         ..Default::default()
     };
-    config.devices.insert(
+    config.cells.insert(
         "up_delay".to_string(),
-        DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(Duration::from_millis(0))),
+        CellBuildConfig::Delay(DelayCellBuildConfig::new(Duration::from_millis(0))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_delay".to_string(),
-        DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(Duration::from_millis(0))),
+        CellBuildConfig::Delay(DelayCellBuildConfig::new(Duration::from_millis(0))),
     );
     config.links = HashMap::from([
         ("left".to_string(), "up_delay".to_string()),
@@ -44,7 +44,7 @@ fn test_delay() {
     // Wait for AfPacketDriver to be ready
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    // Before set the DelayDevice, the average latency should be less than 0.1ms
+    // Before set the DelayCell, the average latency should be less than 0.1ms
     {
         let _span = span!(Level::INFO, "ping_no_delay").entered();
         info!("try to ping with no delay");
@@ -76,22 +76,22 @@ fn test_delay() {
         assert!(average_latency < 10.0);
     }
 
-    // After set the DelayDevice, the average latency should be around 200ms
+    // After set the DelayCell, the average latency should be around 200ms
     {
         let _span = span!(Level::INFO, "ping_with_delay").entered();
         info!(
             "try to ping with up delay set up delay to 100ms and down delay to 50ms (rtt = 150ms)"
         );
         radix
-            .op_block_exec(RattanOp::ConfigDevice(
+            .op_block_exec(RattanOp::ConfigCell(
                 "up_delay".to_string(),
-                serde_json::to_value(DelayDeviceConfig::new(Duration::from_millis(100))).unwrap(),
+                serde_json::to_value(DelayCellConfig::new(Duration::from_millis(100))).unwrap(),
             ))
             .unwrap();
         radix
-            .op_block_exec(RattanOp::ConfigDevice(
+            .op_block_exec(RattanOp::ConfigCell(
                 "down_delay".to_string(),
-                serde_json::to_value(DelayDeviceConfig::new(Duration::from_millis(50))).unwrap(),
+                serde_json::to_value(DelayCellConfig::new(Duration::from_millis(50))).unwrap(),
             ))
             .unwrap();
 

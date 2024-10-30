@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    devices::Packet,
-    metal::{error::MetalError, veth::VethDevice},
+    cells::Packet,
+    metal::{error::MetalError, veth::VethCell},
 };
 
 pub enum PacketType {
@@ -32,7 +32,7 @@ pub trait InterfaceDriver: Send + 'static {
     type Sender: InterfaceSender<Self::Packet>;
     type Receiver: InterfaceReceiver<Self::Packet> + Send;
 
-    fn bind_device(device: Arc<VethDevice>) -> Result<Vec<Self>, MetalError>
+    fn bind_cell(cell: Arc<VethCell>) -> Result<Vec<Self>, MetalError>
     where
         Self: Sized;
     fn raw_fd(&self) -> i32;

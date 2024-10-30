@@ -8,13 +8,13 @@ use netem_trace::{
     model::{BwTraceConfig, RepeatedBwPatternConfig, StaticBwConfig},
     Bandwidth, BwTrace,
 };
-use rattan_core::devices::{
+use rattan_core::cells::{
     bandwidth::{
         queue::{
             CoDelQueue, CoDelQueueConfig, DropHeadQueue, DropHeadQueueConfig, DropTailQueue,
             DropTailQueueConfig, InfiniteQueue, InfiniteQueueConfig,
         },
-        BwDeviceConfig, BwReplayDevice, BwReplayDeviceConfig, BwType,
+        BwCellConfig, BwReplayCell, BwReplayCellConfig, BwType,
     },
     ControlInterface, StdPacket,
 };
@@ -22,7 +22,7 @@ use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
 use rattan_core::{
-    config::{BwDeviceBuildConfig, DeviceBuildConfig, RattanConfig},
+    config::{BwCellBuildConfig, CellBuildConfig, RattanConfig},
     control::RattanOp,
 };
 use regex::Regex;
@@ -41,17 +41,17 @@ fn test_bandwidth() {
         },
         ..Default::default()
     };
-    config.devices.insert(
+    config.cells.insert(
         "up_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
             None,
             InfiniteQueueConfig::new(),
             None,
         ))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
             None,
             InfiniteQueueConfig::new(),
             None,
@@ -67,7 +67,7 @@ fn test_bandwidth() {
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
-    // Before config the BwDevice, the bandwidth should be around 1Gbps
+    // Before config the BwCell, the bandwidth should be around 1Gbps
     {
         let _span = span!(Level::INFO, "iperf_no_limit").entered();
         info!("try to iperf with no bandwidth limit");
@@ -120,15 +120,15 @@ fn test_bandwidth() {
         info!("bitrate: {:?}", Bandwidth::from_bps(bitrate));
     }
 
-    // After set the BwDevice, the bandwidth should be between 90-100Mbps
+    // After set the BwCell, the bandwidth should be between 90-100Mbps
     std::thread::sleep(std::time::Duration::from_millis(100));
     {
         let _span = span!(Level::INFO, "iperf_with_limit").entered();
         info!("try to iperf with bandwidth limit set to 100Mbps");
         radix
-            .op_block_exec(RattanOp::ConfigDevice(
+            .op_block_exec(RattanOp::ConfigCell(
                 "down_bw".to_string(),
-                serde_json::to_value(BwDeviceConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
+                serde_json::to_value(BwCellConfig::<StdPacket, InfiniteQueue<StdPacket>>::new(
                     Bandwidth::from_mbps(100),
                     None,
                     None,
@@ -199,17 +199,17 @@ fn test_droptail_queue() {
         },
         ..Default::default()
     };
-    config.devices.insert(
+    config.cells.insert(
         "up_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::DropTail(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::DropTail(BwCellConfig::new(
             None,
             DropTailQueueConfig::new(None, None, BwType::default()),
             None,
         ))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::DropTail(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::DropTail(BwCellConfig::new(
             None,
             DropTailQueueConfig::new(None, None, BwType::default()),
             None,
@@ -277,9 +277,9 @@ fn test_droptail_queue() {
                 info!("Set bandwidth to 800kbps (1000B per 10ms)");
                 runtime
                     .block_on(
-                        op_endpoint.exec(RattanOp::ConfigDevice(
+                        op_endpoint.exec(RattanOp::ConfigCell(
                             "up_bw".to_string(),
-                            serde_json::to_value(BwDeviceConfig::<
+                            serde_json::to_value(BwCellConfig::<
                                 StdPacket,
                                 DropTailQueue<StdPacket>,
                             >::new(
@@ -315,9 +315,9 @@ fn test_droptail_queue() {
                 info!("Set bandwidth to 40kbps (50B per 10ms)");
                 runtime
                     .block_on(
-                        op_endpoint.exec(RattanOp::ConfigDevice(
+                        op_endpoint.exec(RattanOp::ConfigCell(
                             "up_bw".to_string(),
-                            serde_json::to_value(BwDeviceConfig::<
+                            serde_json::to_value(BwCellConfig::<
                                 StdPacket,
                                 DropTailQueue<StdPacket>,
                             >::new(
@@ -370,17 +370,17 @@ fn test_drophead_queue() {
         },
         ..Default::default()
     };
-    config.devices.insert(
+    config.cells.insert(
         "up_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::DropHead(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::DropHead(BwCellConfig::new(
             None,
             DropHeadQueueConfig::new(None, None, BwType::default()),
             None,
         ))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::DropHead(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::DropHead(BwCellConfig::new(
             None,
             DropHeadQueueConfig::new(None, None, BwType::default()),
             None,
@@ -449,9 +449,9 @@ fn test_drophead_queue() {
                 info!("Set bandwidth to 800kbps (1000B per 10ms)");
                 runtime
                     .block_on(
-                        op_endpoint.exec(RattanOp::ConfigDevice(
+                        op_endpoint.exec(RattanOp::ConfigCell(
                             "up_bw".to_string(),
-                            serde_json::to_value(BwDeviceConfig::<
+                            serde_json::to_value(BwCellConfig::<
                                 StdPacket,
                                 DropHeadQueue<StdPacket>,
                             >::new(
@@ -489,9 +489,9 @@ fn test_drophead_queue() {
                 info!("Set bandwidth to 40kbps (50B per 10ms)");
                 runtime
                     .block_on(
-                        op_endpoint.exec(RattanOp::ConfigDevice(
+                        op_endpoint.exec(RattanOp::ConfigCell(
                             "up_bw".to_string(),
-                            serde_json::to_value(BwDeviceConfig::<
+                            serde_json::to_value(BwCellConfig::<
                                 StdPacket,
                                 DropHeadQueue<StdPacket>,
                             >::new(
@@ -546,9 +546,9 @@ fn test_codel_queue() {
         },
         ..Default::default()
     };
-    config.devices.insert(
+    config.cells.insert(
         "up_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::CoDel(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::CoDel(BwCellConfig::new(
             None,
             CoDelQueueConfig::new(
                 60,
@@ -561,9 +561,9 @@ fn test_codel_queue() {
             None,
         ))),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
             None,
             InfiniteQueueConfig::new(),
             None,
@@ -631,10 +631,10 @@ fn test_codel_queue() {
                 info!("Set bandwidth to 800kbps (1000B per 10ms)");
                 runtime
                     .block_on(
-                        op_endpoint.exec(RattanOp::ConfigDevice(
+                        op_endpoint.exec(RattanOp::ConfigCell(
                             "up_bw".to_string(),
                             serde_json::to_value(
-                                BwDeviceConfig::<StdPacket, CoDelQueue<StdPacket>>::new(
+                                BwCellConfig::<StdPacket, CoDelQueue<StdPacket>>::new(
                                     Bandwidth::from_kbps(800),
                                     None,
                                     None,
@@ -681,10 +681,10 @@ fn test_codel_queue() {
                 info!("Set bandwidth to 40kbps (50B per 10ms)");
                 runtime
                     .block_on(
-                        op_endpoint.exec(RattanOp::ConfigDevice(
+                        op_endpoint.exec(RattanOp::ConfigCell(
                             "up_bw".to_string(),
                             serde_json::to_value(
-                                BwDeviceConfig::<StdPacket, CoDelQueue<StdPacket>>::new(
+                                BwCellConfig::<StdPacket, CoDelQueue<StdPacket>>::new(
                                     Bandwidth::from_kbps(40),
                                     CoDelQueueConfig::new(
                                         None,
@@ -754,11 +754,11 @@ fn test_replay() {
         ..Default::default()
     };
     config
-        .devices
-        .insert("up_bw".to_string(), DeviceBuildConfig::Custom);
-    config.devices.insert(
+        .cells
+        .insert("up_bw".to_string(), CellBuildConfig::Custom);
+    config.cells.insert(
         "down_bw".to_string(),
-        DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
             None,
             InfiniteQueueConfig::new(),
             None,
@@ -772,7 +772,7 @@ fn test_replay() {
     ]);
     let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
     let control_interface = radix
-        .build_device("up_bw".to_string(), |handle| {
+        .build_cell("up_bw".to_string(), |handle| {
             let _guard = handle.enter();
             let trace = RepeatedBwPatternConfig::new()
                 .pattern(vec![Box::new(StaticBwConfig {
@@ -780,7 +780,7 @@ fn test_replay() {
                     duration: Some(Duration::from_secs(10)),
                 }) as Box<dyn BwTraceConfig>])
                 .build();
-            BwReplayDevice::new(
+            BwReplayCell::new(
                 Box::new(trace) as Box<dyn BwTrace>,
                 DropTailQueue::new(DropTailQueueConfig::new(100, None, BwType::default())),
                 None,
@@ -816,7 +816,7 @@ fn test_replay() {
             }) as Box<dyn BwTraceConfig>,
         ]);
         control_interface
-            .set_config(BwReplayDeviceConfig::new(
+            .set_config(BwReplayCellConfig::new(
                 Box::new(trace_config) as Box<dyn BwTraceConfig>,
                 None,
                 None,

@@ -1,4 +1,4 @@
-# This is a sample configuration file for Rattan CLI.
+# This is an example configuration file for Rattan CLI.
 #
 # Fileds with "Default" are optional.
 # User can specify the configuration file by the `-c` option of `rattan`.
@@ -25,22 +25,25 @@
 # ~    ...    ~   Veth pairs  ~  ...           ...  ~   Veth pairs  ~    ...    ~
 # +-----------+               +---------------------+               +-----------+
 #
-# Then Rattan will build and link the devices according to the configuration file.
-# Each device emulates some network characteristics, such as bandwidth, delay, loss, etc.
+# Then Rattan will build and link the cells according to the configuration file.
+# Each cell emulates some network characteristics, such as bandwidth, delay, loss, etc.
 #
 # Then the `COMMAND` specified to `rattan` will run in the `ns-left` network namespace.
 # If not specified, the `$SHELL` will run.
 #
 # Sections:
+# - [general] Section: How to run the rattan itself in general
 # - [env] Section: How to build the environment
 # - [http] Section: HTTP Control Server configuration
-# - [devices] Section: Emulation devices configuration
-# - [links] Section: How to link the devices
+# - [cells] Section: Emulation cells configuration
+# - [links] Section: How to link the cells
+# - [resource] Section: How to use system resource
+# - [commands] Section: Commands to run in rattan
 #
 
 
 # ----- General Section -----
-# This section determines how to build the rattan itself in general.
+# This section determines how to run the rattan itself in general.
 [general]
 
 # Configure the path to store compressed packet log.
@@ -81,7 +84,7 @@ left_veth_count = 2
 
 
 # ----- HTTP Section -----
-# This section configures Rattan's HTTP Control Server.
+# This section configures Rattan's HTTP control server.
 [http]
 
 # Enable HTTP server
@@ -97,22 +100,22 @@ port = 8086
 # ----- HTTP Section End -----
 
 
-# ----- Devices Section -----
-# This section describes the emulation devices.
-# Each device has a unique string ID, defined like "[devices.<ID>]".
-# Each device **MUST** have a "type" field, which determines the device type and device configuration fields.
-# Possible device types:
+# ----- Cells Section -----
+# This section describes the emulation cells.
+# Each cell has a unique string ID, defined like "[cells.<ID>]".
+# Each cell **MUST** have a "type" field, which determines the cell type and cell configuration fields.
+# Possible cell types:
 # - "Bw"       : Fixed bandwidth
 # - "BwReplay" : Bandwidth trace replayer
 # - "Delay"    : Fixed delay
 # - "Loss"     : Loss pattern
-# - "Custom"   : Custom device, only specify the device ID used in link section,
-#                and the device must be built by the user
-[devices]
+# - "Custom"   : Custom cell, only specify the cell ID used in link section,
+#                and the cell must be built by the user
+[cells]
 
 
-# Bw Device Example
-[devices.up_1]
+# Bw Cell Example
+[cells.up_1]
 type = "Bw"
 
 # Type of bandwidth calculation
@@ -164,8 +167,8 @@ queue = "DropTail"
 queue_config = { packet_limit = 60 }
 
 
-# Delay Device Example
-[devices.up_2]
+# Delay Cell Example
+[cells.up_2]
 type = "Delay"
 
 # Delay
@@ -174,8 +177,8 @@ type = "Delay"
 # Default: "0ms"
 delay = "10ms"
 
-# Delay Replay Device Example
-[devices.up_3]
+# Delay Replay Cell Example
+[cells.up_3]
 type = "DelayReplay"
 
 # Delay trace
@@ -188,8 +191,8 @@ type = "DelayReplay"
 # For example, the following trace will switch between 10ms and 50ms delays at 1-second intervals and the trace will repeat forever.
 trace = "./assets/dynamic-delay.json"
 
-# Loss Replay Device Example
-[devices.up_4]
+# Loss Replay Cell Example
+[cells.up_4]
 type = "LossReplay"
 
 # Loss trace
@@ -202,8 +205,8 @@ type = "LossReplay"
 # For example, the following trace will switch between 0.0 and 0.5 loss rates at 1-second intervals and the trace will repeat forever.
 trace = "./assets/dynamic-loss.toml"
 
-# BwReplay Device Example
-[devices.down_1]
+# BwReplay Cell Example
+[cells.down_1]
 type = "BwReplay"
 
 # Bandwitdh trace
@@ -222,12 +225,12 @@ type = "BwReplay"
 trace = "./assets/24Mbps.trace"
 
 # Queue type
-# Same as Bw device
+# Same as Bw cell
 queue = "CoDel"
 
 
-# Loss Device Example
-[devices.down_2]
+# Loss Cell Example
+[cells.down_2]
 type = "Loss"
 
 # Loss pattern
@@ -243,52 +246,52 @@ type = "Loss"
 pattern = [0.1, 0.2]
 
 
-# Shadow Device Example
-[devices.shadow]
+# Shadow Cell Example
+[cells.shadow]
 type = "Shadow"
 
 
-# Router Device Example
-[devices.router]
+# Router Cell Example
+[cells.router]
 type = "Router"
 
 # Egress connections
 # 
-# It is an ordered list of strings, where each one is a device ID.
-# Each item represents the device connected to the i-th interface of the Router Device.
+# It is an ordered list of strings, where each one is a cell ID.
+# Each item represents the cell connected to the i-th interface of the Router Cell.
 # For example, the following one means `left1` connected to interface 0, and `left2` connected to interface 1.
 # At the same time, the length of the list determines the range of interfaces id in the routing_table.
 #
-# Warning: Due to the order of device construction, Router Devices should not be directly connected to another Router Device.
-# The recommended solution is to add a Shadow Device to represent the Router Device being connected, and link them in Links Section. 
+# Warning: Due to the order of cell construction, Router Cells should not be directly connected to another Router Cell.
+# The recommended solution is to add a Shadow Cell to represent the Router Cell being connected, and link them in Links Section. 
 egress_connections = ["left1", "left2"]
 
 # Initial routing table
-[[devices.router.routing_table]]
+[[cells.router.routing_table]]
 prefix = "10.1.1.1/24"
 interface_id = 0
 
-[[devices.router.routing_table]]
+[[cells.router.routing_table]]
 prefix = "10.1.2.1/24"
 interface_id = 1
 
-[[devices.router.routing_table]]
+[[cells.router.routing_table]]
 prefix = "10.2.0.0/16"
 # no interface_id, meaning drop
 
-# ----- Devices Section End -----
+# ----- Cells Section End -----
 
 
 # ----- Links Section -----
-# This section describes how to link the devices.
+# This section describes how to link the cells.
 #
-# "left" and "right" are pre-defined device IDs, which respectively represent
+# "left" and "right" are preserved cell IDs, which respectively represent
 # the `ns-left` side veth (named `vL1-R`) and the `ns-right` side veth (named `vR1-L`).
 # But if a network namespace has more than one veth NICs, `ns-left` side for example, "left1", "left2" etc. will be defined.
 #
-# The other device IDs are defined by user in the devices section.
+# The other cell IDs are defined by user in the cells section.
 #
-# Each line describes a one-way link from a device egress to a device ingress.
+# Each line describes a one-way link from a cell egress to a cell ingress.
 # For example, the following line means:
 # +-------+  -------->  shadow --->  up_1  --->  up_2  ---> +-------+
 # | left1 | <==+           ^                                | right |
@@ -296,7 +299,7 @@ prefix = "10.2.0.0/16"
 # | left2 | <==+           |
 # +-------+  --------------+
 # 
-# Note: The double line "<===" from router is connected in Devices Section
+# Note: The double line "<===" from router is connected in Cells Section
 
 [links]
 left1 = "shadow"
@@ -307,7 +310,7 @@ up_2 = "right"
 right = "down_1"
 down_1 = "down_2"
 down_2 = "router"
-# We do not need to link the Router Device to other devices anymore, as we have done it in Devices Section.
+# We do not need to link the Router Cell to other cells anymore, as we have done it in Cells Section.
 
 # ----- Links Section End -----
 
@@ -322,12 +325,13 @@ cores = [1]
 # ----- Commands Section -----
 # This section describes the commands to run in rattan.
 #
-# When in `Compatible` mode, only the left and shell keys are used,
+# When in `Compatible` mode, only the left and shell options are used,
 # and the commands will run in the `ns-left` network namespace.
 #
-# When in `Isolated` mode, only the left and right keys are used,
+# When in `Isolated` mode, only the left and right options are used,
 # and the commands will run in the `ns-left` and `ns-right` network namespace, respectively.
 [commands]
 left = ["echo", "hello world"]
 # right = ["echo", "hello world"]
+# Possible values: "Default", "Sh", "Bash", "Fish" and "Zsh"
 shell = "Default"

@@ -48,7 +48,7 @@ impl HttpControlEndpoint {
         Router::new()
             .route("/notify", post(send_notify))
             .route("/state", get(query_state))
-            .route("/config/:id", post(config_device))
+            .route("/config/:id", post(config_cell))
             .with_state(self.state.clone())
     }
 }
@@ -73,19 +73,19 @@ async fn query_state(State(state): State<ControlState>) -> Result<Json<Value>, E
     }
 }
 
-async fn config_device(
+async fn config_cell(
     Path(id): Path<String>,
     State(state): State<ControlState>,
     Json(config): Json<serde_json::Value>,
 ) -> Result<(), Error> {
-    debug!("Config device (id={}): {:?}", id, config);
+    debug!("Config cell (id={}): {:?}", id, config);
     let config = serde_json::from_value(config)?;
     let res = state
         .op_endpoint
-        .exec(RattanOp::ConfigDevice(id, config))
+        .exec(RattanOp::ConfigCell(id, config))
         .await?;
     match res {
-        RattanOpResult::ConfigDevice => Ok(()),
+        RattanOpResult::ConfigCell => Ok(()),
         _ => Err(RattanOpError::MismatchOpResError.into()),
     }
 }

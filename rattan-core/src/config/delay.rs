@@ -8,29 +8,29 @@ use netem_trace::{model::DelayTraceConfig, DelayTrace};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    core::DeviceFactory,
-    devices::{delay, Packet},
+    core::CellFactory,
+    cells::{delay, Packet},
     error::Error,
 };
 
-pub type DelayDeviceBuildConfig = delay::DelayDeviceConfig;
+pub type DelayCellBuildConfig = delay::DelayCellConfig;
 
-impl DelayDeviceBuildConfig {
-    pub fn into_factory<P: Packet>(self) -> impl DeviceFactory<delay::DelayDevice<P>> {
+impl DelayCellBuildConfig {
+    pub fn into_factory<P: Packet>(self) -> impl CellFactory<delay::DelayCell<P>> {
         move |handle| {
             let _guard = handle.enter();
-            delay::DelayDevice::new(self.delay)
+            delay::DelayCell::new(self.delay)
         }
     }
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
-pub struct DelayReplayDeviceBuildConfig {
+pub struct DelayReplayCellBuildConfig {
     pub trace: String,
 }
 
-impl DelayReplayDeviceBuildConfig {
+impl DelayReplayCellBuildConfig {
     fn get_trace(&self) -> Result<Box<dyn DelayTrace>, Error> {
         let file_path = std::path::Path::new(&self.trace);
         if let Some(ext) = file_path.extension() {
@@ -54,11 +54,11 @@ impl DelayReplayDeviceBuildConfig {
         )))
     }
 
-    pub fn into_factory<P: Packet>(self) -> impl DeviceFactory<delay::DelayReplayDevice<P>> {
+    pub fn into_factory<P: Packet>(self) -> impl CellFactory<delay::DelayReplayCell<P>> {
         move |handle| {
             let _guard = handle.enter();
             let trace = self.get_trace()?;
-            delay::DelayReplayDevice::new(trace)
+            delay::DelayReplayCell::new(trace)
         }
     }
 }

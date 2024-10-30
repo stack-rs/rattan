@@ -5,16 +5,16 @@ use netem_trace::{Bandwidth, Delay};
 use paste::paste;
 use rattan_core::{
     config::{
-        BwDeviceBuildConfig, BwReplayDeviceBuildConfig, BwReplayQueueConfig,
-        DelayDeviceBuildConfig, DeviceBuildConfig, LossDeviceBuildConfig, RattanConfig,
+        BwCellBuildConfig, BwReplayCellBuildConfig, BwReplayQueueConfig,
+        DelayCellBuildConfig, CellBuildConfig, LossCellBuildConfig, RattanConfig,
         RattanResourceConfig,
     },
-    devices::{
+    cells::{
         bandwidth::{
             queue::{
                 CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
             },
-            BwDeviceConfig,
+            BwCellConfig,
         },
         StdPacket,
     },
@@ -95,19 +95,19 @@ enum QueueType {
     CoDel,
 }
 
-// Deserialize queue args and create BwDeviceBuildConfig
+// Deserialize queue args and create BwCellBuildConfig
 // $q_type: queue type (key in `QueueType`)
 // $q_args: queue args
-// $bw: bandwidth for BwDevice
+// $bw: bandwidth for BwCell
 macro_rules! bw_q_args_into_config {
     ($q_type:ident, $q_args:expr, $bw:expr) => {
         paste!(
             match serde_json::from_str::<[<$q_type QueueConfig>]> (&$q_args.unwrap_or("{}".to_string())) {
-                Ok(queue_config) => DeviceBuildConfig::Bw(BwDeviceBuildConfig::$q_type(
+                Ok(queue_config) => CellBuildConfig::Bw(BwCellBuildConfig::$q_type(
                     if $q_args.is_none() {
-                        BwDeviceConfig::new($bw, None, None)
+                        BwCellConfig::new($bw, None, None)
                     } else {
-                        BwDeviceConfig::new($bw, queue_config, None)
+                        BwCellConfig::new($bw, queue_config, None)
                     }
                 )),
                 Err(e) => {
@@ -119,15 +119,15 @@ macro_rules! bw_q_args_into_config {
     };
 }
 
-// Deserialize queue args and create BwReplayDeviceBuildConfig
+// Deserialize queue args and create BwReplayCellBuildConfig
 // $q_type: queue type (key in `QueueType`)
 // $q_args: queue args
-// $mahimahi_trace: mahimahi_trace for BwReplayDevice
+// $mahimahi_trace: mahimahi_trace for BwReplayCell
 macro_rules! bwreplay_q_args_into_config {
     ($q_type:ident, $q_args:expr, $trace_file:expr) => {
         paste!(
             match serde_json::from_str::<[<$q_type QueueConfig>]> (&$q_args.unwrap_or("{}".to_string())) {
-                Ok(queue_config) => DeviceBuildConfig::BwReplay(BwReplayDeviceBuildConfig::$q_type(
+                Ok(queue_config) => CellBuildConfig::BwReplay(BwReplayCellBuildConfig::$q_type(
                     if $q_args.is_none() {
                         BwReplayQueueConfig::new($trace_file, None, None)
                     } else {
@@ -145,15 +145,15 @@ macro_rules! bwreplay_q_args_into_config {
 
 impl ChannelArgs {
     pub fn build_rattan_config(self) -> rattan_core::error::Result<RattanConfig<StdPacket>> {
-        let mut devices_config = HashMap::<String, DeviceBuildConfig<StdPacket>>::new();
+        let mut cells_config = HashMap::<String, CellBuildConfig<StdPacket>>::new();
         let mut links_config = HashMap::<String, String>::new();
         let mut uplink_count = 0;
         let mut downlink_count = 0;
 
         if let Some(bandwidth) = self.uplink_bandwidth {
-            let device_config = match self.uplink_queue {
+            let cell_config = match self.uplink_queue {
                 Some(QueueType::Infinite) | None => {
-                    DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+                    CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
                         bandwidth,
                         InfiniteQueueConfig::new(),
                         None,
@@ -170,11 +170,11 @@ impl ChannelArgs {
                 }
             };
             uplink_count += 1;
-            devices_config.insert(format!("up_{}", uplink_count), device_config);
+            cells_config.insert(format!("up_{}", uplink_count), cell_config);
         } else if let Some(ref trace_file) = self.uplink_trace {
-            let device_config = match self.uplink_queue {
+            let cell_config = match self.uplink_queue {
                 Some(QueueType::Infinite) | None => {
-                    DeviceBuildConfig::BwReplay(BwReplayDeviceBuildConfig::Infinite(
+                    CellBuildConfig::BwReplay(BwReplayCellBuildConfig::Infinite(
                         BwReplayQueueConfig::new(trace_file, InfiniteQueueConfig::new(), None),
                     ))
                 }
@@ -197,13 +197,13 @@ impl ChannelArgs {
                 }
             };
             uplink_count += 1;
-            devices_config.insert(format!("up_{}", uplink_count), device_config);
+            cells_config.insert(format!("up_{}", uplink_count), cell_config);
         }
 
         if let Some(bandwidth) = self.downlink_bandwidth {
-            let device_config = match self.downlink_queue {
+            let cell_config = match self.downlink_queue {
                 Some(QueueType::Infinite) | None => {
-                    DeviceBuildConfig::Bw(BwDeviceBuildConfig::Infinite(BwDeviceConfig::new(
+                    CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
                         bandwidth,
                         InfiniteQueueConfig::new(),
                         None,
@@ -220,11 +220,11 @@ impl ChannelArgs {
                 }
             };
             downlink_count += 1;
-            devices_config.insert(format!("down_{}", downlink_count), device_config);
+            cells_config.insert(format!("down_{}", downlink_count), cell_config);
         } else if let Some(trace_file) = self.downlink_trace {
-            let device_config = match self.downlink_queue {
+            let cell_config = match self.downlink_queue {
                 Some(QueueType::Infinite) | None => {
-                    DeviceBuildConfig::BwReplay(BwReplayDeviceBuildConfig::Infinite(
+                    CellBuildConfig::BwReplay(BwReplayCellBuildConfig::Infinite(
                         BwReplayQueueConfig::new(trace_file, InfiniteQueueConfig::new(), None),
                     ))
                 }
@@ -251,31 +251,31 @@ impl ChannelArgs {
                 }
             };
             downlink_count += 1;
-            devices_config.insert(format!("down_{}", downlink_count), device_config);
+            cells_config.insert(format!("down_{}", downlink_count), cell_config);
         }
 
         if let Some(delay) = self.uplink_delay {
-            let device_config = DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(delay));
+            let cell_config = CellBuildConfig::Delay(DelayCellBuildConfig::new(delay));
             uplink_count += 1;
-            devices_config.insert(format!("up_{}", uplink_count), device_config);
+            cells_config.insert(format!("up_{}", uplink_count), cell_config);
         }
 
         if let Some(delay) = self.downlink_delay {
-            let device_config = DeviceBuildConfig::Delay(DelayDeviceBuildConfig::new(delay));
+            let cell_config = CellBuildConfig::Delay(DelayCellBuildConfig::new(delay));
             downlink_count += 1;
-            devices_config.insert(format!("down_{}", downlink_count), device_config);
+            cells_config.insert(format!("down_{}", downlink_count), cell_config);
         }
 
         if let Some(loss) = self.uplink_loss {
-            let device_config = DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([loss]));
+            let cell_config = CellBuildConfig::Loss(LossCellBuildConfig::new([loss]));
             uplink_count += 1;
-            devices_config.insert(format!("up_{}", uplink_count), device_config);
+            cells_config.insert(format!("up_{}", uplink_count), cell_config);
         }
 
         if let Some(loss) = self.downlink_loss {
-            let device_config = DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([loss]));
+            let cell_config = CellBuildConfig::Loss(LossCellBuildConfig::new([loss]));
             downlink_count += 1;
-            devices_config.insert(format!("down_{}", downlink_count), device_config);
+            cells_config.insert(format!("down_{}", downlink_count), cell_config);
         }
 
         for i in 1..uplink_count {
@@ -305,7 +305,7 @@ impl ChannelArgs {
                 server_cores: vec![3],
                 ..Default::default()
             },
-            devices: devices_config,
+            cells: cells_config,
             links: links_config,
             resource: RattanResourceConfig {
                 memory: None,

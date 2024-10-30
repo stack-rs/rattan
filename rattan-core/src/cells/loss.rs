@@ -1,4 +1,4 @@
-use crate::devices::{Device, Packet};
+use crate::cells::{Cell, Packet};
 use crate::error::Error;
 use crate::metal::timer::Timer;
 use crate::utils::sync::AtomicRawCell;
@@ -17,14 +17,14 @@ use tracing::{debug, info};
 
 use super::{ControlInterface, Egress, Ingress};
 
-pub struct LossDeviceIngress<P>
+pub struct LossCellIngress<P>
 where
     P: Packet,
 {
     ingress: mpsc::UnboundedSender<P>,
 }
 
-impl<P> Clone for LossDeviceIngress<P>
+impl<P> Clone for LossCellIngress<P>
 where
     P: Packet,
 {
@@ -35,7 +35,7 @@ where
     }
 }
 
-impl<P> Ingress<P> for LossDeviceIngress<P>
+impl<P> Ingress<P> for LossCellIngress<P>
 where
     P: Packet + Send,
 {
@@ -48,7 +48,7 @@ where
     }
 }
 
-pub struct LossDeviceEgress<P, R>
+pub struct LossCellEgress<P, R>
 where
     P: Packet,
     R: Rng,
@@ -63,7 +63,7 @@ where
 }
 
 #[async_trait]
-impl<P, R> Egress<P> for LossDeviceEgress<P, R>
+impl<P, R> Egress<P> for LossCellEgress<P, R>
 where
     P: Packet + Send + Sync,
     R: Rng + Send + Sync,
@@ -112,11 +112,11 @@ where
 // If you want to drop packets i.i.d., just set the pattern to a single number, such as [0.1].
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Debug, Default, Clone)]
-pub struct LossDeviceConfig {
+pub struct LossCellConfig {
     pub pattern: LossPattern,
 }
 
-impl LossDeviceConfig {
+impl LossCellConfig {
     pub fn new<T: Into<LossPattern>>(pattern: T) -> Self {
         Self {
             pattern: pattern.into(),
@@ -124,13 +124,13 @@ impl LossDeviceConfig {
     }
 }
 
-pub struct LossDeviceControlInterface {
+pub struct LossCellControlInterface {
     /// Stored as nanoseconds
     pattern: Arc<AtomicRawCell<LossPattern>>,
 }
 
-impl ControlInterface for LossDeviceControlInterface {
-    type Config = LossDeviceConfig;
+impl ControlInterface for LossCellControlInterface {
+    type Config = LossCellConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         info!("Setting loss pattern to: {:?}", config.pattern);
@@ -139,20 +139,20 @@ impl ControlInterface for LossDeviceControlInterface {
     }
 }
 
-pub struct LossDevice<P: Packet, R: Rng> {
-    ingress: Arc<LossDeviceIngress<P>>,
-    egress: LossDeviceEgress<P, R>,
-    control_interface: Arc<LossDeviceControlInterface>,
+pub struct LossCell<P: Packet, R: Rng> {
+    ingress: Arc<LossCellIngress<P>>,
+    egress: LossCellEgress<P, R>,
+    control_interface: Arc<LossCellControlInterface>,
 }
 
-impl<P, R> Device<P> for LossDevice<P, R>
+impl<P, R> Cell<P> for LossCell<P, R>
 where
     P: Packet + Send + Sync + 'static,
     R: Rng + Send + Sync + 'static,
 {
-    type IngressType = LossDeviceIngress<P>;
-    type EgressType = LossDeviceEgress<P, R>;
-    type ControlInterfaceType = LossDeviceControlInterface;
+    type IngressType = LossCellIngress<P>;
+    type EgressType = LossCellEgress<P, R>;
+    type ControlInterfaceType = LossCellControlInterface;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -171,19 +171,19 @@ where
     }
 }
 
-impl<P, R> LossDevice<P, R>
+impl<P, R> LossCell<P, R>
 where
     P: Packet,
     R: Rng,
 {
-    pub fn new<L: Into<LossPattern>>(pattern: L, rng: R) -> Result<LossDevice<P, R>, Error> {
+    pub fn new<L: Into<LossPattern>>(pattern: L, rng: R) -> Result<LossCell<P, R>, Error> {
         let pattern = pattern.into();
-        debug!(?pattern, "New LossDevice");
+        debug!(?pattern, "New LossCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let pattern = Arc::new(AtomicRawCell::new(Box::new(pattern)));
-        Ok(LossDevice {
-            ingress: Arc::new(LossDeviceIngress { ingress: rx }),
-            egress: LossDeviceEgress {
+        Ok(LossCell {
+            ingress: Arc::new(LossCellIngress { ingress: rx }),
+            egress: LossCellEgress {
                 egress: tx,
                 pattern: Arc::clone(&pattern),
                 inner_pattern: Box::default(),
@@ -191,14 +191,14 @@ where
                 rng,
                 state: AtomicI32::new(0),
             },
-            control_interface: Arc::new(LossDeviceControlInterface { pattern }),
+            control_interface: Arc::new(LossCellControlInterface { pattern }),
         })
     }
 }
 
-type LossReplayDeviceIngress<P> = LossDeviceIngress<P>;
+type LossReplayCellIngress<P> = LossCellIngress<P>;
 
-pub struct LossReplayDeviceEgress<P, R>
+pub struct LossReplayCellEgress<P, R>
 where
     P: Packet,
     R: Rng,
@@ -207,7 +207,7 @@ where
     trace: Box<dyn LossTrace>,
     current_loss_pattern: LossPattern,
     next_change: Instant,
-    config_rx: mpsc::UnboundedReceiver<LossReplayDeviceConfig>,
+    config_rx: mpsc::UnboundedReceiver<LossReplayCellConfig>,
     change_timer: Timer,
     /// How many packets have been lost consecutively
     prev_loss: usize,
@@ -215,7 +215,7 @@ where
     state: AtomicI32,
 }
 
-impl<P, R> LossReplayDeviceEgress<P, R>
+impl<P, R> LossReplayCellEgress<P, R>
 where
     P: Packet + Send + Sync,
     R: Rng + Send + Sync,
@@ -234,14 +234,14 @@ where
         self.current_loss_pattern = loss;
     }
 
-    fn set_config(&mut self, config: LossReplayDeviceConfig) {
+    fn set_config(&mut self, config: LossReplayCellConfig) {
         tracing::debug!("Set inner trace config");
         self.trace = config.trace_config.into_model();
         let now = Instant::now();
         if self.next_change(now).is_none() {
             tracing::warn!("Setting null trace");
             self.next_change = now;
-            // set state to 0 to indicate the trace goes to end and the device will drop all packets
+            // set state to 0 to indicate the trace goes to end and the cell will drop all packets
             self.change_state(0);
         }
     }
@@ -260,7 +260,7 @@ where
 }
 
 #[async_trait]
-impl<P, R> Egress<P> for LossReplayDeviceEgress<P, R>
+impl<P, R> Egress<P> for LossReplayCellEgress<P, R>
 where
     P: Packet + Send + Sync,
     R: Rng + Send + Sync,
@@ -317,11 +317,11 @@ where
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct LossReplayDeviceConfig {
+pub struct LossReplayCellConfig {
     pub trace_config: Box<dyn LossTraceConfig>,
 }
 
-impl Clone for LossReplayDeviceConfig {
+impl Clone for LossReplayCellConfig {
     fn clone(&self) -> Self {
         Self {
             trace_config: self.trace_config.clone(),
@@ -329,7 +329,7 @@ impl Clone for LossReplayDeviceConfig {
     }
 }
 
-impl LossReplayDeviceConfig {
+impl LossReplayCellConfig {
     pub fn new<T: Into<Box<dyn LossTraceConfig>>>(trace_config: T) -> Self {
         Self {
             trace_config: trace_config.into(),
@@ -337,12 +337,12 @@ impl LossReplayDeviceConfig {
     }
 }
 
-pub struct LossReplayDeviceControlInterface {
-    config_tx: mpsc::UnboundedSender<LossReplayDeviceConfig>,
+pub struct LossReplayCellControlInterface {
+    config_tx: mpsc::UnboundedSender<LossReplayCellConfig>,
 }
 
-impl ControlInterface for LossReplayDeviceControlInterface {
-    type Config = LossReplayDeviceConfig;
+impl ControlInterface for LossReplayCellControlInterface {
+    type Config = LossReplayCellConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         info!("Setting loss replay config");
@@ -353,20 +353,20 @@ impl ControlInterface for LossReplayDeviceControlInterface {
     }
 }
 
-pub struct LossReplayDevice<P: Packet, R: Rng> {
-    ingress: Arc<LossReplayDeviceIngress<P>>,
-    egress: LossReplayDeviceEgress<P, R>,
-    control_interface: Arc<LossReplayDeviceControlInterface>,
+pub struct LossReplayCell<P: Packet, R: Rng> {
+    ingress: Arc<LossReplayCellIngress<P>>,
+    egress: LossReplayCellEgress<P, R>,
+    control_interface: Arc<LossReplayCellControlInterface>,
 }
 
-impl<P, R> Device<P> for LossReplayDevice<P, R>
+impl<P, R> Cell<P> for LossReplayCell<P, R>
 where
     P: Packet + Send + Sync + 'static,
     R: Rng + Send + Sync + 'static,
 {
-    type IngressType = LossReplayDeviceIngress<P>;
-    type EgressType = LossReplayDeviceEgress<P, R>;
-    type ControlInterfaceType = LossReplayDeviceControlInterface;
+    type IngressType = LossReplayCellIngress<P>;
+    type EgressType = LossReplayCellEgress<P, R>;
+    type ControlInterfaceType = LossReplayCellControlInterface;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -385,18 +385,18 @@ where
     }
 }
 
-impl<P, R> LossReplayDevice<P, R>
+impl<P, R> LossReplayCell<P, R>
 where
     P: Packet,
     R: Rng,
 {
-    pub fn new(trace: Box<dyn LossTrace>, rng: R) -> Result<LossReplayDevice<P, R>, Error> {
+    pub fn new(trace: Box<dyn LossTrace>, rng: R) -> Result<LossReplayCell<P, R>, Error> {
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
         let current_loss_pattern = vec![1.0];
-        Ok(LossReplayDevice {
-            ingress: Arc::new(LossReplayDeviceIngress { ingress: rx }),
-            egress: LossReplayDeviceEgress {
+        Ok(LossReplayCell {
+            ingress: Arc::new(LossReplayCellIngress { ingress: rx }),
+            egress: LossReplayCellEgress {
                 egress: tx,
                 trace,
                 current_loss_pattern,
@@ -407,7 +407,7 @@ where
                 rng,
                 state: AtomicI32::new(0),
             },
-            control_interface: Arc::new(LossReplayDeviceControlInterface { config_tx }),
+            control_interface: Arc::new(LossReplayCellControlInterface { config_tx }),
         })
     }
 }
@@ -421,7 +421,7 @@ mod tests {
     use std::time::Duration;
     use tracing::{span, Level};
 
-    use crate::devices::StdPacket;
+    use crate::cells::StdPacket;
 
     use super::*;
 
@@ -457,11 +457,11 @@ mod tests {
         let _guard = rt.enter();
         let pattern_len = pattern.len();
 
-        let mut device: LossDevice<StdPacket, StdRng> =
-            LossDevice::new(pattern, StdRng::seed_from_u64(rng_seed))?;
+        let mut cell: LossCell<StdPacket, StdRng> =
+            LossCell::new(pattern, StdRng::seed_from_u64(rng_seed))?;
         let mut received_packets: Vec<bool> = Vec::with_capacity(100 * pattern_len);
-        let ingress = device.sender();
-        let egress = device.receiver();
+        let ingress = cell.sender();
+        let egress = cell.receiver();
         egress.reset();
         egress.change_state(2);
 
@@ -475,21 +475,21 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_loss_device() -> Result<(), Error> {
-        let _span = span!(Level::INFO, "test_loss_device").entered();
+    fn test_loss_cell() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_loss_cell").entered();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
         let _guard = rt.enter();
 
-        info!("Creating device with loss [0.1]");
-        let device = LossDevice::new([0.1], StdRng::seed_from_u64(42))?;
-        let ingress = device.sender();
-        let mut egress = device.into_receiver();
+        info!("Creating cell with loss [0.1]");
+        let cell = LossCell::new([0.1], StdRng::seed_from_u64(42))?;
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
         egress.reset();
         egress.change_state(2);
 
-        info!("Testing loss for loss device of loss [0.1]");
+        info!("Testing loss for loss cell of loss [0.1]");
         let mut statistics = PacketStatistics::new();
 
         for _ in 0..100 {
@@ -512,8 +512,8 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_loss_device_loss_list() -> Result<(), Error> {
-        let _span = span!(Level::INFO, "test_loss_device_loss_list").entered();
+    fn test_loss_cell_loss_list() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_loss_cell_loss_list").entered();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -529,7 +529,7 @@ mod tests {
 
         for (loss_config, seed) in iproduct!(loss_configs, seeds) {
             info!(
-                "Testing loss device with config {:?}, rng seed {}",
+                "Testing loss cell with config {:?}, rng seed {}",
                 loss_config.clone(),
                 seed
             );
@@ -543,18 +543,18 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_loss_device_config_update() -> Result<(), Error> {
-        let _span = span!(Level::INFO, "test_loss_device_config_update").entered();
+    fn test_loss_cell_config_update() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_loss_cell_config_update").entered();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
         let _guard = rt.enter();
 
-        info!("Creating device with loss [1.0, 0.0]");
-        let device = LossDevice::new([1.0, 0.0], StdRng::seed_from_u64(42))?;
-        let config_changer = device.control_interface();
-        let ingress = device.sender();
-        let mut egress = device.into_receiver();
+        info!("Creating cell with loss [1.0, 0.0]");
+        let cell = LossCell::new([1.0, 0.0], StdRng::seed_from_u64(42))?;
+        let config_changer = cell.control_interface();
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
         egress.reset();
         egress.change_state(2);
 
@@ -565,7 +565,7 @@ mod tests {
 
         info!("Changing the config to [0.0, 1.0]");
 
-        config_changer.set_config(LossDeviceConfig::new([0.0, 1.0]))?;
+        config_changer.set_config(LossCellConfig::new([0.0, 1.0]))?;
 
         // The packet should always be lost
 
@@ -580,18 +580,18 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_loss_device_config_update_length_change() -> Result<(), Error> {
-        let _span = span!(Level::INFO, "test_loss_device_config_update_fallback").entered();
+    fn test_loss_cell_config_update_length_change() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_loss_cell_config_update_fallback").entered();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
         let _guard = rt.enter();
 
-        info!("Creating device with loss [1.0, 1.0, 0.0]");
-        let device = LossDevice::new([1.0, 1.0, 0.0], StdRng::seed_from_u64(42))?;
-        let config_changer = device.control_interface();
-        let ingress = device.sender();
-        let mut egress = device.into_receiver();
+        info!("Creating cell with loss [1.0, 1.0, 0.0]");
+        let cell = LossCell::new([1.0, 1.0, 0.0], StdRng::seed_from_u64(42))?;
+        let config_changer = cell.control_interface();
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
         egress.reset();
         egress.change_state(2);
 
@@ -603,7 +603,7 @@ mod tests {
         }
 
         info!("Changing config to [0.0, 1.0]");
-        config_changer.set_config(LossDeviceConfig::new([0.0, 1.0]))?;
+        config_changer.set_config(LossCellConfig::new([0.0, 1.0]))?;
 
         // Now the loss rate should fall back to the last available, 1.0
         for _ in 0..100 {
@@ -613,7 +613,7 @@ mod tests {
         }
 
         info!("Changing config to [0.0, 0.0, 1.0]");
-        config_changer.set_config(LossDeviceConfig::new([0.0, 0.0, 1.0]))?;
+        config_changer.set_config(LossCellConfig::new([0.0, 0.0, 1.0]))?;
 
         // Now the lost packet is well over 3, thus the loss rate would still be 1
         for _ in 0..100 {
@@ -626,8 +626,8 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_loss_replay_device() -> Result<(), Error> {
-        let _span = span!(Level::INFO, "test_loss_replay_device").entered();
+    fn test_loss_replay_cell() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_loss_replay_cell").entered();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -649,10 +649,10 @@ mod tests {
             as Box<dyn LossTraceConfig>;
         let loss_trace = loss_trace_config.into_model();
 
-        let device: LossReplayDevice<StdPacket, StdRng> =
-            LossReplayDevice::new(loss_trace, StdRng::seed_from_u64(42))?;
-        let ingress = device.sender();
-        let mut egress = device.into_receiver();
+        let cell: LossReplayCell<StdPacket, StdRng> =
+            LossReplayCell::new(loss_trace, StdRng::seed_from_u64(42))?;
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
         egress.reset();
         let start_time = tokio::time::Instant::now();
 

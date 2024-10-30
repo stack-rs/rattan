@@ -2,9 +2,9 @@
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test loss --all-features -- --nocapture
 use std::collections::HashMap;
 
-use rattan_core::config::{DeviceBuildConfig, RattanConfig, RouterDeviceBuildConfig};
-use rattan_core::devices::router::RoutingEntry;
-use rattan_core::devices::StdPacket;
+use rattan_core::config::{CellBuildConfig, RattanConfig, RouterCellBuildConfig};
+use rattan_core::cells::router::RoutingEntry;
+use rattan_core::cells::StdPacket;
 use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
@@ -25,9 +25,9 @@ fn test_multipath_ping() {
         },
         ..Default::default()
     };
-    config.devices.insert(
+    config.cells.insert(
         "router".to_string(),
-        DeviceBuildConfig::Router(RouterDeviceBuildConfig {
+        CellBuildConfig::Router(RouterCellBuildConfig {
             egress_connections: vec![
                 "left1".to_string(),
                 "left2".to_string(),

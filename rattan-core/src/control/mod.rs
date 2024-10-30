@@ -19,7 +19,7 @@ use crate::{
 };
 
 #[cfg(feature = "serde")]
-use crate::devices::JsonControlInterface;
+use crate::cells::JsonControlInterface;
 #[cfg(feature = "serde")]
 use std::collections::HashMap;
 
@@ -36,7 +36,7 @@ pub enum RattanOp {
     #[cfg(feature = "serde")]
     AddControlInterface(String, Arc<dyn JsonControlInterface>),
     #[cfg(feature = "serde")]
-    ConfigDevice(String, serde_json::Value),
+    ConfigCell(String, serde_json::Value),
 }
 
 impl Debug for RattanOp {
@@ -47,7 +47,7 @@ impl Debug for RattanOp {
             #[cfg(feature = "serde")]
             RattanOp::AddControlInterface(id, _) => write!(f, "AddControlInterface({})", id),
             #[cfg(feature = "serde")]
-            RattanOp::ConfigDevice(id, v) => write!(f, "ConfigDevice({}, {:?})", id, v),
+            RattanOp::ConfigCell(id, v) => write!(f, "ConfigCell({}, {:?})", id, v),
         }
     }
 }
@@ -59,7 +59,7 @@ pub enum RattanOpResult {
     #[cfg(feature = "serde")]
     AddControlInterface(Option<Arc<dyn JsonControlInterface>>),
     #[cfg(feature = "serde")]
-    ConfigDevice,
+    ConfigCell,
 }
 
 impl Debug for RattanOpResult {
@@ -70,7 +70,7 @@ impl Debug for RattanOpResult {
             #[cfg(feature = "serde")]
             RattanOpResult::AddControlInterface(_) => write!(f, "AddControlInterface"),
             #[cfg(feature = "serde")]
-            RattanOpResult::ConfigDevice => write!(f, "ConfigDevice"),
+            RattanOpResult::ConfigCell => write!(f, "ConfigCell"),
         }
     }
 }
@@ -165,11 +165,11 @@ impl RattanController {
                 ))
             }
             #[cfg(feature = "serde")]
-            RattanOp::ConfigDevice(id, payload) => match self.control_interfaces.get(&id) {
-                Some(control_interface) => control_interface.config_device(payload),
+            RattanOp::ConfigCell(id, payload) => match self.control_interfaces.get(&id) {
+                Some(control_interface) => control_interface.config_cell(payload),
                 None => Err(RattanCoreError::UnknownIdError(id).into()),
             }
-            .map(|_| RattanOpResult::ConfigDevice),
+            .map(|_| RattanOpResult::ConfigCell),
         }
     }
 

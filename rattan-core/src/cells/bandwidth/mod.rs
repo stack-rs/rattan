@@ -1,5 +1,5 @@
-use crate::devices::bandwidth::queue::PacketQueue;
-use crate::devices::{Device, Packet};
+use crate::cells::bandwidth::queue::PacketQueue;
+use crate::cells::{Cell, Packet};
 use crate::error::Error;
 use crate::metal::timer::Timer;
 use async_trait::async_trait;
@@ -51,14 +51,14 @@ impl BwType {
     }
 }
 
-pub struct BwDeviceIngress<P>
+pub struct BwCellIngress<P>
 where
     P: Packet,
 {
     ingress: mpsc::UnboundedSender<P>,
 }
 
-impl<P> Clone for BwDeviceIngress<P>
+impl<P> Clone for BwCellIngress<P>
 where
     P: Packet,
 {
@@ -69,7 +69,7 @@ where
     }
 }
 
-impl<P> Ingress<P> for BwDeviceIngress<P>
+impl<P> Ingress<P> for BwCellIngress<P>
 where
     P: Packet + Send,
 {
@@ -82,7 +82,7 @@ where
     }
 }
 
-pub struct BwDeviceEgress<P, Q>
+pub struct BwCellEgress<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P>,
@@ -92,17 +92,17 @@ where
     bandwidth: Bandwidth,
     packet_queue: Q,
     next_available: Instant,
-    config_rx: mpsc::UnboundedReceiver<BwDeviceConfig<P, Q>>,
+    config_rx: mpsc::UnboundedReceiver<BwCellConfig<P, Q>>,
     timer: Timer,
     state: AtomicI32,
 }
 
-impl<P, Q> BwDeviceEgress<P, Q>
+impl<P, Q> BwCellEgress<P, Q>
 where
     P: Packet + Send + Sync,
     Q: PacketQueue<P>,
 {
-    fn set_config(&mut self, config: BwDeviceConfig<P, Q>) {
+    fn set_config(&mut self, config: BwCellConfig<P, Q>) {
         if let Some(bandwidth) = config.bandwidth {
             let now = Instant::now();
             debug!(
@@ -138,7 +138,7 @@ where
 }
 
 #[async_trait]
-impl<P, Q> Egress<P> for BwDeviceEgress<P, Q>
+impl<P, Q> Egress<P> for BwCellEgress<P, Q>
 where
     P: Packet + Send + Sync,
     Q: PacketQueue<P>,
@@ -236,7 +236,7 @@ where
     derive(Deserialize, Serialize)
 )]
 #[derive(Debug)]
-pub struct BwDeviceConfig<P, Q>
+pub struct BwCellConfig<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P>,
@@ -247,7 +247,7 @@ where
     pub bw_type: Option<BwType>,
 }
 
-impl<P, Q> Clone for BwDeviceConfig<P, Q>
+impl<P, Q> Clone for BwCellConfig<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P>,
@@ -262,7 +262,7 @@ where
     }
 }
 
-impl<P, Q> BwDeviceConfig<P, Q>
+impl<P, Q> BwCellConfig<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P>,
@@ -280,20 +280,20 @@ where
     }
 }
 
-pub struct BwDeviceControlInterface<P, Q>
+pub struct BwCellControlInterface<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P>,
 {
-    config_tx: mpsc::UnboundedSender<BwDeviceConfig<P, Q>>,
+    config_tx: mpsc::UnboundedSender<BwCellConfig<P, Q>>,
 }
 
-impl<P, Q> ControlInterface for BwDeviceControlInterface<P, Q>
+impl<P, Q> ControlInterface for BwCellControlInterface<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P> + 'static,
 {
-    type Config = BwDeviceConfig<P, Q>;
+    type Config = BwCellConfig<P, Q>;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         if config.bandwidth.is_none() && config.queue_config.is_none() && config.bw_type.is_none() {
@@ -323,20 +323,20 @@ where
     }
 }
 
-pub struct BwDevice<P: Packet, Q: PacketQueue<P>> {
-    ingress: Arc<BwDeviceIngress<P>>,
-    egress: BwDeviceEgress<P, Q>,
-    control_interface: Arc<BwDeviceControlInterface<P, Q>>,
+pub struct BwCell<P: Packet, Q: PacketQueue<P>> {
+    ingress: Arc<BwCellIngress<P>>,
+    egress: BwCellEgress<P, Q>,
+    control_interface: Arc<BwCellControlInterface<P, Q>>,
 }
 
-impl<P, Q> Device<P> for BwDevice<P, Q>
+impl<P, Q> Cell<P> for BwCell<P, Q>
 where
     P: Packet + Send + Sync + 'static,
     Q: PacketQueue<P> + 'static,
 {
-    type IngressType = BwDeviceIngress<P>;
-    type EgressType = BwDeviceEgress<P, Q>;
-    type ControlInterfaceType = BwDeviceControlInterface<P, Q>;
+    type IngressType = BwCellIngress<P>;
+    type EgressType = BwCellEgress<P, Q>;
+    type ControlInterfaceType = BwCellControlInterface<P, Q>;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -355,7 +355,7 @@ where
     }
 }
 
-impl<P, Q> BwDevice<P, Q>
+impl<P, Q> BwCell<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P>,
@@ -364,13 +364,13 @@ where
         bandwidth: B,
         packet_queue: Q,
         bw_type: BT,
-    ) -> Result<BwDevice<P, Q>, Error> {
-        debug!("New BwDevice");
+    ) -> Result<BwCell<P, Q>, Error> {
+        debug!("New BwCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
-        Ok(BwDevice {
-            ingress: Arc::new(BwDeviceIngress { ingress: rx }),
-            egress: BwDeviceEgress {
+        Ok(BwCell {
+            ingress: Arc::new(BwCellIngress { ingress: rx }),
+            egress: BwCellEgress {
                 egress: tx,
                 bw_type: bw_type.into().unwrap_or_default(),
                 bandwidth: bandwidth.into().unwrap_or(MAX_BANDWIDTH),
@@ -380,14 +380,14 @@ where
                 timer: Timer::new()?,
                 state: AtomicI32::new(0),
             },
-            control_interface: Arc::new(BwDeviceControlInterface { config_tx }),
+            control_interface: Arc::new(BwCellControlInterface { config_tx }),
         })
     }
 }
 
-type BwReplayDeviceIngress<P> = BwDeviceIngress<P>;
+type BwReplayCellIngress<P> = BwCellIngress<P>;
 
-pub struct BwReplayDeviceEgress<P, Q>
+pub struct BwReplayCellEgress<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P>,
@@ -399,13 +399,13 @@ where
     current_bandwidth: Bandwidth,
     next_available: Instant,
     next_change: Instant,
-    config_rx: mpsc::UnboundedReceiver<BwReplayDeviceConfig<P, Q>>,
+    config_rx: mpsc::UnboundedReceiver<BwReplayCellConfig<P, Q>>,
     send_timer: Timer,
     change_timer: Timer,
     state: AtomicI32,
 }
 
-impl<P, Q> BwReplayDeviceEgress<P, Q>
+impl<P, Q> BwReplayCellEgress<P, Q>
 where
     P: Packet + Send + Sync,
     Q: PacketQueue<P>,
@@ -439,7 +439,7 @@ where
         self.current_bandwidth = bandwidth;
     }
 
-    fn set_config(&mut self, config: BwReplayDeviceConfig<P, Q>) {
+    fn set_config(&mut self, config: BwReplayCellConfig<P, Q>) {
         if let Some(trace_config) = config.trace_config {
             debug!("Set inner trace config");
             self.trace = trace_config.into_model();
@@ -448,7 +448,7 @@ where
                 // handle null trace outside this function
                 tracing::warn!("Setting null trace");
                 self.next_change = now;
-                // set state to 0 to indicate the trace goes to end and the device will drop all packets
+                // set state to 0 to indicate the trace goes to end and the cell will drop all packets
                 self.change_state(0);
             }
         }
@@ -478,7 +478,7 @@ where
 }
 
 #[async_trait]
-impl<P, Q> Egress<P> for BwReplayDeviceEgress<P, Q>
+impl<P, Q> Egress<P> for BwReplayCellEgress<P, Q>
 where
     P: Packet + Send + Sync,
     Q: PacketQueue<P>,
@@ -595,7 +595,7 @@ where
     serde_with::skip_serializing_none,
     derive(Deserialize, Serialize)
 )]
-pub struct BwReplayDeviceConfig<P, Q>
+pub struct BwReplayCellConfig<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P>,
@@ -605,7 +605,7 @@ where
     pub bw_type: Option<BwType>,
 }
 
-impl<P, Q> Clone for BwReplayDeviceConfig<P, Q>
+impl<P, Q> Clone for BwReplayCellConfig<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P>,
@@ -620,7 +620,7 @@ where
     }
 }
 
-impl<P, Q> BwReplayDeviceConfig<P, Q>
+impl<P, Q> BwReplayCellConfig<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P>,
@@ -642,20 +642,20 @@ where
     }
 }
 
-pub struct BwReplayDeviceControlInterface<P, Q>
+pub struct BwReplayCellControlInterface<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P>,
 {
-    config_tx: mpsc::UnboundedSender<BwReplayDeviceConfig<P, Q>>,
+    config_tx: mpsc::UnboundedSender<BwReplayCellConfig<P, Q>>,
 }
 
-impl<P, Q> ControlInterface for BwReplayDeviceControlInterface<P, Q>
+impl<P, Q> ControlInterface for BwReplayCellControlInterface<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P> + 'static,
 {
-    type Config = BwReplayDeviceConfig<P, Q>;
+    type Config = BwReplayCellConfig<P, Q>;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         if config.trace_config.is_none()
@@ -688,20 +688,20 @@ where
     }
 }
 
-pub struct BwReplayDevice<P: Packet, Q: PacketQueue<P>> {
-    ingress: Arc<BwReplayDeviceIngress<P>>,
-    egress: BwReplayDeviceEgress<P, Q>,
-    control_interface: Arc<BwReplayDeviceControlInterface<P, Q>>,
+pub struct BwReplayCell<P: Packet, Q: PacketQueue<P>> {
+    ingress: Arc<BwReplayCellIngress<P>>,
+    egress: BwReplayCellEgress<P, Q>,
+    control_interface: Arc<BwReplayCellControlInterface<P, Q>>,
 }
 
-impl<P, Q> Device<P> for BwReplayDevice<P, Q>
+impl<P, Q> Cell<P> for BwReplayCell<P, Q>
 where
     P: Packet + Send + Sync + 'static,
     Q: PacketQueue<P> + 'static,
 {
-    type IngressType = BwReplayDeviceIngress<P>;
-    type EgressType = BwReplayDeviceEgress<P, Q>;
-    type ControlInterfaceType = BwReplayDeviceControlInterface<P, Q>;
+    type IngressType = BwReplayCellIngress<P>;
+    type EgressType = BwReplayCellEgress<P, Q>;
+    type ControlInterfaceType = BwReplayCellControlInterface<P, Q>;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -720,7 +720,7 @@ where
     }
 }
 
-impl<P, Q> BwReplayDevice<P, Q>
+impl<P, Q> BwReplayCell<P, Q>
 where
     P: Packet,
     Q: PacketQueue<P>,
@@ -729,13 +729,13 @@ where
         trace: Box<dyn BwTrace>,
         packet_queue: Q,
         bw_type: BT,
-    ) -> Result<BwReplayDevice<P, Q>, Error> {
-        debug!("New BwReplayDevice");
+    ) -> Result<BwReplayCell<P, Q>, Error> {
+        debug!("New BwReplayCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
-        Ok(BwReplayDevice {
-            ingress: Arc::new(BwReplayDeviceIngress { ingress: rx }),
-            egress: BwReplayDeviceEgress {
+        Ok(BwReplayCell {
+            ingress: Arc::new(BwReplayCellIngress { ingress: rx }),
+            egress: BwReplayCellEgress {
                 egress: tx,
                 bw_type: bw_type.into().unwrap_or_default(),
                 trace,
@@ -748,7 +748,7 @@ where
                 change_timer: Timer::new()?,
                 state: AtomicI32::new(0),
             },
-            control_interface: Arc::new(BwReplayDeviceControlInterface { config_tx }),
+            control_interface: Arc::new(BwReplayCellControlInterface { config_tx }),
         })
     }
 }

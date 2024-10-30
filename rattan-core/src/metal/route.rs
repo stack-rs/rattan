@@ -177,15 +177,15 @@ pub fn add_route_with_netns<
 pub fn add_arp_entry_with_netns(
     dest: IpAddr,
     mac: MacAddr,
-    device_index: u32,
+    cell_index: u32,
     netns: Arc<NetNs>,
 ) -> Result<(), Error> {
-    debug!(?dest, ?mac, ?netns, ?device_index, "Add arp entry");
+    debug!(?dest, ?mac, ?netns, ?cell_index, "Add arp entry");
     execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
         rt.block_on(
             rtnl_handle
                 .neighbours()
-                .add(device_index, dest)
+                .add(cell_index, dest)
                 .link_local_address(&mac.bytes())
                 .execute(),
         )

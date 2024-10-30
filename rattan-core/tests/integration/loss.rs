@@ -2,9 +2,9 @@
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test loss --all-features -- --nocapture
 use std::collections::HashMap;
 
-use rattan_core::config::{DeviceBuildConfig, LossDeviceBuildConfig, RattanConfig};
+use rattan_core::config::{CellBuildConfig, LossCellBuildConfig, RattanConfig};
 use rattan_core::control::RattanOp;
-use rattan_core::devices::{loss::LossDeviceConfig, StdPacket};
+use rattan_core::cells::{loss::LossCellConfig, StdPacket};
 use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
@@ -23,13 +23,13 @@ fn test_loss() {
         },
         ..Default::default()
     };
-    config.devices.insert(
+    config.cells.insert(
         "up_loss".to_string(),
-        DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([])),
+        CellBuildConfig::Loss(LossCellBuildConfig::new([])),
     );
-    config.devices.insert(
+    config.cells.insert(
         "down_loss".to_string(),
-        DeviceBuildConfig::Loss(LossDeviceBuildConfig::new([])),
+        CellBuildConfig::Loss(LossCellBuildConfig::new([])),
     );
     config.links = HashMap::from([
         ("left".to_string(), "up_loss".to_string()),
@@ -44,7 +44,7 @@ fn test_loss() {
     // Wait for AfPacketDriver to be ready
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    // Before set the LossDevice, the average loss rate should be 0%
+    // Before set the LossCell, the average loss rate should be 0%
     {
         let _span = span!(Level::INFO, "ping_no_loss").entered();
         info!("try to ping with no loss");
@@ -72,14 +72,14 @@ fn test_loss() {
         assert!(loss_percentage == 0);
     }
 
-    // After set the LossDevice, the average loss rate should be between 40%-60%
+    // After set the LossCell, the average loss rate should be between 40%-60%
     {
         let _span = span!(Level::INFO, "ping_with_loss").entered();
         info!("try to ping with loss set to 0.5");
         radix
-            .op_block_exec(RattanOp::ConfigDevice(
+            .op_block_exec(RattanOp::ConfigCell(
                 "up_loss".to_string(),
-                serde_json::to_value(LossDeviceConfig::new(vec![0.5; 10])).unwrap(),
+                serde_json::to_value(LossCellConfig::new(vec![0.5; 10])).unwrap(),
             ))
             .unwrap();
 

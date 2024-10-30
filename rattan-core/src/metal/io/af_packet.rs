@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::devices::{Packet, StdPacket};
+use crate::cells::{Packet, StdPacket};
 use libc::{c_void, size_t, sockaddr, sockaddr_ll, socklen_t};
 use nix::{
     errno::Errno,
@@ -13,21 +13,21 @@ use tracing::{debug, error, trace, warn};
 
 use super::common::PacketType;
 use crate::metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender};
-use crate::metal::{error::MetalError, veth::VethDevice};
+use crate::metal::{error::MetalError, veth::VethCell};
 
 pub struct AfPacketSender {
     raw_fd: Mutex<i32>,
-    device: Arc<VethDevice>,
+    cell: Arc<VethCell>,
 }
 
 impl InterfaceSender<StdPacket> for AfPacketSender {
     fn send(&self, mut packet: StdPacket) -> std::io::Result<()> {
-        let peer_address = { self.device.peer().mac_addr };
+        let peer_address = { self.cell.peer().mac_addr };
 
         let mut target_interface = libc::sockaddr_ll {
             sll_family: libc::AF_PACKET as u16,
             sll_protocol: packet.ether_hdr().unwrap().ether_type.0,
-            sll_ifindex: self.device.index as i32,
+            sll_ifindex: self.cell.index as i32,
             sll_hatype: 0,
             sll_pkttype: 0,
             sll_halen: peer_address.bytes().len() as u8,
@@ -39,10 +39,10 @@ impl InterfaceSender<StdPacket> for AfPacketSender {
         // inplace update of packet. Maybe a home made packet parser and manipulation library is
         // necessary eventually.
         let mut ether = packet.ether_hdr().unwrap();
-        ether.source.copy_from_slice(&self.device.mac_addr.bytes());
+        ether.source.copy_from_slice(&self.cell.mac_addr.bytes());
         ether
             .destination
-            .copy_from_slice(&self.device.peer().mac_addr.bytes());
+            .copy_from_slice(&self.cell.peer().mac_addr.bytes());
 
         let buf = packet.as_raw_buffer();
         ether.write_to_slice(buf).unwrap();
@@ -154,7 +154,7 @@ pub struct AfPacketDriver {
     raw_fd: i32,
     sender: Arc<AfPacketSender>,
     receiver: AfPacketReceiver,
-    _device: Arc<VethDevice>,
+    _cell: Arc<VethCell>,
 }
 
 impl InterfaceDriver for AfPacketDriver {
@@ -162,8 +162,8 @@ impl InterfaceDriver for AfPacketDriver {
     type Sender = AfPacketSender;
     type Receiver = AfPacketReceiver;
 
-    fn bind_device(device: Arc<VethDevice>) -> Result<Vec<Self>, MetalError> {
-        debug!(?device, "bind device to AF_PACKET driver");
+    fn bind_cell(cell: Arc<VethCell>) -> Result<Vec<Self>, MetalError> {
+        debug!(?cell, "bind cell to AF_PACKET driver");
         let mut times = 3;
         let mut raw_fd;
         loop {
@@ -187,13 +187,13 @@ impl InterfaceDriver for AfPacketDriver {
 
                 debug!(
                     "create AF_PACKET socket {} on interface ({}:{})",
-                    raw_fd, device.name, device.index
+                    raw_fd, cell.name, cell.index
                 );
 
                 let bind_interface = libc::sockaddr_ll {
                     sll_family: libc::AF_PACKET as u16,
                     sll_protocol: (libc::ETH_P_ALL as u16).to_be(),
-                    sll_ifindex: device.index as i32,
+                    sll_ifindex: cell.index as i32,
                     sll_hatype: 0,
                     sll_pkttype: 0,
                     sll_halen: 0,
@@ -213,10 +213,10 @@ impl InterfaceDriver for AfPacketDriver {
                 Err(e) => {
                     times -= 1;
                     if times <= 0 {
-                        error!("bind device failed: {}", e);
+                        error!("bind cell failed: {}", e);
                         return Err(MetalError::SystemError(e));
                     } else {
-                        warn!("bind device failed (Retrys Remain: {}): {}", times, e);
+                        warn!("bind cell failed (Retrys Remain: {}): {}", times, e);
                         std::thread::sleep(std::time::Duration::from_millis(100));
                         continue;
                     }
@@ -224,17 +224,17 @@ impl InterfaceDriver for AfPacketDriver {
             }
         }
         if times < 3 {
-            warn!("bind device success after {} times", 3 - times);
+            warn!("bind cell success after {} times", 3 - times);
         }
 
         Ok(vec![Self {
             sender: Arc::new(AfPacketSender {
                 raw_fd: Mutex::new(raw_fd),
-                device: device.clone(),
+                cell: cell.clone(),
             }),
             receiver: AfPacketReceiver { raw_fd },
             raw_fd,
-            _device: device,
+            _cell: cell,
         }])
     }
 
