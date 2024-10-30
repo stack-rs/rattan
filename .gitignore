@@ -28,3 +28,6 @@ tmp/
 perf.data
 perf.data.old
 flamegraph.svg
+
+# Ignore generated documentation
+guide/book

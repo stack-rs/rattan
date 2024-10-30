@@ -1,83 +1,29 @@
 <div align="center">
   <h1>
-    <a href="[https://github.com/topgrade-rs/topgrade/releases](https://rattan.stack.rs)"><img alt="Rattan" src="assets/rattan-logo.svg" width="600px"></a>
+    <a href="https://github.com/stack-rs/rattan"><img alt="Rattan" src="assets/rattan-logo-slim.svg" width="600px" style="border: none; display: block;"></a>
   </h1>
   <a href="https://github.com/stack-rs/rattan/releases"><img alt="GitHub Release" src="https://img.shields.io/github/release/stack-rs/rattan.svg"></a>
   <a href="https://crates.io/crates/rattan"><img alt="crates.io" src="https://img.shields.io/crates/v/rattan.svg"></a>
   <a href="https://github.com/stack-rs/rattan/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/stack-rs/rattan/actions/workflows/ci.yml/badge.svg"></a>
 </div>
 
-Rattan: A High-Performance Modular Transport Channel Emulator Ready for Modern WAN
+**Rattan** is a high-performance modular transport channel emulator ready for modern WAN. We provide a simple and easy-to-use API to create and manage network emulations. Rattan is designed to be used in a wide range of scenarios, from testing network applications to debugging complex network performance issues.
 
-## Development
+Our modular design makes it easy to extend **Rattan** with different network effects. We provide a set of built-in modules that can be used to emulate different network conditions, such as bandwidth, latency, packet loss, ISP policies and etc.
 
-### Dependencies
+We support Linux only at the moment. Currently, kernel version v5.4, v5.15, v6.8 and v6.10 are tested.
 
-* For tests: `iperf3`, `ethtool` and `iputils-ping`
+## Usage
 
-### Example
+We provide users with a CLI tool to use our pre-defined channels or cells and also a Rust library to build custom channels or cells.
 
-```shell
-cargo run --example channel --release # AF_PACKET version
-cargo run --example channel-xdp --release --features="camellia" # AF_XDP version
-```
+Please check our [User Guide](https://docs.stack.rs/rattan) for how to use **Rattan**.
 
-### Flamegraph
+## Contributing
 
-```shell
-cargo install flamegraph
-cargo flamegraph --root --example channel
-```
-
-### Packet Log Spec
-
-```text
- 0                   1                   2                   3
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|       LH.length       | LH.ty.|   GPH.length  |GPH.ac.|GPH.ty.|
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                          GP.timestamp                         |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|           GP.length           |       PRH.length      |PRH.ty.|
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                          PRT (custom)                         |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-```
-
-Generated with [protocol](https://github.com/luismartingarcia/protocol), where:
-
-* `LH` is short for log entry header
-* `GPH` is short for general packet entry header
-* `GP` is short for general packet entry (the body part)
-* `PRH` is short for protocol entry header
-* `PRT` is short for protocol entry (the body part)
-* `ty.` is short for type
-* `ac.` is short for action
-
-```shell
-protocol "LH.length:12,LH.ty.:4,GPH.length:8,GPH.ac.:4,GPH.ty.:4,GP.timestamp:32,GP.length:16,PRH.length:12,PRH.ty.:4,PRT (custom):32"
-```
-
-We currently provide TCP log spec (a variant of the protocol entry body part, i.e. `PRT (custom)`):
-
-```text
- 0                   1                   2                   3
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                          tcp.flow_id                          |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                            tcp.seq                            |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                            tcp.ack                            |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|             ip.id             |         ip.frag_offset        |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|          ip.checksum          |   tcp.flags   |    padding    |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
-```
-
-```shell
-protocol "tcp.flow_id:32,tcp.seq:32,tcp.ack:32,ip.id:16,ip.frag_offset:16,ip.checksum:16,tcp.flags:8,padding:8"
-```
+Rattan is free and open source. You can find the source code on
+[GitHub](https://github.com/stack-rs/rattan) and issues and feature requests can be posted on
+the [GitHub issue tracker](https://github.com/stack-rs/rattan/issues). Rattan relies on the community to fix bugs and
+add features: if you'd like to contribute, please read
+the [CONTRIBUTING](https://github.com/stack-rs/rattan/blob/master/CONTRIBUTING.md) guide and consider opening
+a [pull request](https://github.com/stack-rs/rattan/pulls).
