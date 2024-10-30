@@ -4,6 +4,7 @@ The templated channels consist of a set of cells defined in the `rattan-core` li
 You can use these channels through the `rattan link` subcommand with just a few command line arguments.
 
 For now, we only provide a simple bidirectional channel, with each direction comprising three cells: `bandwidth`, `delay` and `loss`.
+This channel is suitable for most common network emulation scenarios.
 
 You can configure the parameters of each cell by passing the arguments to the subcommand.
 

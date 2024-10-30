@@ -11,7 +11,7 @@ We include a set of predefined cells and templated channels in the tool to help 
 You can emulate a simple network path with just a few commands.
 - [rattan run](flexible-configuration.md):
 Run the instance according to the configuration.
-For more complex configurations or reproduction purpose, you can use the flexible configuration file to define your own cells, channels and even routes.
+For more complex configurations or reproduction purpose, you can use the flexible configuration file to define your own channel with specific cells, network paths and even routes.
 
 There are also global options that you can use to customize the behavior of the tool:
 

@@ -4,23 +4,25 @@
   </h1>
   <a href="https://github.com/stack-rs/rattan/releases"><img alt="GitHub Release" src="https://img.shields.io/github/release/stack-rs/rattan.svg"></a>
   <a href="https://crates.io/crates/rattan"><img alt="crates.io" src="https://img.shields.io/crates/v/rattan.svg"></a>
-  <a href="https://github.com/stack-rs/rattan/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/stack-rs/rattan/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/stack-rs/rattan/actions/workflows/build.yml"><img alt="CI" src="https://github.com/stack-rs/rattan/actions/workflows/build.yml/badge.svg"></a>
 </div>
 
 # Introduction
 
-**Rattan** is a high-performance modular transport channel emulator ready for modern WAN. We provide a simple and easy-to-use API to create and manage network emulations. Rattan is designed to be used in a wide range of scenarios, from testing network applications to debugging complex network performance issues.
+**Rattan** is a fast and extensible Internet path emulator framework.
 
-Our modular design makes it easy to extend **Rattan** with different network effects. We provide a set of built-in modules that can be used to emulate different network conditions, such as bandwidth, latency, packet loss, ISP policies and etc.
+We provide a simple and easy-to-use API to create and manage network emulations. Rattan is designed to be used in a wide range of scenarios, from testing network applications to debugging complex network performance issues.
+
+Our modular design makes it easy to extend **Rattan** with different network effects or conditions. We provide a set of built-in modules that can be used to emulate different network conditions, such as bandwidth, latency, packet loss, ISP policies and etc.
 
 We support Linux only at the moment. Currently, kernel version v5.4, v5.15, v6.8 and v6.10 are tested.
 
 ## Design Targets
 
-- **Flexible**. Rattan is agnostic of path emulation model.
-- **Fast**. Rattan provides both high peak performance and execution efficiency.
-- **Extensible**. Rattan provides rich features out-of-the-box but easily extensible for custom conditions.
-- **User-Friendly**. Rattan provides simple and intuitive interfaces for quick usage but also ensure it's fully controllable under the hood.
+- **High Performance**. Rattan provides both high peak performance and execution efficiency.
+- **Flexible**. Rattan tries to be agnostic of the underlying path emulation model.
+- **Extensible**. Rattan provides rich features out-of-the-box, meanwhile tends to be easily extensible for custom conditions.
+- **User-Friendly**. Rattan aims to provide a simple and intuitive interface for quick usage on common cases and ensure complete controllability under the hood to cover the corner as well.
 
 ## Basic Concepts
 
