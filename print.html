@@ -1,0 +1,578 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Rattan Documentation</title>
+        <meta name="robots" content="noindex">
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="Rattan is a high-performance modular transport channel emulator ready for modern WAN.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">User Guide</li><li class="chapter-item expanded "><a href="guide/installation.html"><strong aria-hidden="true">1.</strong> Installation</a></li><li class="chapter-item expanded "><a href="guide/cli.html"><strong aria-hidden="true">2.</strong> Bundled CLI Tool</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="guide/predefined-channels.html"><strong aria-hidden="true">2.1.</strong> Predefined Cells and Templated Channels</a></li><li class="chapter-item expanded "><a href="guide/flexible-configuration.html"><strong aria-hidden="true">2.2.</strong> Flexible Configuration</a></li></ol></li><li class="chapter-item expanded "><a href="guide/new-cell.html"><strong aria-hidden="true">3.</strong> Write a New Cell (TODO)</a></li><li class="chapter-item expanded "><a href="guide/tailored-tool.html"><strong aria-hidden="true">4.</strong> Write Your Tailored Tool (TODO)</a></li><li class="chapter-item expanded affix "><li class="part-title">Reference Guide</li><li class="chapter-item expanded "><a href="ref/packet.html"><strong aria-hidden="true">5.</strong> Packet IO</a></li><li class="chapter-item expanded "><a href="ref/flamegraph.html"><strong aria-hidden="true">6.</strong> Flamegraph</a></li><li class="chapter-item expanded "><a href="ref/packet-log-spec.html"><strong aria-hidden="true">7.</strong> Packet Log Spec</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Rattan Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/stack-rs/rattan/tree/master/guide" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <div align="center">
+  <h1>
+    <a href="https://github.com/stack-rs/rattan"><img alt="Rattan" src="assets/rattan-logo-slim.svg" width="600px" style="border: none; display: block;"></a>
+  </h1>
+  <a href="https://github.com/stack-rs/rattan/releases"><img alt="GitHub Release" src="https://img.shields.io/github/release/stack-rs/rattan.svg"></a>
+  <a href="https://crates.io/crates/rattan"><img alt="crates.io" src="https://img.shields.io/crates/v/rattan.svg"></a>
+  <a href="https://github.com/stack-rs/rattan/actions/workflows/build.yml"><img alt="CI" src="https://github.com/stack-rs/rattan/actions/workflows/build.yml/badge.svg"></a>
+</div>
+<h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
+<p><strong>Rattan</strong> is a fast and extensible Internet path emulator framework.</p>
+<p>We provide a simple and easy-to-use API to create and manage network emulations. Rattan is designed to be used in a wide range of scenarios, from testing network applications to debugging complex network performance issues.</p>
+<p>Our modular design makes it easy to extend <strong>Rattan</strong> with different network effects or conditions. We provide a set of built-in modules that can be used to emulate different network conditions, such as bandwidth, latency, packet loss, ISP policies and etc.</p>
+<p>We support Linux only at the moment. Currently, kernel version v5.4, v5.15, v6.8 and v6.10 are tested.</p>
+<h2 id="design-targets"><a class="header" href="#design-targets">Design Targets</a></h2>
+<ul>
+<li><strong>High Performance</strong>. Rattan provides both high peak performance and execution efficiency.</li>
+<li><strong>Flexible</strong>. Rattan tries to be agnostic of the underlying path emulation model.</li>
+<li><strong>Extensible</strong>. Rattan provides rich features out-of-the-box, meanwhile tends to be easily extensible for custom conditions.</li>
+<li><strong>User-Friendly</strong>. Rattan aims to provide a simple and intuitive interface for quick usage on common cases and ensure complete controllability under the hood to cover the corner as well.</li>
+</ul>
+<h2 id="basic-concepts"><a class="header" href="#basic-concepts">Basic Concepts</a></h2>
+<p>Run <code>rattan</code> will generate some network namespaces and veth pairs to
+emulate the network environment. The network topology is like:</p>
+<pre><code class="language-txt">   ns-left                                                           ns-right
++-----------+ [Internet]                               [Internet] +-----------+
+|    vL0    |    |                 ns-rattan                 |    |    vR0    |
+|  external | &lt;--+          +---------------------+          +--&gt; |  external |
+|   vL1-L   |               |  vL1-R  [P]   vR1-L |               |   vR1-R   |
+| .1.1.x/32 | &lt;-----------&gt; |.1.1.2/32   .2.1.2/32| &lt;-----------&gt; | .2.1.x/32 |
+|   vL2-L   |               |  vL2-R        vR2-L |               |   vR2-R   |
+| .1.2.y/32 | &lt;-----------&gt; |.1.2.2/32   .2.2.2/32| &lt;-----------&gt; | .2.2.y/32 |
+~    ...    ~   Veth pairs  ~  ...           ...  ~   Veth pairs  ~    ...    ~
++-----------+               +---------------------+               +-----------+
+</code></pre>
+<p>Then Rattan will build and link the cells according to the configuration file.
+Each cell emulates some network characteristics, such as bandwidth, delay, loss, etc.</p>
+<p><strong>ATTENTION</strong>: Check firewall settings before running Rattan CLI.
+Please make sure you allow the following addresses:</p>
+<ul>
+<li>10.1.1.0/24</li>
+<li>10.2.1.0/24</li>
+</ul>
+<p>For example, you can run the following commands if using <code>ufw</code>:</p>
+<ul>
+<li><code>ufw allow from 10.1.1.0/24</code></li>
+<li><code>ufw allow from 10.2.1.0/24</code></li>
+</ul>
+<h2 id="contributing"><a class="header" href="#contributing">Contributing</a></h2>
+<p>Rattan is free and open source. You can find the source code on
+<a href="https://github.com/stack-rs/rattan">GitHub</a> and issues and feature requests can be posted on
+the <a href="https://github.com/stack-rs/rattan/issues">GitHub issue tracker</a>. Rattan relies on the community to fix bugs and
+add features: if you'd like to contribute, please read
+the <a href="https://github.com/stack-rs/rattan/blob/master/CONTRIBUTING.md">CONTRIBUTING</a> guide and consider opening
+a <a href="https://github.com/stack-rs/rattan/pulls">pull request</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="installation"><a class="header" href="#installation">Installation</a></h1>
+<p>The Rattan project contains a CLI tools (named <code>rattan</code>) for common use cases and
+a Rust library (named <code>rattan-core</code>) for you to build your own tools on top of.</p>
+<p>There are multiple ways to install the Rattan CLI tool.
+Choose any one of the methods below that best suit your needs.</p>
+<blockquote>
+<p><strong>ATTENTION</strong>: As we are still in the early stages of development without a released version, we only support building from source currently.</p>
+</blockquote>
+<h2 id="pre-compiled-binaries"><a class="header" href="#pre-compiled-binaries">Pre-compiled binaries</a></h2>
+<p>Executable binaries are available for download on the <a href="https://github.com/stack-rs/rattan/releases">GitHub Releases page</a>.
+Download the binary and extract the archive.
+The archive contains an <code>rattan</code> executable which you can run to start your distributed platform.</p>
+<p>To make it easier to run, put the path to the binary into your <code>PATH</code> or install it in a directory that is already in your <code>PATH</code>.
+Note that, you have to grant the binary the necessary capabilities to run.
+For example, you can run the following commands on Linux:</p>
+<pre><code class="language-bash"># install the binary
+sudo install -m 755 rattan /usr/local/bin/rattan
+# grant the necessary capabilities
+sudo setcap 'cap_dac_override,cap_dac_read_search,cap_sys_ptrace,cap_net_admin,cap_sys_admin,cap_net_raw+ep' /usr/local/bin/rattan
+</code></pre>
+<p>Besides, for certain operating systems that enable <code>systemd-networkd</code>, you have to configure it to not change MAC address of veth interfaces.
+You can do this by adding the following lines to <code>/lib/systemd/network/80-rattan.link</code>:</p>
+<pre><code class="language-ini">[Match]
+OriginalName=ns*-v*-*
+Driver=veth
+
+[Link]
+MACAddressPolicy=none
+</code></pre>
+<p>And then restart the <code>systemd-networkd</code> service:</p>
+<pre><code class="language-bash">sudo systemctl daemon-reload
+sudo systemctl restart systemd-networkd.service
+</code></pre>
+<p>We also contain a install script <a href="https://github.com/stack-rs/rattan/blob/main/scripts/install.sh">scripts/install.sh</a> in the repository, which you can use to install the binary on Ubuntu:</p>
+<pre><code class="language-bash">./scripts/install.sh rattan
+</code></pre>
+<h2 id="build-from-source-using-rust"><a class="header" href="#build-from-source-using-rust">Build from source using Rust</a></h2>
+<h3 id="installing-with-cargo"><a class="header" href="#installing-with-cargo">Installing with Cargo</a></h3>
+<p>To build the <code>rattan</code> executable from source, you will first need to install Rust and Cargo.
+Follow the instructions on the <a href="https://www.rust-lang.org/tools/install">Rust installation page</a>.</p>
+<p>Once you have installed Rust, the following command can be used to build and install rattan:</p>
+<pre><code class="language-bash">cargo install rattan
+</code></pre>
+<p>This will automatically download rattan from <a href="https://crates.io/">crates.io</a>, build it, and install it in Cargo's global binary directory (<code>~/.cargo/bin/</code> by default).</p>
+<p>You can run <code>cargo install rattan</code> again whenever you want to update to a new version.
+That command will check if there is a newer version, and re-install rattan if a newer version is found.</p>
+<p>To uninstall, run the command <code>cargo uninstall rattan</code>.</p>
+<h3 id="installing-the-latest-git-version-with-cargo"><a class="header" href="#installing-the-latest-git-version-with-cargo">Installing the latest git version with Cargo</a></h3>
+<p>The version published to crates.io will ever so slightly be behind the version hosted on GitHub.
+If you need the latest version you can build the git version of rattan yourself.
+Cargo makes this <em><strong>super easy</strong></em>!</p>
+<pre><code class="language-bash">cargo install --git https://github.com/stack-rs/rattan.git rattan
+</code></pre>
+<p>Again, make sure to add the Cargo bin directory to your <code>PATH</code>.</p>
+<h3 id="building-from-source"><a class="header" href="#building-from-source">Building from source</a></h3>
+<p>If you want to build the binary from source, you can clone the repository and build it using Cargo.</p>
+<pre><code class="language-bash">git clone https://github.com/stack-rs/rattan.git
+cd rattan
+cargo build --release
+</code></pre>
+<p>Then you can find the binary in <code>target/release/rattan</code> and install or run it as you like (e.g., run <code>./scripts/install.sh target/release/rattan</code>).</p>
+<h2 id="modifying-and-contributing"><a class="header" href="#modifying-and-contributing">Modifying and contributing</a></h2>
+<p>If you are interested in making modifications to Rattan itself, check out the <a href="https://github.com/stack-rs/mitosis/blob/master/CONTRIBUTING.md">Contributing Guide</a> for more information.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="bundled-cli-tool"><a class="header" href="#bundled-cli-tool">Bundled CLI Tool</a></h1>
+<p>The Rattan project provides a CLI tool named <code>rattan</code> for common use cases.
+The tool is built on top of the <code>rattan-core</code> library, which you can use to build your own tools.</p>
+<p>We provide different features under different subcommands:</p>
+<ul>
+<li><a href="guide/predefined-channels.html">rattan link</a>:
+Run a templated channel with command line arguments.
+We include a set of predefined cells and templated channels in the tool to help you get started quickly.
+You can emulate a simple network path with just a few commands.</li>
+<li><a href="guide/flexible-configuration.html">rattan run</a>:
+Run the instance according to the configuration.
+For more complex configurations or reproduction purpose, you can use the flexible configuration file to define your own channel with specific cells, network paths and even routes.</li>
+</ul>
+<p>There are also global options that you can use to customize the behavior of the tool:</p>
+<ul>
+<li><code>--generate</code> and <code>--generate-path</code> are used to generate a configuration file from your settings instead of running an instance.</li>
+<li><code>--packet-log</code> is used to enable compressed packet log and specify the file to store the records.</li>
+<li><code>--file-log</code> and <code>--file-log-path</code> are used to enable logging to a file and specify the path to store the log.</li>
+</ul>
+<p>For more detailed usage, you can run <code>rattan --help</code> to see the available commands and options:</p>
+<pre><code class="language-txt">Usage: rattan [OPTIONS] &lt;COMMAND&gt;
+
+Commands:
+  link  Run a templated channel with command line arguments
+  run   Run the instance according to the config
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+      --generate              Generate config file instead of running a instance
+      --generate-path &lt;File&gt;  Generate config file to the specified path instead of stdout
+      --packet-log &lt;File&gt;     The file to store compressed packet log (overwrite config) (default: None)
+      --file-log              Enable logging to file
+      --file-log-path &lt;File&gt;  File log path, default to $CACHE_DIR/rattan/core.log
+  -h, --help                  Print help (see more with '--help')
+  -V, --version               Print version
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="predefined-cells-and-templated-channels"><a class="header" href="#predefined-cells-and-templated-channels">Predefined Cells and Templated Channels</a></h1>
+<p>The templated channels consist of a set of cells defined in the <code>rattan-core</code> library, which you can use to quickly set up a network path for testing.
+You can use these channels through the <code>rattan link</code> subcommand with just a few command line arguments.</p>
+<p>For now, we only provide a simple bidirectional channel, with each direction comprising three cells: <code>bandwidth</code>, <code>delay</code> and <code>loss</code>.
+This channel is suitable for most common network emulation scenarios.</p>
+<p>You can configure the parameters of each cell by passing the arguments to the subcommand.</p>
+<p>For example, to create a channel with 10Mbps bandwidth, infinite queue, 50ms latency and 1% loss rate in both directions, you can run the following command:</p>
+<pre><code class="language-bash">rattan link uplink-bandwidth 10Mbps uplink-delay 50ms uplink-loss 0.1 downlink-bandwidth 10Mbps downlink-delay 50ms downlink-loss 0.1
+</code></pre>
+<p>Then you will be prompted to a shell with the network path set up.</p>
+<p>For detailed usage, you can run <code>rattan link --help</code> to see the available cells and options:</p>
+<pre><code class="language-txt">Run a templated channel with command line arguments
+
+Usage: rattan link [OPTIONS] [-- &lt;COMMAND&gt;...]
+
+Arguments:
+  [COMMAND]...  Command to run. Only used when in compatible mode
+
+Options:
+      --uplink-loss &lt;Loss&gt;              Uplink packet loss
+      --downlink-loss &lt;Loss&gt;            Downlink packet loss
+      --generate                        Generate config file instead of running a instance
+      --uplink-delay &lt;Delay&gt;            Uplink delay
+      --downlink-delay &lt;Delay&gt;          Downlink delay
+      --generate-path &lt;File&gt;            Generate config file to the specified path instead of stdout
+      --packet-log &lt;File&gt;               The file to store compressed packet log (overwrite config) (default: None)
+      --uplink-bandwidth &lt;Bandwidth&gt;    Uplink bandwidth
+      --file-log                        Enable logging to file
+      --uplink-trace &lt;File&gt;             Uplink trace file
+      --file-log-path &lt;File&gt;            File log path, default to $CACHE_DIR/rattan/core.log
+      --uplink-queue &lt;Queue Type&gt;       Uplink queue type [possible values: infinite, droptail, drophead, codel]
+      --uplink-queue-args &lt;JSON&gt;        Uplink queue arguments
+      --downlink-bandwidth &lt;Bandwidth&gt;  Downlink bandwidth
+      --downlink-trace &lt;File&gt;           Downlink trace file
+      --downlink-queue &lt;Queue Type&gt;     Downlink queue type [possible values: infinite, droptail, drophead, codel]
+      --downlink-queue-args &lt;JSON&gt;      Downlink queue arguments
+  -s, --shell &lt;SHELL&gt;                   Shell used to run if no command is specified. Only used when in compatible mode [default: default] [possible values: default, sh, bash, zsh, fish]
+  -h, --help                            Print help (see more with '--help')
+  -V, --version                         Print version
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="flexible-configuration"><a class="header" href="#flexible-configuration">Flexible Configuration</a></h1>
+<p>Generally, our specialized network emulations necessitate a different number of cells or more complex channels, and they may even require the configuration of routes, such as a multi-path network path with ISP QoS policies. Our CLI tool achieves flexibility and configurability through the use of TOML config files. The configuration file primarily consists of six sections.</p>
+<p>We provide an example config file <a href="https://github.com/stack-rs/rattan/blob/main/config.example.toml">config.example.toml</a> as reference. You can just copy and modify it to suit your needs.</p>
+<p>For detailed usage, you can run <code>rattan config --help</code> to see the available cells and options:</p>
+<pre><code class="language-txt">Run the instance according to the config
+
+Usage: rattan run [OPTIONS] --config &lt;Config File&gt;
+
+Options:
+  -c, --config &lt;Config File&gt;        Use config file to run a instance
+      --left [&lt;LEFT_COMMAND&gt;...]    Command to run in left ns. Can be used in compatible and isolated mode
+      --generate                    Generate config file instead of running a instance
+      --right [&lt;RIGHT_COMMAND&gt;...]  Command to run in right ns. Only used in isolated mode
+      --generate-path &lt;File&gt;        Generate config file to the specified path instead of stdout
+      --packet-log &lt;File&gt;           The file to store compressed packet log (overwrite config) (default: None)
+      --file-log                    Enable logging to file
+      --file-log-path &lt;File&gt;        File log path, default to $CACHE_DIR/rattan/core.log
+  -h, --help                        Print help (see more with '--help')
+  -V, --version                     Print version
+</code></pre>
+<h2 id="general-section"><a class="header" href="#general-section">General Section</a></h2>
+<p>This section determines how to run the rattan itself in general.</p>
+<ul>
+<li><code>packet_log</code>. Now we only have this option in the section, which is used to enable compressed packet log and specify the file to store the records. The meta data of flows will be stored in the file of name <code>packet_log</code>.flows</li>
+</ul>
+<h2 id="environment-section"><a class="header" href="#environment-section">Environment Section</a></h2>
+<p>This section determines how to build the environment.</p>
+<ul>
+<li><code>mode</code>. You can configure rattan to function in <code>Compatible</code> mode or <code>Isolated</code> mode. The <code>ns-left</code> side is always a new network namespace. The difference of the two modes lies in whether <code>ns-right</code> side is the host network namespace (the namespace run rattan) or a new network namespace. The default is <code>Compatible</code>.</li>
+<li><code>left_veth_count</code> and <code>right_veth_count</code>. You can configure the number of veth pairs to create in the <code>ns-left</code> (i.e., between <code>ns-left</code> and <code>ns-rattan</code>) and <code>ns-right</code> (i.e., between <code>ns-right</code> and <code>ns-rattan</code>) network namespaces. The default is 1.</li>
+</ul>
+<h2 id="http-section"><a class="header" href="#http-section">HTTP Section</a></h2>
+<p>This section configures Rattan's HTTP control server.</p>
+<ul>
+<li><code>enable</code>. You can enable or disable the HTTP control server. The default is <code>false</code>.</li>
+<li><code>port</code>. You can configure the port number of the HTTP control server. The default is 8086.</li>
+</ul>
+<h2 id="cells-section"><a class="header" href="#cells-section">Cells Section</a></h2>
+<p>This section describes the emulation cells. It is a table of cells, where each cell has a unique string ID, defined like <code>[cells.&lt;ID&gt;]</code>.</p>
+<p>Each cell <strong>MUST</strong> have a "type" field, which determines the cell type and cell configuration fields.
+Possible cell types:</p>
+<ul>
+<li><code>Bw</code>: Fixed bandwidth</li>
+<li><code>BwReplay</code>: Bandwidth trace replayer</li>
+<li><code>Delay</code>: Fixed delay</li>
+<li><code>Loss</code>: Loss pattern</li>
+<li><code>Custom</code>: Custom cell, only specify the cell ID used in link section, and the cell must be built by the user</li>
+</ul>
+<p>For example, the following is a cell configuration for a fixed bandwidth cell:</p>
+<pre><code class="language-toml">[cells.up_1]
+type = "Bw"
+bw_type = "NetworkLayer"
+bandwidth = "1Gbps 200Mbps"
+queue = "DropTail"
+queue_config = { packet_limit = 60 }
+</code></pre>
+<p>For detailed parameters, you can check the <a href="https://docs.rs/rattan-core/latest/rattan-core">documentation of <code>rattan-core</code></a> or the example config file <a href="https://github.com/stack-rs/rattan/blob/main/config.example.toml">config.example.toml</a>.</p>
+<h2 id="links-section"><a class="header" href="#links-section">Links Section</a></h2>
+<p>This section describes how to link the cells.</p>
+<p>"left" and "right" are preserved cell IDs, which respectively represent
+the <code>ns-left</code> side veth (named <code>vL1-R</code>) and the <code>ns-right</code> side veth (named <code>vR1-L</code>).
+But if a network namespace has more than one veth NICs, <code>ns-left</code> side for example, "left1", "left2" etc. will be defined.</p>
+<p>The other cell IDs are defined by user in the cells section.</p>
+<p>Each line describes a one-way link from a cell egress to a cell ingress.</p>
+<p>For example, to emulate a network topology with two network paths like following:</p>
+<pre><code class="language-txt">+-------+  --------&gt;  shadow ---&gt;  up_1  ---&gt;  up_2  ---&gt; +-------+
+| left1 | &lt;==+           ^                                | right |
++-------+    }= router &lt;-|------- down_2 &lt;--- down_1 &lt;--- +-------+
+| left2 | &lt;==+           |
++-------+  --------------+
+
+Note: The double line "&lt;===" from router is connected in Cells Section
+</code></pre>
+<p>You can configure the link section like this:</p>
+<pre><code class="language-toml">[links]
+left1 = "shadow"
+left2 = "shadow"
+shadow = "up_1"
+up_1 = "up_2"
+up_2 = "right"
+right = "down_1"
+down_1 = "down_2"
+down_2 = "router"
+# We do not need to link the Router Cell to other cells anymore, as we should do it in Cells Section
+</code></pre>
+<h2 id="resource-section"><a class="header" href="#resource-section">Resource Section</a></h2>
+<p>This section describes how rattan use system resource</p>
+<p>The section is preserved for future use but not used now.</p>
+<ul>
+<li><code>cores</code>. The CPU cores that rattan is allowed to use.</li>
+</ul>
+<h2 id="commands-section"><a class="header" href="#commands-section">Commands Section</a></h2>
+<p>This section describes the commands to run in rattan.</p>
+<p>When in <code>Compatible</code> mode, only the <code>left</code> and <code>shell</code> options are used,
+and the commands will run in the <code>ns-left</code> network namespace.</p>
+<p>When in <code>Isolated</code> mode, only the left and right options are used,
+and the commands will run in the <code>ns-left</code> and <code>ns-right</code> network namespace, respectively.</p>
+<ul>
+<li><code>left</code> and <code>right</code>. The commands to run in the <code>ns-left</code> and <code>ns-right</code> network namespace, respectively. Should be an array of strings.</li>
+<li><code>shell</code>. The shell used to run if no command is specified. Only used when in compatible mode. The default is <code>Default</code> (i.e., the default shell defined in environment variable <code>$SHELL</code>).</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="write-a-new-cell-todo"><a class="header" href="#write-a-new-cell-todo">Write a New Cell (TODO)</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="write-your-tailored-tool-todo"><a class="header" href="#write-your-tailored-tool-todo">Write Your Tailored Tool (TODO)</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="packet-io"><a class="header" href="#packet-io">Packet I/O</a></h1>
+<p>Currently, we support two packet I/O mechanisms: <code>AF_PACKET</code> and <code>AF_XDP</code>. The former is a socket-based mechanism, while the latter is a driver-based mechanism. The <code>AF_PACKET</code> version is more portable, while the <code>AF_XDP</code> version is more performant.</p>
+<h2 id="example"><a class="header" href="#example">Example</a></h2>
+<p>By default, the <code>AF_PACKET</code> version is used. To use the <code>AF_XDP</code> version, you need to enable the <code>camellia</code> feature.</p>
+<pre><code class="language-bash">cargo run --example channel --release # AF_PACKET version
+cargo run --example channel-xdp --release --features="camellia" # AF_XDP version
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="flamegraph"><a class="header" href="#flamegraph">Flamegraph</a></h1>
+<p>To generate a flamegraph, you can use the <code>flamegraph</code> tool. First, install it:</p>
+<pre><code class="language-bash">cargo install flamegraph
+</code></pre>
+<p>Then, run the following command:</p>
+<pre><code class="language-bash">cargo flamegraph --root --example channel
+</code></pre>
+<p>This will generate a flamegraph, which you can open with a browser to inspect hot spot.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="packet-log-spec"><a class="header" href="#packet-log-spec">Packet Log Spec</a></h1>
+<pre><code class="language-text"> 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       LH.length       | LH.ty.|   GPH.length  |GPH.ac.|GPH.ty.|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                          GP.timestamp                         |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|           GP.length           |       PRH.length      |PRH.ty.|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                          PRT (custom)                         |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<p>Generated with <a href="https://github.com/luismartingarcia/protocol">protocol</a>, where:</p>
+<ul>
+<li><code>LH</code> is short for log entry header</li>
+<li><code>GPH</code> is short for general packet entry header</li>
+<li><code>GP</code> is short for general packet entry (the body part)</li>
+<li><code>PRH</code> is short for protocol entry header</li>
+<li><code>PRT</code> is short for protocol entry (the body part)</li>
+<li><code>ty.</code> is short for type</li>
+<li><code>ac.</code> is short for action</li>
+</ul>
+<pre><code class="language-bash">protocol "LH.length:12,LH.ty.:4,GPH.length:8,GPH.ac.:4,GPH.ty.:4,GP.timestamp:32,GP.length:16,PRH.length:12,PRH.ty.:4,PRT (custom):32"
+</code></pre>
+<p>We currently provide TCP log spec (a variant of the protocol entry body part, i.e. <code>PRT (custom)</code>):</p>
+<pre><code class="language-text"> 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                          tcp.flow_id                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                            tcp.seq                            |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                            tcp.ack                            |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|             ip.id             |         ip.frag_offset        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|          ip.checksum          |   tcp.flags   |    padding    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+</code></pre>
+<pre><code class="language-bash">protocol "tcp.flow_id:32,tcp.seq:32,tcp.ack:32,ip.id:16,ip.frag_offset:16,ip.checksum:16,tcp.flags:8,padding:8"
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+    </div>
+    </body>
+</html>
