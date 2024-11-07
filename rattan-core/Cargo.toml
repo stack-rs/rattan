@@ -32,7 +32,7 @@ rand = { workspace = true }
 rtnetlink = "0.14.1"
 serde = { workspace = true, optional = true }
 serde_json = { version = "1.0.96", optional = true }
-thiserror = "1.0.40"
+thiserror = "2.0.0"
 tokio = { workspace = true }
 tokio-util = "0.7.7"
 tracing = { workspace = true }
