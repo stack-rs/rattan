@@ -268,6 +268,10 @@ sudo systemctl restart systemd-networkd.service
 <pre><code class="language-bash">./scripts/install.sh rattan
 </code></pre>
 <h2 id="build-from-source-using-rust"><a class="header" href="#build-from-source-using-rust">Build from source using Rust</a></h2>
+<h3 id="dependencies"><a class="header" href="#dependencies">Dependencies</a></h3>
+<p>We recommend developers to install the following dependencies for better testing and development experience. And you have to install some of the dependencies to build rattan with specific features:</p>
+<pre><code class="language-bash">sudo apt install ethtool, iputils-ping, iperf3, pkg-config, m4, clang, llvm, libelf-dev, libpcap-dev, gcc-multilib
+</code></pre>
 <h3 id="installing-with-cargo"><a class="header" href="#installing-with-cargo">Installing with Cargo</a></h3>
 <p>To build the <code>rattan</code> executable from source, you will first need to install Rust and Cargo.
 Follow the instructions on the <a href="https://www.rust-lang.org/tools/install">Rust installation page</a>.</p>
