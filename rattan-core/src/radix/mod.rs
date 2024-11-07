@@ -39,6 +39,7 @@ pub use log::RattanLogOp;
 
 pub static INSTANCE_ID: OnceCell<String> = OnceCell::new();
 pub static LOGGING_TX: OnceCell<UnboundedSender<RattanLogOp>> = OnceCell::new();
+pub static BASE_TS: OnceCell<i64> = OnceCell::new();
 
 pub type TaskResult<R> = Result<R, Box<dyn std::error::Error + Send + Sync>>;
 

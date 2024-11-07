@@ -9,7 +9,7 @@ use crate::{
     },
     radix::{
         log::{PktAction, TCPLogEntry},
-        RattanLogOp, LOGGING_TX,
+        RattanLogOp, BASE_TS, LOGGING_TX,
     },
 };
 use std::{
@@ -399,7 +399,7 @@ where
         let driver = D::bind_cell(cell.clone())?;
         let dev_senders = driver.iter().map(|d| d.sender()).collect();
         let log_tx = LOGGING_TX.get().cloned();
-        let base_ts = get_clock_ns();
+        let base_ts = *BASE_TS.get_or_init(get_clock_ns);
         Ok(Self {
             _cell: cell,
             ingress: Arc::new(VirtualEthernetIngress::new(
