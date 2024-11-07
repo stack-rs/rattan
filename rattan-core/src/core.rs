@@ -286,7 +286,8 @@ where
                                     }
                                 }
                             }
-                            _ = rx.dequeue(), if rx_id == "left" || rx_id == "right" => {
+                            // HACK: Should list all rattan entries here
+                            _ = rx.dequeue(), if rx_id.starts_with("left") || rx_id.starts_with("right") => {
                                 debug!(rx_id, tx_id, "Drop packet since the rattan is not started yet");
                             }
                         }
