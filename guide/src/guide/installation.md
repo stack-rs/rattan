@@ -54,6 +54,14 @@ We also contain a install script [scripts/install.sh](https://github.com/stack-r
 
 ## Build from source using Rust
 
+### Dependencies
+
+We recommend developers to install the following dependencies for better testing and development experience. And you have to install some of the dependencies to build rattan with specific features:
+
+```bash
+sudo apt install ethtool, iputils-ping, iperf3, pkg-config, m4, clang, llvm, libelf-dev, libpcap-dev, gcc-multilib
+```
+
 ### Installing with Cargo
 
 To build the `rattan` executable from source, you will first need to install Rust and Cargo.
