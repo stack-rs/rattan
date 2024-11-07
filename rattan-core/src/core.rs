@@ -8,6 +8,7 @@ use std::{
     },
 };
 
+use once_cell::sync::OnceCell;
 use tokio::{
     runtime::{Handle, Runtime},
     sync::{broadcast, mpsc},
@@ -33,6 +34,8 @@ use pcap_file::pcapng::{
 };
 #[cfg(feature = "packet-dump")]
 use std::{fs::File, io::Write, sync::Mutex};
+
+pub static CALIBRATED_START_INSTANT: OnceCell<tokio::time::Instant> = OnceCell::new();
 
 pub trait CellFactory<D>: FnOnce(&Handle) -> Result<D, Error> {}
 
@@ -352,6 +355,7 @@ where
     }
 
     pub fn start_rattan(&mut self) -> Result<(), Error> {
+        CALIBRATED_START_INSTANT.get_or_init(tokio::time::Instant::now);
         self.send_notify(RattanNotify::Start)
     }
 

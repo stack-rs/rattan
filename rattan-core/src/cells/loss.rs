@@ -1,4 +1,5 @@
 use crate::cells::{Cell, Packet};
+use crate::core::CALIBRATED_START_INSTANT;
 use crate::error::Error;
 use crate::metal::timer::Timer;
 use crate::utils::sync::AtomicRawCell;
@@ -307,7 +308,7 @@ where
 
     fn reset(&mut self) {
         self.prev_loss = 0;
-        self.next_change = Instant::now();
+        self.next_change = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
     }
 
     fn change_state(&self, state: i32) {

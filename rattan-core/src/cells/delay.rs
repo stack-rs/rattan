@@ -1,4 +1,5 @@
 use crate::cells::{Cell, Packet};
+use crate::core::CALIBRATED_START_INSTANT;
 use crate::error::Error;
 use crate::metal::timer::Timer;
 use async_trait::async_trait;
@@ -322,8 +323,8 @@ where
 
     // This must be called before any dequeue
     fn reset(&mut self) {
-        self.next_available = Instant::now();
-        self.next_change = Instant::now();
+        self.next_available = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
+        self.next_change = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
     }
 
     fn change_state(&self, state: i32) {
