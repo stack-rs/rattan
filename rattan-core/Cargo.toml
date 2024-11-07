@@ -15,7 +15,7 @@ backon = "0.4.4"
 bandwidth = "0.3.0"
 figment = { workspace = true }
 camellia = { git = "https://github.com/minhuw/camellia.git", optional = true }
-etherparse = "0.14.3"
+etherparse = "0.16.0"
 futures = { workspace = true }
 human-bandwidth = { workspace = true }
 humantime-serde = { version = "1.1.1", optional = true }
