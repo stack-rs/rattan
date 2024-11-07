@@ -13,7 +13,7 @@ pub enum RattanLogOp {
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
-pub(crate) struct FlowEntry {
+pub struct FlowEntry {
     pub flow_id: u32,
     pub base_ts: i64,
     pub flow_desc: FlowDesc,
