@@ -93,7 +93,7 @@ where
 
         let env = build_env
             .retry(
-                &ExponentialBuilder::default()
+                ExponentialBuilder::default()
                     .with_jitter()
                     .with_max_times(3),
             )
