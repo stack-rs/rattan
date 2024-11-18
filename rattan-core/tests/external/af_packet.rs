@@ -2,10 +2,11 @@
 /// CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test af_packet -- --ignored --nocapture
 use libc::{c_void, size_t, sockaddr, sockaddr_ll, socklen_t};
 use nix::errno::Errno;
-use nix::sys::epoll::{epoll_create, epoll_ctl, epoll_wait, EpollEvent, EpollFlags};
+use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout};
 use nix::sys::socket::{AddressFamily, SockType};
 use rattan_core::env::{get_std_env, StdNetEnvConfig};
 use rattan_core::metal::veth::{MacAddr, VethCell};
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::{mem, ptr};
@@ -166,34 +167,27 @@ fn af_packet_test() -> anyhow::Result<()> {
             )
         };
 
-        let epoll_fd = epoll_create().unwrap();
-
-        epoll_ctl(
-            epoll_fd,
-            nix::sys::epoll::EpollOp::EpollCtlAdd,
-            left_sniffer,
-            Some(&mut EpollEvent::new(
-                EpollFlags::EPOLLIN,
-                left_sniffer as u64,
-            )),
-        )
-        .unwrap();
-
-        epoll_ctl(
-            epoll_fd,
-            nix::sys::epoll::EpollOp::EpollCtlAdd,
-            right_sniffer,
-            Some(&mut EpollEvent::new(
-                EpollFlags::EPOLLIN,
-                right_sniffer as u64,
-            )),
-        )
-        .unwrap();
+        let left_sniffer_fd = unsafe { OwnedFd::from_raw_fd(left_sniffer) };
+        let epoll_instance = Epoll::new(EpollCreateFlags::empty()).unwrap();
+        epoll_instance
+            .add(
+                left_sniffer_fd,
+                EpollEvent::new(EpollFlags::EPOLLIN, left_sniffer as u64),
+            )
+            .unwrap();
+        let right_sniffer_fd = unsafe { OwnedFd::from_raw_fd(right_sniffer) };
+        epoll_instance
+            .add(
+                right_sniffer_fd,
+                EpollEvent::new(EpollFlags::EPOLLIN, right_sniffer as u64),
+            )
+            .unwrap();
 
         // Large enough to receive frame of localhost.
         let mut buf = [0u8; 65537];
         let mut events = [EpollEvent::empty(); 100];
         let timeout_ms = 1000;
+        let epoll_timeout = EpollTimeout::try_from(timeout_ms).unwrap();
 
         let running = Arc::new(AtomicBool::new(true));
         let rclone = running.clone();
@@ -203,7 +197,7 @@ fn af_packet_test() -> anyhow::Result<()> {
         .expect("unable to install ctrl+c handler");
 
         while running.load(Ordering::Acquire) {
-            let _num_events = epoll_wait(epoll_fd, &mut events, timeout_ms).unwrap();
+            let _num_events = epoll_instance.wait(&mut events, epoll_timeout).unwrap();
 
             for event in events {
                 let fd = event.data() as i32;

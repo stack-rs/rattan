@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::os::fd::{AsFd, BorrowedFd};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -217,6 +218,12 @@ impl<E: Env> AsRawFd for NetNs<E> {
     }
 }
 
+impl<E: Env> AsFd for NetNs<E> {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.file.as_fd()
+    }
+}
+
 impl<E: Env> std::fmt::Display for NetNs<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         if let Ok(meta) = self.file.metadata() {
@@ -276,7 +283,7 @@ impl<E: Env> NetNs<E> {
     pub fn enter(&self) -> Result<std::sync::Arc<NetNs<E>>, NsError> {
         let current_ns = self.env.clone().current()?;
         trace!("entering netns: {}", self.path.to_string_lossy());
-        setns(self.as_raw_fd(), CloneFlags::CLONE_NEWNET).map_err(NsError::SetNsError)?;
+        setns(self.as_fd(), CloneFlags::CLONE_NEWNET).map_err(NsError::SetNsError)?;
         Ok(current_ns)
     }
 

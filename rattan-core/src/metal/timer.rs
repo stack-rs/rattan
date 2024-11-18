@@ -1,4 +1,4 @@
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsFd, AsRawFd};
 
 use nix::sys::{
     time::TimeSpec,
@@ -10,16 +10,24 @@ use crate::metal::error::MetalError;
 
 // High-resolution timer
 pub struct Timer {
-    timer: AsyncFd<TimerFd>,
+    timer: AsyncFd<WrapperTimer>,
+}
+
+pub struct WrapperTimer(pub TimerFd);
+
+impl AsRawFd for WrapperTimer {
+    fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
+        self.0.as_fd().as_raw_fd()
+    }
 }
 
 impl Timer {
     pub fn new() -> Result<Self, MetalError> {
         Ok(Self {
-            timer: AsyncFd::new(TimerFd::new(
+            timer: AsyncFd::new(WrapperTimer(TimerFd::new(
                 ClockId::CLOCK_MONOTONIC,
                 TimerFlags::TFD_NONBLOCK,
-            )?)?,
+            )?))?,
         })
     }
 
@@ -28,7 +36,7 @@ impl Timer {
         if duration.as_nanos() == 0 {
             return Ok(());
         }
-        self.timer.get_mut().set(
+        self.timer.get_mut().0.set(
             Expiration::OneShot(TimeSpec::from_duration(duration)),
             TimerSetTimeFlags::empty(),
         )?;

@@ -1,3 +1,5 @@
+use std::os::fd::AsRawFd;
+
 use libc::{__c_anonymous_ifr_ifru, c_char, c_uint, ifreq};
 use nix::{
     errno::Errno,
@@ -108,7 +110,7 @@ pub fn get_feature_flag(name: &str) -> Result<[u32; OFF_FLAG_DEF_SIZE], VethErro
         eval.data = 0;
         ifr.ifr_ifru.ifru_data = &mut eval as *mut EthtoolValue as *mut c_char;
 
-        let res = unsafe { ethtool_ioctl(fd, &mut ifr) };
+        let res = unsafe { ethtool_ioctl(fd.as_raw_fd(), &mut ifr) };
         match res {
             Ok(_) => {
                 flags[i] = eval.data;
@@ -147,7 +149,7 @@ pub fn disable_checksum_offload(name: &str) -> Result<(), VethError> {
         eval.data = 0;
         ifr.ifr_ifru.ifru_data = &mut eval as *mut EthtoolValue as *mut c_char;
 
-        let res = unsafe { ethtool_ioctl(fd, &mut ifr) };
+        let res = unsafe { ethtool_ioctl(fd.as_raw_fd(), &mut ifr) };
         match res {
             Ok(_) => {}
             Err(Errno::EOPNOTSUPP) => {}
