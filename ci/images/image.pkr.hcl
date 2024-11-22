@@ -104,7 +104,8 @@ source "libvirt" "image" {
         packages = [
           "policykit-1",
           "mainline",
-          "ca-certificates"
+          "ca-certificates",
+          "pkexec"
         ]
 
         package_update             = true
@@ -141,7 +142,7 @@ build {
   provisioner "shell" {
     inline = [
       "set -xo pipefail",
-      "sudo mainline list | grep -E \"^[0-9]+\\.[0-9]+\\.[0-9]+\" | grep -E \"^${var.kernel_version}\" | head -n 1 | tr -d ' ' | sed -e 's/Installed//' | xargs -I {} sudo mainline install {}"
+      "sudo mainline list | grep -E \"^[0-9]+\\.[0-9]+\" | grep -E \"^${var.kernel_version}\" | head -n 1 | tr -d ' ' | sed -e 's/Installed//' | xargs -I {} sudo mainline install {}"
     ]
     inline_shebang = "/bin/bash -e"
     skip_clean = true

@@ -15,7 +15,7 @@ We provide a simple and easy-to-use API to create and manage network emulations.
 
 Our modular design makes it easy to extend **Rattan** with different network effects or conditions. We provide a set of built-in modules that can be used to emulate different network conditions, such as bandwidth, latency, packet loss, ISP policies and etc.
 
-We support Linux only at the moment. Currently, kernel version v5.4, v5.15, v6.8 and v6.10 are tested.
+We support Linux only at the moment. Currently, kernel version v5.4, v5.15, v6.8 and v6.11 are tested.
 
 ## Design Targets
 
