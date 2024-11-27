@@ -92,12 +92,7 @@ where
     }
 
     fn get_front_size(&self) -> Option<usize> {
-        match self.queue.front() {
-            Some(packet) => {
-                Some(packet.l3_length())
-            },
-            None => None
-        }
+        self.queue.front().map(|packet| packet.l3_length())
     }
 }
 
@@ -214,12 +209,9 @@ where
     }
 
     fn get_front_size(&self) -> Option<usize> {
-        match self.queue.front() {
-            Some(packet) => {
-                Some(packet.l3_length() + self.bw_type.extra_length())
-            },
-            None => None
-        }
+        self.queue
+            .front()
+            .map(|packet| packet.l3_length() + self.bw_type.extra_length())
     }
 }
 
@@ -332,12 +324,9 @@ where
     }
 
     fn get_front_size(&self) -> Option<usize> {
-        match self.queue.front() {
-            Some(packet) => {
-                Some(packet.l3_length() + self.bw_type.extra_length())
-            },
-            None => None
-        }
+        self.queue
+            .front()
+            .map(|packet| packet.l3_length() + self.bw_type.extra_length())
     }
 }
 
@@ -612,11 +601,8 @@ where
     }
 
     fn get_front_size(&self) -> Option<usize> {
-        match self.queue.front() {
-            Some(packet) => {
-                Some(packet.l3_length() + self.config.bw_type.extra_length())
-            },
-            None => None
-        }
+        self.queue
+            .front()
+            .map(|packet| packet.l3_length() + self.config.bw_type.extra_length())
     }
 }

@@ -1,5 +1,9 @@
 use crate::{
-    cells::{bandwidth::queue::DropTailQueue, token_bucket::{self, TokenBucket}, Packet},
+    cells::{
+        bandwidth::queue::DropTailQueue,
+        token_bucket::{self, TokenBucket},
+        Packet,
+    },
     core::CellFactory,
 };
 
@@ -10,9 +14,9 @@ impl TokenBucketCellBuildConfig {
         move |handle| {
             let _guard = handle.enter();
             token_bucket::TokenBucketCell::new(
-                TokenBucket::from(self.token_bucket.unwrap_or_default()), 
+                TokenBucket::from(self.token_bucket.unwrap_or_default()),
                 TokenBucket::from(self.peak_token_bucket.unwrap_or_default()),
-                DropTailQueue::from(self.queue_config.unwrap_or_default())
+                DropTailQueue::from(self.queue_config.unwrap_or_default()),
             )
         }
     }
