@@ -670,10 +670,10 @@ mod tests {
         info!(
             "Average delay: {:.3}ms, error {:.1}ms",
             average_delay,
-            (average_delay - 472.65625 as f64).abs()
+            (average_delay - 472.65625).abs()
         );
         // Check the delay time
-        assert!((average_delay - 472.65625 as f64).abs() <= DELAY_ACCURACY_TOLERANCE);
+        assert!((average_delay - 472.65625).abs() <= DELAY_ACCURACY_TOLERANCE);
 
         Ok(())
     }
@@ -863,7 +863,7 @@ mod tests {
         // Wait for 250ms, then change the config to let the delay be longer
         std::thread::sleep(Duration::from_millis(250));
         // buffer: 1000 ms, rate: 256 B/s
-        let token_bucket = TokenBucketConfig::new(1000, 256 as u64);
+        let token_bucket = TokenBucketConfig::new(1000, 256_u64);
         let token_bucket_queue =
             DropTailQueueConfig::new(None, 1024, crate::cells::bandwidth::BwType::NetworkLayer);
         config_changer.set_config(TokenBucketCellConfig::new(
@@ -935,7 +935,7 @@ mod tests {
         // Wait for 500ms, then change the config to 1000ms, 512B/s
         std::thread::sleep(Duration::from_millis(500));
         // buffer: 1000 ms, rate: 512 B/s
-        let token_bucket = TokenBucketConfig::new(1000, 512 as u64);
+        let token_bucket = TokenBucketConfig::new(1000, 512_u64);
         let token_bucket_queue =
             DropTailQueueConfig::new(None, 1024, crate::cells::bandwidth::BwType::NetworkLayer);
         config_changer.set_config(TokenBucketCellConfig::new(
@@ -1150,7 +1150,7 @@ mod tests {
             ingress.enqueue(test_packet)?;
             std::thread::sleep(Duration::from_millis(100));
         }
-        let token_bucket = TokenBucketConfig::new(1000, 128 as u64);
+        let token_bucket = TokenBucketConfig::new(1000, 128_u64);
         config_changer.set_config(TokenBucketCellConfig::new(Some(token_bucket), None, None))?;
         // the first packet can be received but the left are lost
         for _ in 0..5 {

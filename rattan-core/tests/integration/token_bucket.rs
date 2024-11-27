@@ -81,7 +81,7 @@ fn test_token_bucket() {
     {
         let _span = span!(Level::INFO, "ping_with_tb").entered();
         info!("try to ping with token bucket of 1000ms buffer and 512B/s rate");
-        let token_bucket = TokenBucketConfig::new(1000, 512 as u64);
+        let token_bucket = TokenBucketConfig::new(1000, 512_u64);
         radix
             .op_block_exec(RattanOp::ConfigCell(
                 "up_tb".to_string(),
