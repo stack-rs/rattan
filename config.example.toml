@@ -279,6 +279,26 @@ interface_id = 1
 prefix = "10.2.0.0/16"
 # no interface_id, meaning drop
 
+# Token Bucket Cell Example
+[cells.token_bucket]
+type = "TokenBucket"
+
+# Token Bucket configuration
+# We have 2 fields for TokenBucket:
+# - "buffer" : Capacity of the bucket in millisecond.  Default: 0
+# - "rate" : Rate limit of the bucket in B/s.          Default: Unlimited
+token_bucket = { buffer = 1000, rate = 512 }
+
+# Peak Token Bucket
+# Peak token bucket is optional. If there is no peak token bucket, the token bucket cell will not limit its peak rate.
+# The configuration of peak token bucket is similar to token bucket.
+# Default: None
+peak_token_bucket = { buffer = 250, rate = 1024 }
+
+# Queue configuration
+# Similar to the configuration of DropTail queue.
+queue_config = { byte_limit = 1024 }
+
 # ----- Cells Section End -----
 
 
