@@ -6,7 +6,8 @@ a Rust library (named `rattan-core`) for you to build your own tools on top of.
 There are multiple ways to install the Rattan CLI tool.
 Choose any one of the methods below that best suit your needs.
 
-> **ATTENTION**: As we are still in the early stages of development without a released version, we only support building from source currently.
+> [!CAUTION]
+> As we are still in the early stages of development without a released version, we only support building from source currently.
 
 ## Pre-compiled binaries
 

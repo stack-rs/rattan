@@ -6,6 +6,8 @@ src = "src"
 title = "Rattan Documentation"
 description = "Rattan is a high-performance modular transport channel emulator ready for modern WAN."
 
+[preprocessor.alerts]
+
 [output.html]
 git-repository-url = "https://github.com/stack-rs/rattan/tree/master/guide"
 edit-url-template = "https://github.com/stack-rs/rattan/edit/master/guide/{path}"
