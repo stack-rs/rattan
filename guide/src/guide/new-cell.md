@@ -1,27 +1,39 @@
 # Write a New Cell
 
-Cells are components in rattan that provides various settings and restrictions for your network paths. You can simulate different network environments by combining different cells in any configuration you like. We already offer built-in cells for you to choose such as `Delay` cell and `Loss` cell. However, if you require additional features or wish to create your own unique cells, you can follow this guide to write a custom cell yourself.
+In Rattan, a "cell" is a unit that emulates various network effects for your network path, including delay, packet loss, reordering, and so forth.
+As the fundamental building block of Rattan, cells follow the actor concurrency programming model. Each cell runs as an self-contained coroutine that processes events through several well-defined asynchronous interfaces (i.e., `Ingress`, `Egress`, `ControlInterface`).
+
+Users can combine different cells to emulate a variety of network scenarios. We've bundled several built-in cells in Rattan to support common network effects, including the `Delay` cell, `Loss` cell, among others.
+
+However, there may be instances where users wish to implement additional effects or need to cater to specific requirements within a cell. In such cases, they can follow this guide to create their own custom cell.
 
 ## Basic Structure
 
-A cell in rattan is primarily composed of the following components: `Ingress`, `Egress`, and `ControlInterface`. To implement your own cell, you need to implement these three traits, along with an additional `Cell` trait to combine them together. In the following explanation, we will use a `DropPacketCell` as an example, which drops one packet every `loss_interval` packets, to illustrate the basic structure and implementation process of a cell.
+A cell in Rattan is primarily composed of the following components: [`Ingress`](#ingress), [`Egress`](#egress), and [`ControlInterface`](#controlinterface).
+To implement your own cell, you need to implement these three traits, along with an additional [`Cell`](#cell) trait to combine them together.
+
+In the design of Rattan, each `Cell` receives packets via `Ingress` and sends packets via `Egress`. The `Cell` settings can be adjusted at runtime through the `ControlInterface`. The Rattan core handles the forwarding of packets from the `Egress` of one `Cell` to the `Ingress` of another.
+
+In the following sections, we will use a `DropPacketCell` as an example, which drops one packet every `loss_interval` packets, to illustrate the basic structure and implementation process of a cell.
 
 ### Ingress
 
-We should implement an `Ingress` to receive packets, which are dequeued by other cells and forwarded by the rattan core. The `Ingress` serves as the entry for our cell, so it is indispensable.
+The `Ingress` is used to receive packets, which are dequeued by other cells and forwarded by the rattan core.
+It serves as the entry point for our cell, hence the need for us to implement an `enqueue` method to pass forwarded packets into the cell.
 
-Implementing the `Ingress` trait requires defining an `enqueue` method, which the rattan core calls to insert packets into the cell. In this `enqueue` method, we need to call the `send` method of the `ingress` member to send the packet through the channel (similarly, the `Egress` trait has a `dequeue` method, which calls its `egress` member — an `UnboundedReceiver` — to receive packets from the channel and decide whether to remove or discard them from the cell). Additionally, since we allow multiple cells to send packets to a single cell from different threads, `Ingress` must implement the `Clone` trait and can only have an immutable reference to itself. 
+Typically, we use a channel to forward packets within the cell. As such, we can incorporate an `UnboundedSender` member within `Ingress` and use its `send` method to transmit packets (similarly, we can include an `UnboundedReceiver` member within `Egress` and use its `recv` method to receive packets).
 
-Although `Ingress` can only have one immutable reference to itself, it’s important to note that mutable operations on the packets are possible within the `enqueue` method of `Ingress`.
+A single `Ingress` is shared across multiple forwarding threads to allow flexible composition, so it can only have an immutable reference to itself in the `enqueue` method and must implement the `Clone` trait. It is worth attention that mutable operations on packets are possible within the method.
 
-You can refer to the example below:
+Here is an example of an `Ingress` implementation, which we set the timestamp of the packet to the current time before sending it to the `Egress`:
 
 ```rust
 pub struct DropPacketCellIngress<P>
 where
     P: Packet,
 {
-    ingress: mpsc::UnboundedSender<P>,          // Send packets to Egress
+    // Send packets to Egress
+    ingress: mpsc::UnboundedSender<P>,
 }
 
 impl<P> Clone for DropPacketCellIngress<P>
@@ -51,9 +63,19 @@ where
 
 ### Egress
 
-After implementing the `Ingress`, we should also implement an `Egress` to dequeue packets from our cell and send them to other cells through the rattan core. The `Egress` serves as the export for our cell.
+The `Egress` is used to dequeue packets from the `Cell`, which are then sent to another cell by the rattan core. It serves as the export of the cell.
 
-The struct that implements the `Egress` trait typically has the following structure: an `UnboundedReceiver` as the `egress` member, a configuration receiver (the specific type depends on the way you implement trait `ControlInterface`), a `state: AtomicI32` to represent the state of the cell, where a state value of 0 means "drop", 1 means "pass-through", and 2 means "normal operation" (i.e., you only need to perform the cell’s functionality when the `state` is 2). Additionally, it includes your cell’s configuration parameters and its internal state.
+As we mentioned above, we typically use a channel to forward packets within the cell. Therefore, we can include an `UnboundedReceiver` member within `Egress` and use its `recv` method to receive packets for further process.
+
+The `Egress` component is designed to be exclusively held by a single thread, allowing its `dequeue` method to obtain a mutable reference to itself.
+This design allows for stateful operations within this method. Network effects often necessitate maintaining mutable internal states.
+
+For instance, the Gilbert-Elliott packet loss model requires internal state transitions along with a varying packet loss probability.
+
+Consequently, we usually implement the majority of packet handling strategies, such as delaying or dropping a packet, and modify the internal states within the `dequeue` method.
+
+We always include a `state` variable (typically, a `AtomicI32`) in the `Egress` struct to control the cell's state, which is informed by Rattan runtime through method `change_state`. Currently, three values are supported: 0 (drop), 1 (pass-through), and 2 (normal operation).
+Also, we include a configuration receiver (the specific type depends on the way you implement trait `ControlInterface`) to receive configuration information from the `ControlInterface`.
 
 An example is shown below:
 
@@ -62,19 +84,24 @@ pub struct DropPacketCellEgress<P>
 where
     P: Packet,
 {
-    egress: mpsc::UnboundedReceiver<P>,                    // Receive packets from Ingress
-    inner_loss_interval: Box<usize>,
-    // Your own parameters...
-    counter: usize,                                        // Count number of packets since last packet loss
-    // Your own inner states...
-    loss_interval: Arc<AtomicRawCell<usize>>,              // Configuration receiver
-    state: AtomicI32,                                      // State of Egress
+    // Receive packets from Ingress
+    egress: mpsc::UnboundedReceiver<P>,
+    // Internal states
+    inner_loss_interval: usize,
+    counter: usize,
+    loss_interval: Arc<AtomicUsize>,
+    state: AtomicI32,
 }
 ```
 
-You must implement the `change_state` and `dequeue` methods for the `Egress` trait. The `change_state` will be called by rattan core to control the state of your cell. You need to implement the functional logic of your cell in the `dequeue` method. For example, if you need a delay function, you can write your `dequeue` method to return a packet after a specified delay time; if you need to drop packets, you can write your `dequeue` method to return a packet or drop it with a certain probability.
+Here, `loss_interval` is used to receive the configuration information from the `ControlInterface`, `inner_loss_interval` is used to store the received parameters, `counter` is used to count the number of packets since last packet loss, and `state` is used to control the state of the cell.
 
-It is also important to note that any modification to the internal state of your cell must be implemented within the `dequeue` method, as it is the only place where a mutable reference to `Self` is available.
+For the `Egress` trait, you must implement the `dequeue` method and might override the `change_state` and `reset` method (both are blank implementations by default).
+The `dequeue` method is where you implement the functional logic of your cell. For example, if you need a delay function, you can write your `dequeue` method to return a packet after a specified delay time; if you need to drop packets, you can write your `dequeue` method to return a packet or drop it with a certain probability.
+The `change_state` method is used to control the state of your cell.
+The `reset` method is used to reset the internal state of your cell, often useful in calibrating the internal timer, which will always be called by Rattan runtime before each run.
+
+Here is an example of an `Egress` implementation, which drops one packet every `loss_interval` packets:
 
 ```rust
 #[async_trait]
@@ -91,21 +118,18 @@ where
         // Check state of your cell
         match self.state.load(std::sync::atomic::Ordering::Acquire) {
             0 => {
+                // Drop
                 return None;
             }
             1 => {
+                // Pass-through
                 return Some(packet);
             }
             _ => {}
         }
-        // Add control logic of your own cell
+        // The control logic of your own cell
         self.counter += 1;
-        if let Some(loss_interval) = self.loss_interval.swap_null() {
-            self.inner_loss_interval = loss_interval;
-        }
-        if *self.inner_loss_interval == 0 {
-            return Some(packet);
-        }
+        self.inner_loss_interval = *self.loss_interval.load(std::sync::atomic::Ordering::Release);
         if self.counter >= self.inner_loss_interval {
             self.counter = 0;
             None
@@ -123,29 +147,37 @@ where
 
 ### ControlInterface
 
-If you wish to modify the configuration of your cell at runtime, you need to implement the `ControlInterface` trait. It should include a member that can pass configuration information to `Egress` (in the example, this is an `Arc<AtomicRawCell>`, but you can also use other methods like an `UnboundedChannel` to transmit configuration information). The `ControlInterface` trait needs to implement a method `set_config`, where you should write the logic for modifying the cell's configuration at runtime through the `ControlInterface`. The implementation of `set_config` will vary depending on the way you pass configuration.
+The `ControlInterface` trait is only required when you need to modify the configuration (or exchange information) of your cell at runtime. It is used to pass configuration information to the `Egress` component.
+Developers are responsible for
 
-The following example is provided for reference:
+Developers are responsible for embedding communication mechanisms at both ends (i.e., `ControlInterface` and `Egress`).
+This can be achieved using atomic types, channels, or shared memory, depending on the specific requirements of the cell.
+There is also a requirement to modify `Egress` to read or listen for pertinent information.
+The only method that this trait requires is the `set_config` method, which is designed to execute the desired communication mechanism or other logical code.
+
+The example provided in this guide utilizes atomic types and is intended solely for reference purposes:
 
 ```rust
 pub struct DropPacketCellControlInterface {
-    loss_interval: Arc<AtomicRawCell<usize>>,
+    loss_interval: Arc<AtomicUsize>,
 }
 
 impl ControlInterface for DropPacketCellControlInterface {
     type Config = DropPacketCellConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
-        self.loss_interval.store(Box::new(config.loss_interval));
+        self.loss_interval.store(config.loss_interval, std::sync::atomic::Ordering::Acquire);
         Ok(())
     }
 }
 ```
 
-Note that the code above includes a `DropPacketCellConfig` struct, which is the configuration struct defined for the example cell. When implementing the `ControlInterface` trait, you also need to define a struct for your cell’s configuration. This struct typically contains the parameters that you want to set freely within the cell. The configuration struct you define here will also be used later when you implement TOML file parsing for your cell.
+Note that the code above includes a `DropPacketCellConfig` struct, which is the configuration struct defined for the example cell.
+When implementing the `ControlInterface` trait, we also need to define a struct for your cell's configuration.
+This struct typically contains the parameters that you want to use within the cell.
+It will also be helpful if you want to read settings or parameters from some configuration files (e.g., TOML).
 
 ```rust
-#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Debug, Default, Clone)]
 pub struct DropPacketCellConfig {
     pub loss_interval: usize,
@@ -162,9 +194,15 @@ impl DropPacketCellConfig {
 
 ### Cell
 
-Up until now, we have implemented the three necessary traits for creating a custom cell: `Ingress`, `Egress`, and `ControlInterface`, along with the struct for the cell's configuration information. However, these structs are just parts of the cell. In order to make them function properly in rattan, we need to assemble them into a single struct. This is why we need to implement the `Cell` trait.
+Up until now, we have implemented the three necessary traits for creating a custom cell: `Ingress`, `Egress`, and `ControlInterface`, along with the struct for the cell's configuration information.
+However, these structs are just parts of the cell. In order to make them function properly in Rattan, we need to assemble them into a single struct. This is why we need to implement the `Cell` trait.
 
-The `Cell` trait has four methods that must be implemented: `sender`, `receiver`, `into_receiver`, and `control_interface`. The `sender` method returns a copy of the `Ingress`; the `receiver` method returns a mutable reference to the `Egress`; the `into_receiver` method returns the `Egress`; and the `control_interface` method returns an `Arc` of the `ControlInterface`.
+The `Cell` trait has four methods that must be implemented: `sender`, `receiver`, `into_receiver`, and `control_interface`:
+
+- The `sender` method returns a cloned `Arc` of the `Ingress`
+- The `receiver` method returns a mutable reference to the `Egress`
+- The `into_receiver` method returns the `Egress`
+- The `control_interface` method returns an `Arc` of the `ControlInterface`
 
 Refer to the example below:
 
@@ -207,13 +245,13 @@ where
     pub fn new<L: Into<usize>>(loss_interval: L) -> Result<DropPacketCell<P>, Error> {
         let loss_interval = loss_interval.into();
         let (rx, tx) = mpsc::unbounded_channel();
-        let loss_interval = Arc::new(AtomicRawCell::new(Box::new(loss_interval)));
+        let loss_interval = Arc::new(AtomicUsize::new(loss_interval));
         Ok(DropPacketCell {
             ingress: Arc::new(DropPacketCellIngress { ingress: rx }),
             egress: DropPacketCellEgress {
                 egress: tx,
-                loss_interval: Arc::clone(&loss_interval),
-                inner_loss_interval: Box::default(),
+                loss_interval: loss_interval.clone(),
+                inner_loss_interval: 0,
                 state: AtomicI32::new(0),
                 counter: 0,
             },
@@ -223,13 +261,13 @@ where
 }
 ```
 
-## Add Configuration to Your New Cell
+## Integrate Cell to Rattan
 
-In the guide above, we’ve created a new cell. If you would like to configure your custom cell using a TOML file, you can follow the steps below.
+In the guide above, we have created a new `Cell`. To integrate it into Rattan, you also have to implement the `CellFactory` trait, which serves as the builder function of the `Cell`.
+The `CellFactory` trait is a type alias for a closure that takes a reference to a tokio runtime `Handle` and returns a `Cell` instance.
+You should call the `build_cell` method of `RattanRadix` to build your cell.
 
-First, you need to add the code to parse your configuration file in `rattan-core/src/config`. Specifically, you need to implement the `into_factory` method for the struct you previously defined for configuration. This method should return an anonymous type that implements the `CellFactory` trait. The `CellFactory` will accept a `handle` at runtime, and will be used by rattan radix to generate the configuration struct based on the data in the `handle`, and then instantiate a `Cell` using that configuration.
-
-Look at the example below:
+It is recommended to implement a method for a struct to return the closure like the example below:
 
 ```rust
 pub type DropPacketCellBuildConfig = drop_packet::DropPacketCellConfig;
@@ -238,96 +276,57 @@ impl DropPacketCellBuildConfig {
     pub fn into_factory<P: Packet>(self) -> impl CellFactory<drop_packet::DropPacketCell<P>> {
         move |handle| {
             let _guard = handle.enter();
+            // Create the closure to build the cell
             drop_packet::DropPacketCell::new(self.loss_interval)
         }
     }
 }
 ```
 
-Next, you need to add your cell to `CellBuildConfig` (located in `rattan-core/src/config/mod.rs`) so that rattan radix can recognize your cell. Similarly, in the `load_cells_config` method of `RattanRadix`, you also need to add the code to build your cell.
+If you want to contribute back to the official Rattan repository or modify the source code, you can also add your build configuration type to the enum `CellBuildConfig`.
+In this way, you can easily read its configuration from a TOML file through the `load_cells_config` method (which internally calls `build_cell` as well) of `RattanRadix`.
+Remember to also derive the `Deserialize` and `Serialize` traits for your configuration struct in such cases.
 
 ```rust
 pub enum CellBuildConfig<P: Packet> {
-    Bw(BwCellBuildConfig<P>),
-    BwReplay(BwReplayCellBuildConfig<P>),
-    Delay(DelayCellBuildConfig),
-    DelayReplay(DelayReplayCellBuildConfig),
-    Loss(LossCellBuildConfig),
-    LossReplay(LossReplayCellBuildConfig),
-    Shadow(ShadowCellBuildConfig),
-    Router(RouterCellBuildConfig),
+    /* Other cells */
     DropPacket(DropPacketCellBuildConfig),
     Custom,
 }
-
-CellBuildConfig::DropPacket(config) => {
-    self.build_cell(id, config.into_factory())?;
-}
 ```
 
-Now, you can write a TOML file for your cell and use rattan to try parsing it! There is an example for you to refer to to write your TOML file: 
+Don't forget to modify `load_cells_config` in `RattanRadix` to add your cell configuration to the match statement.
+
+Now, you can add your cell to a TOML file and use Rattan to try parsing it!
+There is an example for you to refer to to write your TOML file:
 
 ```toml
-# ----- General Section -----
-[general]
-# ----- General Section End -----
-
-
-# ----- Environment Section -----
-[env]
-mode = "Compatible"
-left_veth_count = 1
-# ----- Environment Section End -----
-
-
-# ----- HTTP Section -----
-[http]
-enable = false
-port = 8086
-# ----- HTTP Section End -----
-
+# Other Sections
+# ...
 
 # ----- Cells Section -----
-# Shadow Cell Example
-[cells.shadow]
-type = "Shadow"
-
 # DropPacket Cell Example
-[cells.drop]
-type = "DropPackets"
-
+[cells.my_drop]
+type = "DropPacket"
 loss_interval = 2
+
+# Other Cells
+# ...
 # ----- Cells Section End -----
-
-
-# ----- Links Section -----
-[links]
-left = "drop"
-drop = "right"
-right = "shadow"
-shadow = "left"
-# ----- Links Section End -----
-
-# --- Resource Section -----
-[resource]
-cores = [1]
-# ----- Resource Section End -----
-
-# ----- Commands Section -----
-[commands]
-left = ["echo", "hello world"]
-shell = "Default"
 ```
 
 ## Test Your New Cell
 
-To check the correctness of your cell implementation, you can write unit tests for your new cell and run them in rattan using `nextest`. If you wish to integrate the `Cell` into the rattan official repository and the corresponding CLI tool, you can also follow this guide to write integration tests for them.
+This section is optional when you are writing a new cell. Tests are only required when you wish to integrate your cell into Rattan's official repository and the corresponding CLI tool.
+
+We require every cell to have unit tests and integration tests to check the correctness of the internal cell implementations and external interactions
 
 ### Unit Tests
 
-The goal of unit tests is to check whether the internal state of your cell transitions correctly and whether its functionality behaves as expected. Typically, when writing unit tests, you create an instance of your cell, manually call its `enqueue` and `dequeue` methods, and observe the results to check its correctness.
+The goal of unit tests is to check whether the internal state of your cell transitions correctly and whether its functionality behaves as expected.
+Typically, when writing unit tests, you create an instance of your cell, manually call its `enqueue` and `dequeue` methods, and observe the results to check its correctness.
 
-To run the unit tests, you can first run `cargo nextest list --workspace` to view the list of unit tests, find the test(s) you want to run, and then run `cargo nextest run <the name of your test> --workspace` to execute your test(s).
+To run the unit tests, you can first run `cargo nextest list --workspace` to view the list of unit tests, find the test(s) you want to run, and then run `cargo nextest run <the name of your test> --release --all-features --workspace` to execute your test(s).
 
 Below are two examples of unit tests for `DropPacketCell` for reference:
 
@@ -424,7 +423,7 @@ mod tests {
                 assert!(received_packets[i]);
             }
         }
-        
+
         info!("Changing loss_interval to 3");
         config_changer.set_config(DropPacketCellConfig::new(3_usize))?;
 
@@ -457,11 +456,10 @@ mod tests {
 
 ### Integration Tests
 
-This part is optional when you are writing a new cell. You only need to write integration tests for your cell if you wish to integrate it into the rattan official repository and the corresponding CLI tool.
+The purpose of integration tests is to check whether your cell interacts correctly with Rattan's runtime.
+When writing integration tests, you need to first create your cell in the rattan runtime, and then execute commands such as `ping` between network namespaces to observe whether your cell behaves as expected.
 
-The purpose of integration tests is to check whether your cell runs correctly in the rattan CLI tool. When writing integration tests, you need to first create your cell in the rattan environment, then execute commands such as `ping` between network namespaces via the CLI, and observe whether your cell behaves as expected.
-
-To run the integration tests, you can first run `cargo nextest list --workspace` to view the list of unit tests, find the test you want to run, and then run `cargo nextest run <the name of your test> --workspace --release` to execute your test.
+To run the integration tests, you can first run `cargo nextest list --workspace` to view the list of integration tests, find the test you want to run, and then run `cargo nextest run <the name of your test> --release --all-features --workspace` to execute your test.
 
 Here is an example of an integration test for reference:
 
@@ -480,11 +478,11 @@ fn test_drop_packet() {
     };
     config.cells.insert(
         "up_drop".to_string(),
-        CellBuildConfig::DropPackets(LosePacketCellConfig::new(0_usize)),
+        CellBuildConfig::DropPacket(DropPacketCellConfig::new(0_usize)),
     );
     config.cells.insert(
         "down_drop".to_string(),
-        CellBuildConfig::DropPackets(LosePacketCellConfig::new(0_usize)),
+        CellBuildConfig::DropPacket(DropPacketCellConfig::new(0_usize)),
     );
     config.links = HashMap::from([
         ("left".to_string(), "up_drop".to_string()),
