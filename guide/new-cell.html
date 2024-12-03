@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Write a New Cell (TODO) - Rattan Documentation</title>
+        <title>Write a New Cell - Rattan Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -225,7 +225,513 @@
 }
 
 </style>
-<h1 id="write-a-new-cell-todo"><a class="header" href="#write-a-new-cell-todo">Write a New Cell (TODO)</a></h1>
+<h1 id="write-a-new-cell"><a class="header" href="#write-a-new-cell">Write a New Cell</a></h1>
+<p>In Rattan, a "cell" is a unit that emulates various network effects for your network path, including delay, packet loss, reordering, and so forth.
+As the fundamental building block of Rattan, cells follow the actor concurrency programming model. Each cell runs as an self-contained coroutine that processes events through several well-defined asynchronous interfaces (i.e., <code>Ingress</code>, <code>Egress</code>, <code>ControlInterface</code>).</p>
+<p>Users can combine different cells to emulate a variety of network scenarios. We've bundled several built-in cells in Rattan to support common network effects, including the <code>Delay</code> cell, <code>Loss</code> cell, among others.</p>
+<p>However, there may be instances where users wish to implement additional effects or need to cater to specific requirements within a cell. In such cases, they can follow this guide to create their own custom cell.</p>
+<h2 id="basic-structure"><a class="header" href="#basic-structure">Basic Structure</a></h2>
+<p>A cell in Rattan is primarily composed of the following components: <a href="#ingress"><code>Ingress</code></a>, <a href="#egress"><code>Egress</code></a>, and <a href="#controlinterface"><code>ControlInterface</code></a>.
+To implement your own cell, you need to implement these three traits, along with an additional <a href="#cell"><code>Cell</code></a> trait to combine them together.</p>
+<p>In the design of Rattan, each <code>Cell</code> receives packets via <code>Ingress</code> and sends packets via <code>Egress</code>. The <code>Cell</code> settings can be adjusted at runtime through the <code>ControlInterface</code>. The Rattan core handles the forwarding of packets from the <code>Egress</code> of one <code>Cell</code> to the <code>Ingress</code> of another.</p>
+<p>In the following sections, we will use a <code>DropPacketCell</code> as an example, which drops one packet every <code>loss_interval</code> packets, to illustrate the basic structure and implementation process of a cell.</p>
+<h3 id="ingress"><a class="header" href="#ingress">Ingress</a></h3>
+<p>The <code>Ingress</code> is used to receive packets, which are dequeued by other cells and forwarded by the rattan core.
+It serves as the entry point for our cell, hence the need for us to implement an <code>enqueue</code> method to pass forwarded packets into the cell.</p>
+<p>Typically, we use a channel to forward packets within the cell. As such, we can incorporate an <code>UnboundedSender</code> member within <code>Ingress</code> and use its <code>send</code> method to transmit packets (similarly, we can include an <code>UnboundedReceiver</code> member within <code>Egress</code> and use its <code>recv</code> method to receive packets).</p>
+<p>A single <code>Ingress</code> is shared across multiple forwarding threads to allow flexible composition, so it can only have an immutable reference to itself in the <code>enqueue</code> method and must implement the <code>Clone</code> trait. It is worth attention that mutable operations on packets are possible within the method.</p>
+<p>Here is an example of an <code>Ingress</code> implementation, which we set the timestamp of the packet to the current time before sending it to the <code>Egress</code>:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct DropPacketCellIngress&lt;P&gt;
+where
+    P: Packet,
+{
+    // Send packets to Egress
+    ingress: mpsc::UnboundedSender&lt;P&gt;,
+}
+
+impl&lt;P&gt; Clone for DropPacketCellIngress&lt;P&gt;
+where
+    P: Packet,
+{
+    fn clone(&amp;self) -&gt; Self {
+        Self {
+            ingress: self.ingress.clone(),
+        }
+    }
+}
+
+impl&lt;P&gt; Ingress&lt;P&gt; for DropPacketCellIngress&lt;P&gt;
+where
+    P: Packet + Send,
+{
+    fn enqueue(&amp;self, mut packet: P) -&gt; Result&lt;(), Error&gt; {
+        packet.set_timestamp(Instant::now());
+        self.ingress
+            .send(packet)
+            .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
+        Ok(())
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="egress"><a class="header" href="#egress">Egress</a></h3>
+<p>The <code>Egress</code> is used to dequeue packets from the <code>Cell</code>, which are then sent to another cell by the rattan core. It serves as the export of the cell.</p>
+<p>As we mentioned above, we typically use a channel to forward packets within the cell. Therefore, we can include an <code>UnboundedReceiver</code> member within <code>Egress</code> and use its <code>recv</code> method to receive packets for further process.</p>
+<p>The <code>Egress</code> component is designed to be exclusively held by a single thread, allowing its <code>dequeue</code> method to obtain a mutable reference to itself.
+This design allows for stateful operations within this method. Network effects often necessitate maintaining mutable internal states.</p>
+<p>For instance, the Gilbert-Elliott packet loss model requires internal state transitions along with a varying packet loss probability.</p>
+<p>Consequently, we usually implement the majority of packet handling strategies, such as delaying or dropping a packet, and modify the internal states within the <code>dequeue</code> method.</p>
+<p>We always include a <code>state</code> variable (typically, an <code>AtomicI32</code>) in the <code>Egress</code> struct to control the cell's state, which is informed by Rattan runtime through method <code>change_state</code>. Currently, three values are supported: 0 (drop), 1 (pass-through), and 2 (normal operation).
+Also, we include a configuration receiver (the specific type depends on the way you implement trait <code>ControlInterface</code>) to receive configuration information from the <code>ControlInterface</code>.</p>
+<p>An example is shown below:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct DropPacketCellEgress&lt;P&gt;
+where
+    P: Packet,
+{
+    // Receive packets from Ingress
+    egress: mpsc::UnboundedReceiver&lt;P&gt;,
+    // Internal states
+    inner_loss_interval: usize,
+    counter: usize,
+    loss_interval: Arc&lt;AtomicUsize&gt;,
+    state: AtomicI32,
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Here, <code>loss_interval</code> is used to receive the configuration information from the <code>ControlInterface</code>, <code>inner_loss_interval</code> is used to store the received parameters, <code>counter</code> is used to count the number of packets since last packet loss, and <code>state</code> is used to control the state of the cell.</p>
+<p>For the <code>Egress</code> trait, you must implement the <code>dequeue</code> method and might override the <code>change_state</code> and <code>reset</code> method (both are blank implementations by default).
+The <code>dequeue</code> method is where you implement the functional logic of your cell. For example, if you need a delay function, you can write your <code>dequeue</code> method to return a packet after a specified delay time; if you need to drop packets, you can write your <code>dequeue</code> method to return a packet or drop it with a certain probability.
+The <code>change_state</code> method is used to control the state of your cell.
+The <code>reset</code> method is used to reset the internal state of your cell, often useful in calibrating the internal timer, which will always be called by Rattan runtime before each run.</p>
+<p>Here is an example of an <code>Egress</code> implementation, which drops one packet every <code>loss_interval</code> packets:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[async_trait]
+impl&lt;P&gt; Egress&lt;P&gt; for DropPacketCellEgress&lt;P&gt;
+where
+    P: Packet + Send + Sync,
+{
+    async fn dequeue(&amp;mut self) -&gt; Option&lt;P&gt; {
+        // Receive packets from Ingress
+        let packet = match self.egress.recv().await {
+            Some(packet) =&gt; packet,
+            None =&gt; return None,
+        };
+        // Check state of your cell
+        match self.state.load(std::sync::atomic::Ordering::Acquire) {
+            0 =&gt; {
+                // Drop
+                return None;
+            }
+            1 =&gt; {
+                // Pass-through
+                return Some(packet);
+            }
+            _ =&gt; {}
+        }
+        // The control logic of your own cell
+        self.counter += 1;
+        self.inner_loss_interval = self
+            .loss_interval
+            .load(std::sync::atomic::Ordering::Acquire);
+        if self.counter &gt;= self.inner_loss_interval &amp;&amp; self.inner_loss_interval != 0 {
+            self.counter = 0;
+            None
+        } else {
+            Some(packet)
+        }
+    }
+
+    fn change_state(&amp;self, state: i32) {
+        self.state
+            .store(state, std::sync::atomic::Ordering::Release);
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="controlinterface"><a class="header" href="#controlinterface">ControlInterface</a></h3>
+<p>The <code>ControlInterface</code> trait is only required when you need to modify the configuration (or exchange information) of your cell at runtime. It is used to pass configuration information to the <code>Egress</code> component.
+Developers are responsible for</p>
+<p>Developers are responsible for embedding communication mechanisms at both ends (i.e., <code>ControlInterface</code> and <code>Egress</code>).
+This can be achieved using atomic types, channels, or shared memory, depending on the specific requirements of the cell.
+There is also a requirement to modify <code>Egress</code> to read or listen for pertinent information.
+The only method that this trait requires is the <code>set_config</code> method, which is designed to execute the desired communication mechanism or other logical code.</p>
+<p>The example provided in this guide utilizes atomic types and is intended solely for reference purposes:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct DropPacketCellControlInterface {
+    loss_interval: Arc&lt;AtomicUsize&gt;,
+}
+
+impl ControlInterface for DropPacketCellControlInterface {
+    type Config = DropPacketCellConfig;
+
+    fn set_config(&amp;self, config: Self::Config) -&gt; Result&lt;(), Error&gt; {
+        self.loss_interval
+            .store(config.loss_interval, std::sync::atomic::Ordering::Release);
+        Ok(())
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Note that the code above includes a <code>DropPacketCellConfig</code> struct, which is the configuration struct defined for the example cell.
+When implementing the <code>ControlInterface</code> trait, we also need to define a struct for our cell's configuration.
+This struct typically contains the parameters that you want to use within the cell.
+It will also be helpful if you want to read settings or parameters from some configuration files (e.g., TOML).</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[derive(Debug, Default, Clone)]
+pub struct DropPacketCellConfig {
+    pub loss_interval: usize,
+}
+
+impl DropPacketCellConfig {
+    pub fn new&lt;T: Into&lt;usize&gt;&gt;(loss_interval: T) -&gt; Self {
+        Self {
+            loss_interval: loss_interval.into(),
+        }
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="cell"><a class="header" href="#cell">Cell</a></h3>
+<p>Up until now, we have implemented the three necessary traits for creating a custom cell: <code>Ingress</code>, <code>Egress</code>, and <code>ControlInterface</code>, along with the struct for the cell's configuration information.
+However, these structs are just parts of the cell. In order to make them function properly in Rattan, we need to assemble them into a single struct. This is why we need to implement the <code>Cell</code> trait.</p>
+<p>The <code>Cell</code> trait has four methods that must be implemented: <code>sender</code>, <code>receiver</code>, <code>into_receiver</code>, and <code>control_interface</code>:</p>
+<ul>
+<li>The <code>sender</code> method returns a cloned <code>Arc</code> of the <code>Ingress</code></li>
+<li>The <code>receiver</code> method returns a mutable reference to the <code>Egress</code></li>
+<li>The <code>into_receiver</code> method returns the <code>Egress</code></li>
+<li>The <code>control_interface</code> method returns an <code>Arc</code> of the <code>ControlInterface</code></li>
+</ul>
+<p>Refer to the example below:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct DropPacketCell&lt;P: Packet&gt; {
+    ingress: Arc&lt;DropPacketCellIngress&lt;P&gt;&gt;,
+    egress: DropPacketCellEgress&lt;P&gt;,
+    control_interface: Arc&lt;DropPacketCellControlInterface&gt;,
+}
+
+impl&lt;P&gt; Cell&lt;P&gt; for DropPacketCell&lt;P&gt;
+where
+    P: Packet + Send + Sync + 'static,
+{
+    type IngressType = DropPacketCellIngress&lt;P&gt;;
+    type EgressType = DropPacketCellEgress&lt;P&gt;;
+    type ControlInterfaceType = DropPacketCellControlInterface;
+
+    fn sender(&amp;self) -&gt; Arc&lt;Self::IngressType&gt; {
+        self.ingress.clone()
+    }
+
+    fn receiver(&amp;mut self) -&gt; &amp;mut Self::EgressType {
+        &amp;mut self.egress
+    }
+
+    fn into_receiver(self) -&gt; Self::EgressType {
+        self.egress
+    }
+
+    fn control_interface(&amp;self) -&gt; Arc&lt;Self::ControlInterfaceType&gt; {
+        Arc::clone(&amp;self.control_interface)
+    }
+}
+
+impl&lt;P&gt; DropPacketCell&lt;P&gt;
+where
+    P: Packet,
+{
+    pub fn new&lt;L: Into&lt;usize&gt;&gt;(loss_interval: L) -&gt; Result&lt;DropPacketCell&lt;P&gt;, Error&gt; {
+        let loss_interval = loss_interval.into();
+        let (rx, tx) = mpsc::unbounded_channel();
+        let loss_interval = Arc::new(AtomicUsize::new(loss_interval));
+        Ok(DropPacketCell {
+            ingress: Arc::new(DropPacketCellIngress { ingress: rx }),
+            egress: DropPacketCellEgress {
+                egress: tx,
+                loss_interval: loss_interval.clone(),
+                inner_loss_interval: 0,
+                state: AtomicI32::new(0),
+                counter: 0,
+            },
+            control_interface: Arc::new(DropPacketCellControlInterface { loss_interval }),
+        })
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<h2 id="integrate-cell-to-rattan"><a class="header" href="#integrate-cell-to-rattan">Integrate Cell to Rattan</a></h2>
+<p>In the guide above, we have created a new <code>Cell</code>. To integrate it into Rattan, you also have to implement the <code>CellFactory</code> trait, which serves as the builder function of the <code>Cell</code>.
+The <code>CellFactory</code> trait is a type alias for a closure that takes a reference to a tokio runtime <code>Handle</code> and returns a <code>Cell</code> instance.
+You should call the <code>build_cell</code> method of <code>RattanRadix</code> to build your cell.</p>
+<p>It is recommended to implement a method for a struct to return the closure like the example below:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub type DropPacketCellBuildConfig = drop_packet::DropPacketCellConfig;
+
+impl DropPacketCellBuildConfig {
+    pub fn into_factory&lt;P: Packet&gt;(self) -&gt; impl CellFactory&lt;drop_packet::DropPacketCell&lt;P&gt;&gt; {
+        move |handle| {
+            let _guard = handle.enter();
+            // Create the closure to build the cell
+            drop_packet::DropPacketCell::new(self.loss_interval)
+        }
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<p>If you want to contribute back to the official Rattan repository or modify the source code, you can also add your build configuration type to the enum <code>CellBuildConfig</code>.
+In this way, you can easily read its configuration from a TOML file through the <code>load_cells_config</code> method (which internally calls <code>build_cell</code> as well) of <code>RattanRadix</code>.
+Remember to also derive the <code>Deserialize</code> and <code>Serialize</code> traits for your configuration struct in such cases.</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub enum CellBuildConfig&lt;P: Packet&gt; {
+    /* Other cells */
+    DropPacket(DropPacketCellBuildConfig),
+    Custom,
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Don't forget to modify <code>load_cells_config</code> in <code>RattanRadix</code> to add your cell configuration to the match statement.</p>
+<p>Now, you can add your cell to a TOML file and use Rattan to try parsing it!
+There is an example for you to refer to to write your TOML file:</p>
+<pre><code class="language-toml"># Other Sections
+# ...
+
+# ----- Cells Section -----
+# DropPacket Cell Example
+[cells.my_drop]
+type = "DropPacket"
+loss_interval = 2
+
+# Other Cells
+# ...
+# ----- Cells Section End -----
+</code></pre>
+<h2 id="test-your-new-cell"><a class="header" href="#test-your-new-cell">Test Your New Cell</a></h2>
+<p>This section is optional when you are writing a new cell. Tests are only required when you wish to integrate your cell into Rattan's official repository and the corresponding CLI tool.</p>
+<p>We require every cell to have unit tests and integration tests to check the correctness of the internal cell implementations and external interactions.</p>
+<h3 id="unit-tests"><a class="header" href="#unit-tests">Unit Tests</a></h3>
+<p>The goal of unit tests is to check whether the internal state of your cell transitions correctly and whether its functionality behaves as expected.
+Typically, when writing unit tests, you create an instance of your cell, manually call its <code>enqueue</code> and <code>dequeue</code> methods, and observe the results to check its correctness.</p>
+<p>To run the unit tests, you can first run <code>cargo nextest list --workspace</code> to view the list of unit tests, find the test(s) you want to run, and then run <code>cargo nextest run &lt;the name of your test&gt; --release --all-features --workspace</code> to execute your test(s).</p>
+<p>Below are two examples of unit tests for <code>DropPacketCell</code> for reference:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[cfg(test)]
+mod tests {
+    use tracing::{info, span, Level};
+
+    use crate::cells::StdPacket;
+
+    use super::*;
+
+    #[test_log::test]
+    fn test_drop_packet_cell() -&gt; Result&lt;(), Error&gt; {
+        let _span = span!(Level::INFO, "test_drop_packet_cell").entered();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let _guard = rt.enter();
+
+        info!("Creating cell with loss_interval 3");
+        let cell = DropPacketCell::new(3_usize)?;
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
+        egress.reset();
+        egress.change_state(2);
+
+        info!("Testing loss for drop packet cell of loss 3");
+        let mut received_packets = vec![false; 100];
+
+        for i in 0..100 {
+            let mut test_packet = StdPacket::from_raw_buffer(&amp;[0; 256]);
+            test_packet.set_flow_id(i);
+            ingress.enqueue(test_packet)?;
+            let received = rt.block_on(async { egress.dequeue().await });
+
+            if let Some(content) = received {
+                assert!(content.length() == 256);
+                received_packets[content.get_flow_id() as usize] = true;
+            }
+        }
+        info!("Tested loss sequence: {:?}", received_packets);
+        for (i, item) in received_packets.iter().enumerate().take(100) {
+            if (i + 1) % 3 == 0 {
+                assert!(!item);
+            } else {
+                assert!(item);
+            }
+        }
+        Ok(())
+    }
+
+    #[test_log::test]
+    fn test_drop_packet_cell_config_update() -&gt; Result&lt;(), Error&gt; {
+        let _span = span!(Level::INFO, "test_drop_packet_cell_config_update").entered();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let _guard = rt.enter();
+
+        info!("Creating cell with loss_interval 5");
+        let cell = DropPacketCell::new(5_usize)?;
+        let config_changer = cell.control_interface();
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
+        egress.reset();
+        egress.change_state(2);
+
+        let mut received_packets = vec![false; 100];
+
+        info!("Testing loss for drop packet cell of loss 5");
+
+        for i in 0..48 {
+            let mut test_packet = StdPacket::from_raw_buffer(&amp;[0; 256]);
+            test_packet.set_flow_id(i);
+            ingress.enqueue(test_packet)?;
+            let received = rt.block_on(async { egress.dequeue().await });
+
+            if let Some(content) = received {
+                assert!(content.length() == 256);
+                received_packets[content.get_flow_id() as usize] = true;
+            }
+        }
+        for (i, item) in received_packets.iter().enumerate().take(48) {
+            if (i + 1) % 5 == 0 {
+                assert!(!item);
+            } else {
+                assert!(item);
+            }
+        }
+
+        info!("Changing loss_interval to 3");
+        config_changer.set_config(DropPacketCellConfig::new(3_usize))?;
+
+        for i in 48..100 {
+            let mut test_packet = StdPacket::from_raw_buffer(&amp;[0; 256]);
+            test_packet.set_flow_id(i);
+            ingress.enqueue(test_packet)?;
+            let received = rt.block_on(async { egress.dequeue().await });
+
+            if let Some(content) = received {
+                assert!(content.length() == 256);
+                received_packets[content.get_flow_id() as usize] = true;
+            }
+        }
+        info!("Tested loss sequence: {:?}", received_packets);
+        for i in 0..=51 {
+            if i % 3 == 0 {
+                assert!(!received_packets[i + 48]);
+            } else {
+                assert!(received_packets[i + 48]);
+            }
+        }
+        Ok(())
+    }
+}
+<span class="boring">}</span></code></pre></pre>
+<h3 id="integration-tests"><a class="header" href="#integration-tests">Integration Tests</a></h3>
+<p>The purpose of integration tests is to check whether your cell interacts correctly with Rattan's runtime.
+When writing integration tests, you need to first create your cell in the rattan runtime, and then execute commands such as <code>ping</code> between network namespaces to observe whether your cell behaves as expected.</p>
+<p>To run the integration tests, you can first run <code>cargo nextest list --workspace</code> to view the list of integration tests, find the test you want to run, and then run <code>cargo nextest run &lt;the name of your test&gt; --release --all-features --workspace</code> to execute your test.</p>
+<p>Here is an example of an integration test for reference:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[instrument]
+#[test_log::test]
+fn test_drop_packet() {
+    let mut config = RattanConfig::&lt;StdPacket&gt; {
+        env: StdNetEnvConfig {
+            mode: StdNetEnvMode::Isolated,
+            client_cores: vec![1],
+            server_cores: vec![3],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    config.cells.insert(
+        "up_drop".to_string(),
+        CellBuildConfig::DropPacket(DropPacketCellConfig::new(0_usize)),
+    );
+    config.cells.insert(
+        "down_drop".to_string(),
+        CellBuildConfig::DropPacket(DropPacketCellConfig::new(0_usize)),
+    );
+    config.links = HashMap::from([
+        ("left".to_string(), "up_drop".to_string()),
+        ("up_drop".to_string(), "right".to_string()),
+        ("right".to_string(), "down_drop".to_string()),
+        ("down_drop".to_string(), "left".to_string()),
+    ]);
+    let mut radix = RattanRadix::&lt;AfPacketDriver&gt;::new(config).unwrap();
+    radix.spawn_rattan().unwrap();
+    radix.start_rattan().unwrap();
+
+    // Wait for AfPacketDriver to be ready
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Before set the LossCell, the average loss rate should be 0%
+    {
+        let _span = span!(Level::INFO, "ping_no_loss").entered();
+        info!("try to ping with no loss");
+        let right_ip = radix.right_ip(1).to_string();
+        let left_handle = radix
+            .left_spawn(None, move || {
+                let handle = std::process::Command::new("ping")
+                    .args([&amp;right_ip, "-c", "20", "-i", "0.3"])
+                    .stdout(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                Ok(handle.wait_with_output())
+            })
+            .unwrap();
+        let output = left_handle.join().unwrap().unwrap().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+
+        let re = Regex::new(r"(\d+)% packet loss").unwrap();
+        let loss_percentage = re
+            .captures(&amp;stdout)
+            .map(|cap| cap[1].parse::&lt;u64&gt;())
+            .unwrap()
+            .unwrap();
+        info!("loss_percentage: {}", loss_percentage);
+        assert!(loss_percentage == 0);
+    }
+
+    // After set the loss_interval of DropPacketCell to 2, the average loss rate should be 50%
+    {
+        let _span = span!(Level::INFO, "ping_with_loss").entered();
+        info!("try to ping with loss interval set to 2");
+        radix
+            .op_block_exec(RattanOp::ConfigCell(
+                "up_drop".to_string(),
+                serde_json::to_value(DropPacketCellConfig::new(2_usize)).unwrap(),
+            ))
+            .unwrap();
+
+        let right_ip = radix.right_ip(1).to_string();
+        let left_handle = radix
+            .left_spawn(None, move || {
+                let handle = std::process::Command::new("ping")
+                    .args([&amp;right_ip, "-c", "50", "-i", "0.3"])
+                    .stdout(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                Ok(handle.wait_with_output())
+            })
+            .unwrap();
+        let output = left_handle.join().unwrap().unwrap().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+
+        let re = Regex::new(r"(\d+)% packet loss").unwrap();
+        let loss_percentage = re
+            .captures(&amp;stdout)
+            .map(|cap| cap[1].parse::&lt;u64&gt;())
+            .unwrap()
+            .unwrap();
+        info!("loss_percentage: {}", loss_percentage);
+        assert!((loss_percentage == 50));
+    }
+}
+<span class="boring">}</span></code></pre></pre>
 
                     </main>
 
