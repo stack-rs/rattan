@@ -8,7 +8,7 @@
 - [Bundled CLI Tool](guide/cli.md)
   - [Predefined Cells and Templated Channels](guide/predefined-channels.md)
   - [Flexible Configuration](guide/flexible-configuration.md)
-- [Write a New Cell (TODO)](guide/new-cell.md)
+- [Write a New Cell](guide/new-cell.md)
 - [Write Your Tailored Tool (TODO)](guide/tailored-tool.md)
 
 # Reference Guide
