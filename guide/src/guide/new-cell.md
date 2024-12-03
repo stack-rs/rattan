@@ -74,7 +74,7 @@ For instance, the Gilbert-Elliott packet loss model requires internal state tran
 
 Consequently, we usually implement the majority of packet handling strategies, such as delaying or dropping a packet, and modify the internal states within the `dequeue` method.
 
-We always include a `state` variable (typically, a `AtomicI32`) in the `Egress` struct to control the cell's state, which is informed by Rattan runtime through method `change_state`. Currently, three values are supported: 0 (drop), 1 (pass-through), and 2 (normal operation).
+We always include a `state` variable (typically, an `AtomicI32`) in the `Egress` struct to control the cell's state, which is informed by Rattan runtime through method `change_state`. Currently, three values are supported: 0 (drop), 1 (pass-through), and 2 (normal operation).
 Also, we include a configuration receiver (the specific type depends on the way you implement trait `ControlInterface`) to receive configuration information from the `ControlInterface`.
 
 An example is shown below:
@@ -129,8 +129,10 @@ where
         }
         // The control logic of your own cell
         self.counter += 1;
-        self.inner_loss_interval = *self.loss_interval.load(std::sync::atomic::Ordering::Release);
-        if self.counter >= self.inner_loss_interval {
+        self.inner_loss_interval = self
+            .loss_interval
+            .load(std::sync::atomic::Ordering::Acquire);
+        if self.counter >= self.inner_loss_interval && self.inner_loss_interval != 0 {
             self.counter = 0;
             None
         } else {
@@ -166,14 +168,15 @@ impl ControlInterface for DropPacketCellControlInterface {
     type Config = DropPacketCellConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
-        self.loss_interval.store(config.loss_interval, std::sync::atomic::Ordering::Acquire);
+        self.loss_interval
+            .store(config.loss_interval, std::sync::atomic::Ordering::Release);
         Ok(())
     }
 }
 ```
 
 Note that the code above includes a `DropPacketCellConfig` struct, which is the configuration struct defined for the example cell.
-When implementing the `ControlInterface` trait, we also need to define a struct for your cell's configuration.
+When implementing the `ControlInterface` trait, we also need to define a struct for our cell's configuration.
 This struct typically contains the parameters that you want to use within the cell.
 It will also be helpful if you want to read settings or parameters from some configuration files (e.g., TOML).
 
@@ -319,7 +322,7 @@ loss_interval = 2
 
 This section is optional when you are writing a new cell. Tests are only required when you wish to integrate your cell into Rattan's official repository and the corresponding CLI tool.
 
-We require every cell to have unit tests and integration tests to check the correctness of the internal cell implementations and external interactions
+We require every cell to have unit tests and integration tests to check the correctness of the internal cell implementations and external interactions.
 
 ### Unit Tests
 
@@ -333,7 +336,7 @@ Below are two examples of unit tests for `DropPacketCell` for reference:
 ```rust
 #[cfg(test)]
 mod tests {
-    use tracing::{span, Level, info};
+    use tracing::{info, span, Level};
 
     use crate::cells::StdPacket;
 
@@ -363,20 +366,17 @@ mod tests {
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
 
-            match received {
-                Some(content) => {
-                    assert!(content.length() == 256);
-                    received_packets[content.get_flow_id() as usize] = true;
-                }
-                None => {}
+            if let Some(content) = received {
+                assert!(content.length() == 256);
+                received_packets[content.get_flow_id() as usize] = true;
             }
         }
         info!("Tested loss sequence: {:?}", received_packets);
-        for i in 0..100 {
+        for (i, item) in received_packets.iter().enumerate().take(100) {
             if (i + 1) % 3 == 0 {
-                assert!(!received_packets[i]);
+                assert!(!item);
             } else {
-                assert!(received_packets[i]);
+                assert!(item);
             }
         }
         Ok(())
@@ -408,19 +408,16 @@ mod tests {
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
 
-            match received {
-                Some(content) => {
-                    assert!(content.length() == 256);
-                    received_packets[content.get_flow_id() as usize] = true;
-                }
-                None => {}
+            if let Some(content) = received {
+                assert!(content.length() == 256);
+                received_packets[content.get_flow_id() as usize] = true;
             }
         }
-        for i in 0..48 {
+        for (i, item) in received_packets.iter().enumerate().take(48) {
             if (i + 1) % 5 == 0 {
-                assert!(!received_packets[i]);
+                assert!(!item);
             } else {
-                assert!(received_packets[i]);
+                assert!(item);
             }
         }
 
@@ -433,12 +430,9 @@ mod tests {
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
 
-            match received {
-                Some(content) => {
-                    assert!(content.length() == 256);
-                    received_packets[content.get_flow_id() as usize] = true;
-                }
-                None => {}
+            if let Some(content) = received {
+                assert!(content.length() == 256);
+                received_packets[content.get_flow_id() as usize] = true;
             }
         }
         info!("Tested loss sequence: {:?}", received_packets);
@@ -532,7 +526,7 @@ fn test_drop_packet() {
         radix
             .op_block_exec(RattanOp::ConfigCell(
                 "up_drop".to_string(),
-                serde_json::to_value(LosePacketCellConfig::new(2_usize)).unwrap(),
+                serde_json::to_value(DropPacketCellConfig::new(2_usize)).unwrap(),
             ))
             .unwrap();
 
