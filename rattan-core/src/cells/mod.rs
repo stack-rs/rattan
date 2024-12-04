@@ -13,6 +13,7 @@ pub mod external;
 pub mod loss;
 pub mod router;
 pub mod shadow;
+pub mod token_bucket;
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]

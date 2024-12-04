@@ -28,6 +28,13 @@ where
 
     // If the queue is empty, return `None`
     fn dequeue(&mut self) -> Option<P>;
+
+    fn is_empty(&self) -> bool;
+
+    // If the queue is empty, return `None`
+    fn get_front_size(&self) -> Option<usize>;
+
+    fn length(&self) -> usize;
 }
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
@@ -80,6 +87,18 @@ where
 
     fn dequeue(&mut self) -> Option<P> {
         self.queue.pop_front()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    fn get_front_size(&self) -> Option<usize> {
+        self.queue.front().map(|packet| packet.l3_length())
+    }
+
+    fn length(&self) -> usize {
+        self.queue.len()
     }
 }
 
@@ -137,6 +156,10 @@ impl<P> DropTailQueue<P> {
             now_bytes: 0,
         }
     }
+
+    pub fn get_extra_length(&self) -> usize {
+        self.bw_type.extra_length()
+    }
 }
 
 impl<P> Default for DropTailQueue<P> {
@@ -185,6 +208,20 @@ where
             }
             None => None,
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    fn get_front_size(&self) -> Option<usize> {
+        self.queue
+            .front()
+            .map(|packet| packet.l3_length() + self.bw_type.extra_length())
+    }
+
+    fn length(&self) -> usize {
+        self.queue.len()
     }
 }
 
@@ -290,6 +327,20 @@ where
             }
             None => None,
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    fn get_front_size(&self) -> Option<usize> {
+        self.queue
+            .front()
+            .map(|packet| packet.l3_length() + self.bw_type.extra_length())
+    }
+
+    fn length(&self) -> usize {
+        self.queue.len()
     }
 }
 
@@ -557,5 +608,19 @@ where
                 None
             }
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    fn get_front_size(&self) -> Option<usize> {
+        self.queue
+            .front()
+            .map(|packet| packet.l3_length() + self.config.bw_type.extra_length())
+    }
+
+    fn length(&self) -> usize {
+        self.queue.len()
     }
 }

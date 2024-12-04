@@ -13,12 +13,14 @@ mod delay;
 mod loss;
 mod router;
 mod shadow;
+mod token_bucket;
 
 pub use bandwidth::*;
 pub use delay::*;
 pub use loss::*;
 pub use router::*;
 pub use shadow::*;
+pub use token_bucket::*;
 
 /// Configuration for the whole Rattan system.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
@@ -106,5 +108,6 @@ pub enum CellBuildConfig<P: Packet> {
     LossReplay(LossReplayCellBuildConfig),
     Shadow(ShadowCellBuildConfig),
     Router(RouterCellBuildConfig),
+    TokenBucket(TokenBucketCellBuildConfig),
     Custom,
 }
