@@ -2,7 +2,7 @@
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test token_bucket --all-features -- --nocapture
 use std::collections::HashMap;
 
-use rattan_core::cells::token_bucket::{TokenBucketCellConfig, TokenBucketConfig};
+use rattan_core::cells::token_bucket::TokenBucketCellConfig;
 use rattan_core::cells::StdPacket;
 use rattan_core::config::{CellBuildConfig, RattanConfig, TokenBucketCellBuildConfig};
 use rattan_core::control::RattanOp;
@@ -26,11 +26,15 @@ fn test_token_bucket() {
     };
     config.cells.insert(
         "up_tb".to_string(),
-        CellBuildConfig::TokenBucket(TokenBucketCellBuildConfig::new(None, None, None)),
+        CellBuildConfig::TokenBucket(TokenBucketCellBuildConfig::new(
+            None, None, None, None, None,
+        )),
     );
     config.cells.insert(
         "down_tb".to_string(),
-        CellBuildConfig::TokenBucket(TokenBucketCellBuildConfig::new(None, None, None)),
+        CellBuildConfig::TokenBucket(TokenBucketCellBuildConfig::new(
+            None, None, None, None, None,
+        )),
     );
     config.links = HashMap::from([
         ("left".to_string(), "up_tb".to_string()),
@@ -47,13 +51,13 @@ fn test_token_bucket() {
 
     // Before set the TokenBucketCell, the average latency should be less than 0.1ms
     {
-        let _span = span!(Level::INFO, "ping_without_tb").entered();
-        info!("try to ping without token bucket");
+        let _span = span!(Level::INFO, "ping_with_tb_unset").entered();
+        info!("try to ping with token bucket unset");
         let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
             .left_spawn(None, move || {
                 let handle = std::process::Command::new("ping")
-                    .args([&right_ip, "-c", "10", "-i", "0.55", "-s", "256"])
+                    .args([&right_ip, "-c", "10", "-i", "0.35", "-s", "256"])
                     .stdout(std::process::Stdio::piped())
                     .spawn()
                     .unwrap();
@@ -71,7 +75,7 @@ fn test_token_bucket() {
         info!(?latency);
 
         assert_eq!(latency.len(), 10);
-        latency.drain(0..5);
+        latency.drain(0..3);
         let average_latency = latency.iter().sum::<f64>() / latency.len() as f64;
         info!("average latency: {}", average_latency);
         assert!(average_latency < 10.0);
@@ -79,13 +83,14 @@ fn test_token_bucket() {
 
     // After set the TokenBucketCell, the average latency should be around 500ms
     {
-        let _span = span!(Level::INFO, "ping_with_tb").entered();
-        info!("try to ping with token bucket of 1000ms buffer and 512B/s rate");
-        let token_bucket = TokenBucketConfig::new(1000, 512_u64);
+        let _span = span!(Level::INFO, "ping_with_tb_set").entered();
+        info!("try to ping with the burst set to 256 B and the rate set to 256 B/s");
+        //let token_bucket = TokenBucketConfig::new(1000, 512_u64);
         radix
             .op_block_exec(RattanOp::ConfigCell(
                 "up_tb".to_string(),
-                serde_json::to_value(TokenBucketCellConfig::new(token_bucket, None, None)).unwrap(),
+                serde_json::to_value(TokenBucketCellConfig::new(None, 512, 512, None, None))
+                    .unwrap(),
             ))
             .unwrap();
 
@@ -93,7 +98,7 @@ fn test_token_bucket() {
         let left_handle = radix
             .left_spawn(None, move || {
                 let handle = std::process::Command::new("ping")
-                    .args([&right_ip, "-c", "10", "-i", "0.5525", "-s", "256"])
+                    .args([&right_ip, "-c", "10", "-i", "0.35", "-s", "256"])
                     .stdout(std::process::Stdio::piped())
                     .spawn()
                     .unwrap();
@@ -111,9 +116,10 @@ fn test_token_bucket() {
         info!(?latency);
 
         assert_eq!(latency.len(), 10);
-        latency.drain(0..5);
-        let average_latency = latency.iter().sum::<u64>() / latency.len() as u64;
-        info!("average latency: {}", average_latency);
-        assert!(average_latency > 550 && average_latency < 560);
+        latency.drain(0..3);
+
+        for window in latency.windows(2) {
+            assert!(190 < window[1] - window[0] && window[1] - window[0] < 210);
+        }
     }
 }

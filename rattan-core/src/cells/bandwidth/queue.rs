@@ -33,6 +33,8 @@ where
 
     // If the queue is empty, return `None`
     fn get_front_size(&self) -> Option<usize>;
+
+    fn length(&self) -> usize;
 }
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
@@ -93,6 +95,10 @@ where
 
     fn get_front_size(&self) -> Option<usize> {
         self.queue.front().map(|packet| packet.l3_length())
+    }
+
+    fn length(&self) -> usize {
+        self.queue.len()
     }
 }
 
@@ -213,6 +219,10 @@ where
             .front()
             .map(|packet| packet.l3_length() + self.bw_type.extra_length())
     }
+
+    fn length(&self) -> usize {
+        self.queue.len()
+    }
 }
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
@@ -327,6 +337,10 @@ where
         self.queue
             .front()
             .map(|packet| packet.l3_length() + self.bw_type.extra_length())
+    }
+
+    fn length(&self) -> usize {
+        self.queue.len()
     }
 }
 
@@ -604,5 +618,9 @@ where
         self.queue
             .front()
             .map(|packet| packet.l3_length() + self.config.bw_type.extra_length())
+    }
+
+    fn length(&self) -> usize {
+        self.queue.len()
     }
 }

@@ -284,20 +284,26 @@ prefix = "10.2.0.0/16"
 type = "TokenBucket"
 
 # Token Bucket configuration
-# We have 2 fields for TokenBucket:
-# - "buffer" : Capacity of the bucket in millisecond.  Default: 0
-# - "rate" : Rate limit of the bucket in B/s.          Default: Unlimited
-token_bucket = { buffer = 1000, rate = 512 }
+# We have 5 fields for TokenBucket: 
+# "limit" : Size of the queue of TokenBucket cell in bytes.
+# Default: Unlimited
+limit = 1024
 
-# Peak Token Bucket
-# Peak token bucket is optional. If there is no peak token bucket, the token bucket cell will not limit its peak rate.
-# The configuration of peak token bucket is similar to token bucket.
-# Default: None
-peak_token_bucket = { buffer = 250, rate = 1024 }
+# "burst" : Size of the bucket in bytes.
+# Default: Unlimited
+burst = 512
 
-# Queue configuration
-# Similar to the configuration of DropTail queue.
-queue_config = { byte_limit = 1024 }
+# "rate" : The rate limit of the bucket in bytes per second.
+# Default: Unlimited
+rate = 512
+
+# - "mtu" : Specifies the size of the peakrate bucket.
+# Default: Unlimited
+mtu = 256
+
+# - "peakrate" : Maximum depletion rate of the bucket.
+# Default: Unlimited
+peakrate = 1024
 
 # ----- Cells Section End -----
 
