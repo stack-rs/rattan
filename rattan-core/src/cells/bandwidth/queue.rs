@@ -162,6 +162,15 @@ impl<P> DropTailQueue<P> {
     }
 }
 
+impl<P> DropTailQueue<P>
+where
+    P: Packet,
+{
+    pub fn drop_large_packet(&mut self, max_size: usize) {
+        self.queue.retain(|packet| packet.l3_length() > max_size);
+    }
+}
+
 impl<P> Default for DropTailQueue<P> {
     fn default() -> Self {
         Self::new(DropTailQueueConfig::default())

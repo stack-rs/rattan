@@ -291,19 +291,19 @@ limit = 1024
 
 # "burst" : Size of the bucket in bytes.
 # Default: Unlimited
-burst = 512
+burst = "5kb"
 
 # "rate" : The rate limit of the bucket in bytes per second.
 # Default: Unlimited
-rate = 512
+rate = "500Kbps"
 
-# - "mtu" : Specifies the size of the peakrate bucket.
+# - "minburst" : Specifies the size of the peakrate bucket.
 # Default: Unlimited
-mtu = 256
+minburst = "1540B"
 
 # - "peakrate" : Maximum depletion rate of the bucket.
 # Default: Unlimited
-peakrate = 1024
+peakrate = "1Mbps"
 
 # ----- Cells Section End -----
 

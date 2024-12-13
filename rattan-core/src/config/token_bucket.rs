@@ -14,7 +14,7 @@ impl TokenBucketCellBuildConfig {
                 self.rate,
                 self.burst,
                 self.peakrate,
-                self.mtu,
+                self.minburst,
             )
         }
     }

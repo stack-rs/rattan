@@ -2,6 +2,8 @@
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test token_bucket --all-features -- --nocapture
 use std::collections::HashMap;
 
+use bandwidth::Bandwidth;
+use bytesize::ByteSize;
 use rattan_core::cells::token_bucket::TokenBucketCellConfig;
 use rattan_core::cells::StdPacket;
 use rattan_core::config::{CellBuildConfig, RattanConfig, TokenBucketCellBuildConfig};
@@ -84,13 +86,18 @@ fn test_token_bucket() {
     // After set the TokenBucketCell, the average latency should be around 500ms
     {
         let _span = span!(Level::INFO, "ping_with_tb_set").entered();
-        info!("try to ping with the burst set to 256 B and the rate set to 256 B/s");
-        //let token_bucket = TokenBucketConfig::new(1000, 512_u64);
+        info!("try to ping with the burst set to 256 B and the rate set to 4096 bps");
         radix
             .op_block_exec(RattanOp::ConfigCell(
                 "up_tb".to_string(),
-                serde_json::to_value(TokenBucketCellConfig::new(None, 512, 512, None, None))
-                    .unwrap(),
+                serde_json::to_value(TokenBucketCellConfig::new(
+                    None,
+                    Bandwidth::from_bps(4096),
+                    ByteSize::b(512),
+                    None,
+                    None,
+                ))
+                .unwrap(),
             ))
             .unwrap();
 
