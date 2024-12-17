@@ -35,6 +35,10 @@ where
     fn get_front_size(&self) -> Option<usize>;
 
     fn length(&self) -> usize;
+
+    fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&P) -> bool;
 }
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
@@ -100,6 +104,13 @@ where
     fn length(&self) -> usize {
         self.queue.len()
     }
+
+    fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&P) -> bool,
+    {
+        self.queue.retain(|packet| f(packet));
+    }
 }
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
@@ -159,15 +170,6 @@ impl<P> DropTailQueue<P> {
 
     pub fn get_extra_length(&self) -> usize {
         self.bw_type.extra_length()
-    }
-}
-
-impl<P> DropTailQueue<P>
-where
-    P: Packet,
-{
-    pub fn drop_large_packet(&mut self, max_size: usize) {
-        self.queue.retain(|packet| packet.l3_length() > max_size);
     }
 }
 
@@ -231,6 +233,13 @@ where
 
     fn length(&self) -> usize {
         self.queue.len()
+    }
+
+    fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&P) -> bool,
+    {
+        self.queue.retain(|packet| f(packet));
     }
 }
 
@@ -350,6 +359,13 @@ where
 
     fn length(&self) -> usize {
         self.queue.len()
+    }
+
+    fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&P) -> bool,
+    {
+        self.queue.retain(|packet| f(packet));
     }
 }
 
@@ -631,5 +647,12 @@ where
 
     fn length(&self) -> usize {
         self.queue.len()
+    }
+
+    fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&P) -> bool,
+    {
+        self.queue.retain(|packet| f(packet));
     }
 }

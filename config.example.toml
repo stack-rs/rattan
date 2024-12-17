@@ -291,7 +291,7 @@ limit = 1024
 
 # "burst" : Size of the bucket in bytes.
 # Default: Unlimited
-burst = "5kb"
+burst = "5KB"
 
 # "rate" : The rate limit of the bucket in bytes per second.
 # Default: Unlimited

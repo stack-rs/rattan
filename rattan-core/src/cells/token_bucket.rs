@@ -114,19 +114,12 @@ where
     P: Packet + Send + Sync,
 {
     fn set_token_bucket(&mut self, new_rate: Option<Bandwidth>, new_burst: Option<ByteSize>) {
-        match (new_rate, new_burst) {
-            (None, None) => {}
-            (Some(rate), None) => {
-                self.token_bucket.rate = rate;
-            }
-            (None, Some(burst)) => {
-                self.token_bucket.burst = burst;
-            }
-            (Some(rate), Some(burst)) => {
-                self.token_bucket.rate = rate;
-                self.token_bucket.burst = burst;
-            }
-        };
+        if let Some(rate) = new_rate {
+            self.token_bucket.rate = rate;
+        }
+        if let Some(burst) = new_burst {
+            self.token_bucket.burst = burst;
+        }
         self.token_bucket.tokens =
             length_to_time(self.token_bucket.burst.as_u64(), self.token_bucket.rate);
     }
@@ -136,19 +129,12 @@ where
         new_peakrate: Option<Bandwidth>,
         new_minburst: Option<ByteSize>,
     ) {
-        match (new_peakrate, new_minburst) {
-            (None, None) => {}
-            (Some(peakrate), None) => {
-                self.peak_token_bucket.rate = peakrate;
-            }
-            (None, Some(minburst)) => {
-                self.peak_token_bucket.burst = minburst;
-            }
-            (Some(peakrate), Some(minburst)) => {
-                self.peak_token_bucket.rate = peakrate;
-                self.peak_token_bucket.burst = minburst;
-            }
-        };
+        if let Some(peakrate) = new_peakrate {
+            self.peak_token_bucket.rate = peakrate;
+        }
+        if let Some(minburst) = new_minburst {
+            self.peak_token_bucket.burst = minburst;
+        }
         self.peak_token_bucket.tokens = length_to_time(
             self.peak_token_bucket.burst.as_u64(),
             self.peak_token_bucket.rate,
@@ -176,6 +162,7 @@ where
         );
 
         // calculate max_size
+        let old_max_size = self.max_size.0;
         self.max_size = min(self.token_bucket.burst, self.peak_token_bucket.burst);
 
         // set queue
@@ -188,9 +175,12 @@ where
             ));
         }
 
-        // drop all packets larger than max_size in the queue
-        self.packet_queue
-            .drop_large_packet(self.max_size.0 as usize);
+        // drop all packets larger than max_size in the queue when max_size is shrunk
+        if self.max_size.0 < old_max_size {
+            let extra_length = self.packet_queue.get_extra_length();
+            self.packet_queue
+                .retain(|packet| packet.l3_length() + extra_length <= self.max_size.0 as usize);
+        }
 
         // set next_available
         if !self.packet_queue.is_empty() {
@@ -198,27 +188,6 @@ where
             self.next_available = now;
         } else {
             self.next_available = now + LARGE_DURATION;
-        }
-    }
-
-    // calculate and return next_available Instant
-    fn calculate_next_available(&self, now: Instant, size: ByteSize) -> Instant {
-        let consumed_tokens = length_to_time(size.as_u64(), self.token_bucket.rate);
-        let consumed_ptokens = length_to_time(size.as_u64(), self.peak_token_bucket.rate);
-        if self.token_bucket.tokens >= consumed_tokens
-            && self.peak_token_bucket.tokens >= consumed_ptokens
-        {
-            debug!("calculate: set next_available to now");
-            now
-        } else if self.token_bucket.tokens >= consumed_tokens {
-            now + (consumed_ptokens - self.peak_token_bucket.tokens)
-        } else if self.peak_token_bucket.tokens >= consumed_ptokens {
-            now + (consumed_tokens - self.token_bucket.tokens)
-        } else {
-            now + max(
-                consumed_tokens - self.token_bucket.tokens,
-                consumed_ptokens - self.peak_token_bucket.tokens,
-            )
         }
     }
 }
@@ -247,7 +216,7 @@ where
                                     return Some(new_packet);
                                 }
                                 _ => {
-                                    // check the size of packet and drop or enter the queue
+                                    // check the size of packet and drop it or let it enter the queue
                                     let packet_size = new_packet.l3_length() + self.packet_queue.get_extra_length();
                                     if packet_size <= (self.max_size.0 as usize) {
                                         // enqueue the packet
@@ -257,7 +226,6 @@ where
                                         } else {
                                             self.packet_queue.enqueue(new_packet);
                                         }
-
                                     }
                                 }
                             }
@@ -273,70 +241,82 @@ where
                 }
             }
         }
-
-        // There will be at least one packet in the queue
-        // get number of tokens added from last_check
         let now = Instant::now();
-        debug!(
-            "Previous next_available distance: {:?}",
-            self.next_available - now
-        );
-        let burst_duration =
-            length_to_time(self.token_bucket.burst.as_u64(), self.token_bucket.rate);
-        let minburst_duration = length_to_time(
-            self.peak_token_bucket.burst.as_u64(),
-            self.peak_token_bucket.rate,
-        );
-        self.token_bucket.tokens = min(
-            burst_duration,
-            now - self.last_check + self.token_bucket.tokens,
-        );
-        self.peak_token_bucket.tokens = min(
-            minburst_duration,
-            now - self.last_check + self.peak_token_bucket.tokens,
-        );
-
-        let size = self.packet_queue.get_front_size().unwrap() as u64;
-        debug!("size: {}", size);
-        debug!("max_size: {}", self.max_size);
-        let consumed_tokens = length_to_time(size, self.token_bucket.rate);
-        let consumed_ptokens = length_to_time(size, self.peak_token_bucket.rate);
-
-        self.last_check = now;
-
-        // if tokens and ptokens are all positive, send the packet, and update number of tokens
-        if self.token_bucket.tokens >= consumed_tokens
-            && self.peak_token_bucket.tokens >= consumed_ptokens
-        {
-            let packet_to_send = self.packet_queue.dequeue().unwrap();
-            self.token_bucket.tokens -= consumed_tokens;
-            self.peak_token_bucket.tokens -= consumed_ptokens;
+        if let Some(size) = self.packet_queue.get_front_size() {
+            // There will be at least one packet in the queue
+            // get number of tokens added from last_check
             debug!(
-                "in dequeue, toks: {}, ptoks: {}",
-                self.token_bucket.tokens.as_nanos(),
-                self.peak_token_bucket.tokens.as_nanos()
+                "Previous next_available distance: {:?}",
+                self.next_available - now
             );
-            // set next_available
-            if self.packet_queue.is_empty() {
-                self.next_available = now + LARGE_DURATION;
+            let burst_duration =
+                length_to_time(self.token_bucket.burst.as_u64(), self.token_bucket.rate);
+            let minburst_duration = length_to_time(
+                self.peak_token_bucket.burst.as_u64(),
+                self.peak_token_bucket.rate,
+            );
+            self.token_bucket.tokens = min(
+                burst_duration,
+                now - self.last_check + self.token_bucket.tokens,
+            );
+            self.peak_token_bucket.tokens = min(
+                minburst_duration,
+                now - self.last_check + self.peak_token_bucket.tokens,
+            );
+
+            debug!("size: {}", size);
+            debug!("max_size: {}", self.max_size);
+            let consumed_tokens = length_to_time(size as u64, self.token_bucket.rate);
+            let consumed_ptokens = length_to_time(size as u64, self.peak_token_bucket.rate);
+
+            self.last_check = now;
+
+            // if tokens and ptokens are both enough, send the packet, and update number of tokens
+            if self.token_bucket.tokens >= consumed_tokens
+                && self.peak_token_bucket.tokens >= consumed_ptokens
+            {
+                let packet_to_send = self.packet_queue.dequeue().unwrap();
+                self.token_bucket.tokens -= consumed_tokens;
+                self.peak_token_bucket.tokens -= consumed_ptokens;
+                debug!(
+                    "in dequeue, toks: {}, ptoks: {}",
+                    self.token_bucket.tokens.as_nanos(),
+                    self.peak_token_bucket.tokens.as_nanos()
+                );
+                // set next_available
+                if self.packet_queue.is_empty() {
+                    self.next_available = now + LARGE_DURATION;
+                } else if let Some(next_size) = self.packet_queue.get_front_size() {
+                    debug!("next_size: {}", next_size);
+                    self.next_available = now
+                        + max(
+                            length_to_time(next_size as u64, self.token_bucket.rate)
+                                .saturating_sub(self.token_bucket.tokens),
+                            length_to_time(next_size as u64, self.peak_token_bucket.rate)
+                                .saturating_sub(self.peak_token_bucket.tokens),
+                        );
+                } else {
+                    self.next_available = now + LARGE_DURATION;
+                }
+                Some(packet_to_send)
             } else {
-                let next_size = self.packet_queue.get_front_size().unwrap() as u64;
-                self.next_available = self.calculate_next_available(now, ByteSize::b(next_size));
+                // set next_available
+                self.next_available = now
+                    + max(
+                        consumed_tokens.saturating_sub(self.token_bucket.tokens),
+                        consumed_ptokens.saturating_sub(self.peak_token_bucket.tokens),
+                    );
+                None
             }
-            Some(packet_to_send)
         } else {
-            // set next_available
-            self.next_available = self.calculate_next_available(now, ByteSize::b(size));
+            self.next_available = now + LARGE_DURATION;
             None
         }
-
-        // fail to send packet, wait for next_available
-        //}
     }
 
     fn reset(&mut self) {
         let now = Instant::now();
-        self.next_available = *CALIBRATED_START_INSTANT.get_or_init(|| now) + LARGE_DURATION;
+        self.next_available = *CALIBRATED_START_INSTANT.get_or_init(|| now);
         self.last_check = *CALIBRATED_START_INSTANT.get_or_init(|| now);
     }
 
@@ -770,7 +750,7 @@ mod tests {
 
     #[test_log::test]
     fn test_token_bucket_cell_prate_low() -> Result<(), Error> {
-        // test prate when prate is lower than rate
+        // test peakrate when peakrate is lower than rate
         let _span = span!(Level::INFO, "test_token_bucket_cell_prate_low").entered();
         info!("Creating cell with 1024 B burst, 8192 bps rate, 128 B minburst, 4096 bps peakrate and a 1024 bytes limit queue.");
         let config = TokenBucketCellConfig::new(
@@ -794,7 +774,7 @@ mod tests {
 
     #[test_log::test]
     fn test_token_bucket_cell_prate_high() -> Result<(), Error> {
-        // test prate when prate is higher than rate
+        // test peakrate when peakrate is higher than rate
         let _span = span!(Level::INFO, "test_token_bucket_cell_prate_high").entered();
         info!("Creating cell with 512 B burst, 4096 bps rate, 256 B minburst, 8192 bps peakrate and a 1024 bytes limit queue.");
         let config = TokenBucketCellConfig::new(
@@ -818,7 +798,7 @@ mod tests {
     #[test_log::test]
     fn test_token_bucket_cell_config_update_down() -> Result<(), Error> {
         // test config update of token bucket cells
-        // set rate to be lower
+        // set a lower rate
         let _span = span!(Level::INFO, "test_token_bucket_cell_config_update_down").entered();
         info!("Creating cell with 512 B burst, 4096 bps rate and a 1024 bytes limit queue.");
         let config = TokenBucketCellConfig::new(
@@ -853,7 +833,7 @@ mod tests {
     #[test_log::test]
     fn test_token_bucket_cell_config_update_up() -> Result<(), Error> {
         // test config update of token bucket cells
-        // set rate to be higher
+        // set a higher rate
         let _span = span!(Level::INFO, "test_token_bucket_cell_config_update_up").entered();
         info!("Creating cell with 256 B burst, 2048 bps rate and a 1024 bytes limit queue.");
         let config = TokenBucketCellConfig::new(
@@ -887,7 +867,7 @@ mod tests {
 
     #[test_log::test]
     fn test_token_bucket_cell_queue() -> Result<(), Error> {
-        // check dropped packet and sequence of packet
+        // check dropped packet and packet sequence
         let _span = span!(Level::INFO, "test_token_bucket_cell_queue").entered();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -957,7 +937,7 @@ mod tests {
 
     #[test_log::test]
     fn test_token_bucket_cell_burst() -> Result<(), Error> {
-        // check the burst of token bucket
+        // check the burst of token bucket cell
         let _span = span!(Level::INFO, "test_token_bucket_cell_burst").entered();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1065,7 +1045,7 @@ mod tests {
         info!("Creating cell with 512 B burst, 4096 bps rate and a 1024 bytes limit queue.");
 
         let cell = TokenBucketCell::new(
-            1024,
+            None,
             Bandwidth::from_bps(4096),
             ByteSize::b(512),
             None,
@@ -1118,10 +1098,10 @@ mod tests {
         assert!(received.length() == 1024);
 
         // Test updated max_size
-        // enqueue 5 packets of 256B
+        // enqueue 4 packets of 256B, and then enqueue a packet of 128B
         for i in 0..5 {
             let mut test_packet;
-            if i == 0 {
+            if i == 4 {
                 test_packet = StdPacket::from_raw_buffer(&[0; 128]);
                 test_packet.set_flow_id(i);
             } else {
@@ -1131,6 +1111,20 @@ mod tests {
             ingress.enqueue(test_packet)?;
         }
 
+        // call dequeue to make these 5 packets to enter the queue
+        let mut received: Option<StdPacket> = None;
+        while received.is_none() {
+            received = rt.block_on(async { egress.dequeue().await });
+        }
+        // before changing max_size, we can receive a packet of 256B
+        if received.is_some() {
+            let received = received.unwrap();
+            assert!(received.get_flow_id() == 0);
+            received_packets[received.get_flow_id() as usize] = true;
+            // The length should be correct
+            assert!(received.length() == 256);
+        }
+
         config_changer.set_config(TokenBucketCellConfig::new(
             None,
             Bandwidth::from_bps(4096),
@@ -1138,14 +1132,14 @@ mod tests {
             None,
             None,
         ))?;
-        // the first packet can be received but the left are lost
+        // the 5th packet which is 128B can be received, but the left are lost
         let mut received: Option<StdPacket> = None;
         while received.is_none() {
             received = rt.block_on(async { egress.dequeue().await });
         }
         if received.is_some() {
             let received = received.unwrap();
-            assert!(received.get_flow_id() == 0);
+            assert!(received.get_flow_id() == 4);
             received_packets[received.get_flow_id() as usize] = true;
             // The length should be correct
             assert!(received.length() == 128);
@@ -1154,7 +1148,7 @@ mod tests {
         assert!(!received_packets[1]);
         assert!(!received_packets[2]);
         assert!(!received_packets[3]);
-        assert!(!received_packets[4]);
+        assert!(received_packets[4]);
         Ok(())
     }
 }
