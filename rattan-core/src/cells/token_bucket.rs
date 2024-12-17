@@ -162,7 +162,7 @@ where
         );
 
         // calculate max_size
-        let old_max_size = self.max_size.0;
+        let old_max_size = self.max_size;
         self.max_size = min(self.token_bucket.burst, self.peak_token_bucket.burst);
 
         // set queue
@@ -176,7 +176,7 @@ where
         }
 
         // drop all packets larger than max_size in the queue when max_size is shrunk
-        if self.max_size.0 < old_max_size {
+        if self.max_size < old_max_size {
             let extra_length = self.packet_queue.get_extra_length();
             self.packet_queue
                 .retain(|packet| packet.l3_length() + extra_length <= self.max_size.0 as usize);
@@ -284,9 +284,7 @@ where
                     self.peak_token_bucket.tokens.as_nanos()
                 );
                 // set next_available
-                if self.packet_queue.is_empty() {
-                    self.next_available = now + LARGE_DURATION;
-                } else if let Some(next_size) = self.packet_queue.get_front_size() {
+                if let Some(next_size) = self.packet_queue.get_front_size() {
                     debug!("next_size: {}", next_size);
                     self.next_available = now
                         + max(

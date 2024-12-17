@@ -36,9 +36,11 @@ where
 
     fn length(&self) -> usize;
 
-    fn retain<F>(&mut self, f: F)
+    fn retain<F>(&mut self, _f: F)
     where
-        F: FnMut(&P) -> bool;
+        F: FnMut(&P) -> bool,
+    {
+    }
 }
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
