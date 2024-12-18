@@ -390,6 +390,9 @@ where
                     // ignore routers, build them after other cells
                     router_configs.push((id, config));
                 }
+                CellBuildConfig::TokenBucket(config) => {
+                    self.build_cell(id, config.into_factory())?;
+                }
                 CellBuildConfig::Custom => {
                     debug!("Skip build custom cell: {}", id);
                 }

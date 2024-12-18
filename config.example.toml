@@ -279,6 +279,32 @@ interface_id = 1
 prefix = "10.2.0.0/16"
 # no interface_id, meaning drop
 
+# Token Bucket Cell Example
+[cells.token_bucket]
+type = "TokenBucket"
+
+# Token Bucket configuration
+# We have 5 fields for TokenBucket: 
+# "limit" : Size of the queue of TokenBucket cell in bytes.
+# Default: Unlimited
+limit = 1024
+
+# "burst" : Size of the bucket in bytes.
+# Default: Unlimited
+burst = "5KB"
+
+# "rate" : The rate limit of the bucket in bytes per second.
+# Default: Unlimited
+rate = "500Kbps"
+
+# - "minburst" : Specifies the size of the peakrate bucket.
+# Default: Unlimited
+minburst = "1540B"
+
+# - "peakrate" : Maximum depletion rate of the bucket.
+# Default: Unlimited
+peakrate = "1Mbps"
+
 # ----- Cells Section End -----
 
 
