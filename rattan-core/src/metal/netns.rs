@@ -305,10 +305,6 @@ impl<E: Env> NetNs<E> {
 
 impl<E: Env> Drop for NetNs<E> {
     fn drop(&mut self) {
-        let fd = self.file.as_raw_fd();
-        if let Err(e) = nix::unistd::close(fd).map_err(NsError::CloseNsError) {
-            error!("Failed to close netns: {}", e);
-        }
         if let Err(e) = self.env.clone().remove(self) {
             error!("Failed to remove netns: {}", e);
         }
@@ -364,37 +360,50 @@ impl NetNs {
     }
 }
 
-#[test]
-fn test_netns() {
-    use rand::{distributions::Alphanumeric, Rng};
-    let namespace_name: String = rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(8)
-        .map(char::from)
-        .collect();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    {
-        let netns = NetNs::new(&namespace_name).unwrap();
-        let handle = std::process::Command::new("ip")
-            .args(["netns", "ls"])
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        let output = handle.wait_with_output().unwrap();
-        assert!(String::from_utf8_lossy(&output.stdout).contains(&namespace_name));
+    #[test_log::test]
+    fn test_netns() {
+        use rand::{distributions::Alphanumeric, Rng};
+        let namespace_name: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(8)
+            .map(char::from)
+            .collect();
 
         {
-            let _netns_guard = NetNsGuard::new(netns.clone()).unwrap();
-            let inner_handle = std::process::Command::new("ip")
+            let netns = NetNs::new(&namespace_name).unwrap();
+            let handle = std::process::Command::new("ip")
+                .args(["netns", "ls"])
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let output = handle.wait_with_output().unwrap();
+            assert!(String::from_utf8_lossy(&output.stdout).contains(&namespace_name));
+
+            {
+                let _netns_guard = NetNsGuard::new(netns.clone()).unwrap();
+                let inner_handle = std::process::Command::new("ip")
+                    .args(["netns", "identify"])
+                    .stdout(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                let output = inner_handle.wait_with_output().unwrap();
+                assert!(String::from_utf8_lossy(&output.stdout).contains(&namespace_name));
+            }
+            let handle = std::process::Command::new("ip")
                 .args(["netns", "identify"])
                 .stdout(std::process::Stdio::piped())
                 .spawn()
                 .unwrap();
-            let output = inner_handle.wait_with_output().unwrap();
-            assert!(String::from_utf8_lossy(&output.stdout).contains(&namespace_name));
+            let output = handle.wait_with_output().unwrap();
+            assert!(!String::from_utf8_lossy(&output.stdout).contains(&namespace_name));
         }
+
         let handle = std::process::Command::new("ip")
-            .args(["netns", "identify"])
+            .args(["netns", "ls"])
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
@@ -402,11 +411,18 @@ fn test_netns() {
         assert!(!String::from_utf8_lossy(&output.stdout).contains(&namespace_name));
     }
 
-    let handle = std::process::Command::new("ip")
-        .args(["netns", "ls"])
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let output = handle.wait_with_output().unwrap();
-    assert!(!String::from_utf8_lossy(&output.stdout).contains(&namespace_name));
+    #[test_log::test]
+    fn test_netns_drop() {
+        use rand::{distributions::Alphanumeric, Rng};
+        let namespace_name: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(8)
+            .map(char::from)
+            .collect();
+
+        let netns = NetNs::new(&namespace_name).unwrap();
+        std::mem::drop(netns);
+        let netns = NetNs::current().unwrap();
+        std::mem::drop(netns);
+    }
 }
