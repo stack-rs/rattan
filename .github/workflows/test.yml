@@ -5,10 +5,6 @@ on:
     paths-ignore:
       - 'documents/**'
       - 'assets/**'
-  pull_request:
-    branches:
-      - main
-    types: [opened, synchronize, reopened]
 # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -24,7 +20,7 @@ jobs:
       matrix:
         kernel: [ "5.4", "5.15", "6.8", "6.11" ]
     runs-on: ${{ matrix.kernel }}
-    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
         with:
