@@ -48,7 +48,7 @@ impl HttpControlEndpoint {
         Router::new()
             .route("/notify", post(send_notify))
             .route("/state", get(query_state))
-            .route("/config/:id", post(config_cell))
+            .route("/config/{id}", post(config_cell))
             .with_state(self.state.clone())
     }
 }
