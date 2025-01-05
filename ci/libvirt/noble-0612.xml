@@ -1,5 +1,5 @@
 <domain type='kvm'>
-    <name>noble-6.11</name>
+    <name>noble-6.12</name>
     <uuid>03a984f8-93cb-43d4-a909-1487da7cbc97</uuid>
     <os>
         <type>hvm</type>
@@ -17,7 +17,7 @@
     <devices>
         <disk type='volume' device='disk'>
             <driver name='qemu' type='qcow2'/>
-            <source pool='default' volume='noble-6.11'/>
+            <source pool='default' volume='noble-6.12'/>
             <target dev='hda'/>
         </disk>
         <serial type='pty'>

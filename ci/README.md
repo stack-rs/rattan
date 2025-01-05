@@ -17,7 +17,7 @@ This directory contains artifacts setting up four test machines with equipped af
 | focal-0505 | 5.4 | Ubuntu 20.04 (focal) | [focal/release-20240606](https://cloud-images.ubuntu.com/releases/focal/release-20230908/ubuntu-20.04-server-cloudimg-amd64-disk-kvm.img) |
 | jammy-0515 | 5.15 | Ubuntu 22.04 (jammy) | [jammy/release-20240612](https://cloud-images.ubuntu.com/releases/22.04/release-20230914/ubuntu-22.04-server-cloudimg-amd64-disk-kvm.img) |
 | noble-0608 | 6.8 | Ubuntu 24.04 (noble) | [noble/20240521](https://cloud-images.ubuntu.com/releases/24.04/release-20240608/ubuntu-24.04-server-cloudimg-amd64.img) |
-| noble-0609 | 6.11 | Ubuntu 24.04 (noble) | [noble/20241119](https://cloud-images.ubuntu.com/releases/24.04/release-20241119/ubuntu-24.04-server-cloudimg-amd64.img) |
+| noble-0612 | 6.12 | Ubuntu 24.04 (noble) | [noble/20241119](https://cloud-images.ubuntu.com/releases/24.04/release-20241119/ubuntu-24.04-server-cloudimg-amd64.img) |
 
 ## Prepare Virtual Machines
 
