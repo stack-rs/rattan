@@ -324,10 +324,8 @@ where
         self.queue.push_back(packet);
         while self
             .packet_limit
-            .map_or(false, |limit| self.queue.len() > limit)
-            || self
-                .byte_limit
-                .map_or(false, |limit| self.now_bytes > limit)
+            .is_some_and(|limit| self.queue.len() > limit)
+            || self.byte_limit.is_some_and(|limit| self.now_bytes > limit)
         {
             let packet = self.dequeue().unwrap();
             trace!(
