@@ -52,7 +52,7 @@ rust-version.workspace = true
 # bollard = "0.15.0"
 clap = { version = "4.2.4", features = ["derive"] }
 ctrlc = { workspace = true }
-dirs = "5.0.1"
+dirs = "6.0.0"
 figment = { workspace = true }
 futures = { workspace = true }
 human-bandwidth = { workspace = true }
