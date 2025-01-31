@@ -204,7 +204,7 @@ mod tests {
     use crate::cells::{shadow::ShadowCell, StdPacket};
     use etherparse::{PacketBuilder, SlicedPacket, TransportSlice};
     use ipnet::IpNet;
-    use rand::{thread_rng, Rng};
+    use rand::{rng, Rng};
     use tracing::{span, Level};
 
     use super::*;
@@ -281,9 +281,9 @@ mod tests {
 
         let mut payload = [0u8; 256];
         for _ in 0..100 {
-            let target = thread_rng().gen_range(0..=1);
+            let target = rng().random_range(0..=1);
 
-            thread_rng().fill(&mut payload);
+            rng().fill(&mut payload);
             let packet = generate_packet(target_ip[target], &payload);
             ingress.enqueue(packet)?;
             let received = rt.block_on(async { egresses[target].dequeue().await });
@@ -322,13 +322,13 @@ mod tests {
         let control = cell.control_interface();
         let mut payload = [0u8; 256];
 
-        thread_rng().fill(&mut payload);
+        rng().fill(&mut payload);
         let packet = generate_packet("192.168.1.1".parse().unwrap(), &payload);
         ingress.enqueue(packet)?;
         let received = rt.block_on(async { egresses[0].dequeue().await });
         assert!(test_packet(received, &payload));
 
-        thread_rng().fill(&mut payload);
+        rng().fill(&mut payload);
         let packet = generate_packet("192.168.1.2".parse().unwrap(), &payload);
         ingress.enqueue(packet)?; // should drop
 
@@ -337,7 +337,7 @@ mod tests {
         control.add(RoutingEntry::new(ips[1], Some(1))).unwrap();
         assert!(control.add(RoutingEntry::new(ips[1], Some(0))).is_err());
 
-        thread_rng().fill(&mut payload);
+        rng().fill(&mut payload);
         let packet = generate_packet("192.168.1.2".parse().unwrap(), &payload);
         ingress.enqueue(packet)?;
         let received = rt.block_on(async { egresses[1].dequeue().await });
@@ -347,14 +347,14 @@ mod tests {
         control.remove(ips[0]).unwrap();
         assert!(control.remove(ips[0]).is_err());
 
-        thread_rng().fill(&mut payload);
+        rng().fill(&mut payload);
         let packet = generate_packet("192.168.1.1".parse().unwrap(), &payload);
         ingress.enqueue(packet)?; // should drop
 
         // test clear
         control.clear();
 
-        thread_rng().fill(&mut payload);
+        rng().fill(&mut payload);
         let packet = generate_packet("192.168.1.2".parse().unwrap(), &payload);
         ingress.enqueue(packet)?; // should drop
 
@@ -372,13 +372,13 @@ mod tests {
             ])
             .unwrap();
 
-        thread_rng().fill(&mut payload);
+        rng().fill(&mut payload);
         let packet = generate_packet("192.168.1.1".parse().unwrap(), &payload);
         ingress.enqueue(packet)?;
         let received = rt.block_on(async { egresses[1].dequeue().await });
         assert!(test_packet(received, &payload));
 
-        thread_rng().fill(&mut payload);
+        rng().fill(&mut payload);
         let packet = generate_packet("192.168.1.2".parse().unwrap(), &payload);
         ingress.enqueue(packet)?;
         let received = rt.block_on(async { egresses[0].dequeue().await });

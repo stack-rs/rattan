@@ -366,8 +366,8 @@ mod tests {
 
     #[test_log::test]
     fn test_netns() {
-        use rand::{distributions::Alphanumeric, Rng};
-        let namespace_name: String = rand::thread_rng()
+        use rand::{distr::Alphanumeric, Rng};
+        let namespace_name: String = rand::rng()
             .sample_iter(&Alphanumeric)
             .take(8)
             .map(char::from)
@@ -413,8 +413,8 @@ mod tests {
 
     #[test_log::test]
     fn test_netns_drop() {
-        use rand::{distributions::Alphanumeric, Rng};
-        let namespace_name: String = rand::thread_rng()
+        use rand::{distr::Alphanumeric, Rng};
+        let namespace_name: String = rand::rng()
             .sample_iter(&Alphanumeric)
             .take(8)
             .map(char::from)

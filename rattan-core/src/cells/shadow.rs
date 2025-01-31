@@ -124,7 +124,7 @@ where
 mod tests {
     use super::*;
     use crate::cells::StdPacket;
-    use rand::{thread_rng, Rng};
+    use rand::{rng, Rng};
     use tracing::{span, Level};
 
     #[test_log::test]
@@ -143,7 +143,7 @@ mod tests {
 
         let mut buffer = [0u8; 256];
         for _ in 0..100 {
-            thread_rng().fill(&mut buffer);
+            rng().fill(&mut buffer);
             let test_packet = StdPacket::from_raw_buffer(&buffer);
             ingress.enqueue(test_packet)?;
 

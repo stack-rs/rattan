@@ -91,7 +91,7 @@ where
             Some(&loss_rate) => loss_rate,
             None => *self.inner_pattern.last().unwrap_or(&0.0),
         };
-        let rand_num = self.rng.gen_range(0.0..1.0);
+        let rand_num = self.rng.random_range(0.0..1.0);
         if rand_num < loss_rate {
             self.prev_loss += 1;
             None
@@ -296,7 +296,7 @@ where
             Some(&loss_rate) => loss_rate,
             None => *self.current_loss_pattern.last().unwrap_or(&0.0),
         };
-        let rand_num = self.rng.gen_range(0.0..1.0);
+        let rand_num = self.rng.random_range(0.0..1.0);
         if rand_num < loss_rate {
             self.prev_loss += 1;
             None

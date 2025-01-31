@@ -9,8 +9,8 @@ use crate::{
 use futures::TryStreamExt;
 use netlink_packet_route::{address::AddressAttribute, link::LinkAttribute, route::RouteScope};
 use once_cell::sync::OnceCell;
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
+use rand::distr::Alphanumeric;
+use rand::{rng, Rng};
 use std::{io::Write, sync::Arc};
 use std::{
     net::{IpAddr, Ipv4Addr},
@@ -256,7 +256,7 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     // Create network namespaces
     trace!(?config);
     let _guard = STD_ENV_LOCK.lock();
-    let rand_string: String = thread_rng()
+    let rand_string: String = rng()
         .sample_iter(&Alphanumeric)
         .take(6)
         .map(char::from)
