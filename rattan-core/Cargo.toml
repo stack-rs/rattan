@@ -52,7 +52,7 @@ insta = { version = "1.39.0", features = ["json"] }
 itertools = "0.14.0"
 netns-rs = "0.1.0"
 regex = "1.7.3"
-clap = "4.5.4"
+clap = { version = "4.5.4", features = ["derive"] }
 reqwest = { version = "0.12.9", default-features = false, features = [
   "json",
   "blocking",
