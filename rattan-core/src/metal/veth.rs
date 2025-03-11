@@ -2,6 +2,7 @@ use crate::error::{Error, MacParseError, VethError};
 use crate::metal::netns::{NetNs, NetNsGuard};
 use nix::net::if_::if_nametoindex;
 use once_cell::sync::OnceCell;
+use rtnetlink::{LinkMessageBuilder, LinkUnspec, LinkVeth};
 use std::net::IpAddr;
 use std::os::fd::AsRawFd;
 use std::process::Command;
@@ -326,10 +327,10 @@ impl VethPairBuilder {
 
         let (conn, rtnl_handle, _) = rtnetlink::new_connection()?;
         tokio_handle.spawn(conn);
+        let message = LinkMessageBuilder::<LinkVeth>::new(&name.0, &name.1).build();
         rtnl_handle
             .link()
-            .add()
-            .veth(name.clone().0, name.clone().1)
+            .add(message)
             .execute()
             .await
             .map_err(|e| VethError::CreateVethPairError(e.to_string()))?;
@@ -357,10 +358,13 @@ impl VethPairBuilder {
 
         for cell in [pair.left.clone(), pair.right.clone()] {
             // Set namespace
+            let message = LinkMessageBuilder::<LinkUnspec>::new()
+                .index(cell.index)
+                .setns_by_fd(cell.namespace.as_raw_fd())
+                .build();
             rtnl_handle
                 .link()
-                .set(cell.index)
-                .setns_by_fd(cell.namespace.as_raw_fd())
+                .set(message)
                 .execute()
                 .await
                 .map_err(|e| VethError::SetError(e.to_string()))?;
@@ -372,10 +376,13 @@ impl VethPairBuilder {
             tokio_handle.spawn(conn);
 
             // Set mac address
+            let message = LinkMessageBuilder::<LinkUnspec>::new()
+                .index(cell.index)
+                .address(Vec::from(cell.mac_addr.bytes))
+                .build();
             rtnl_handle
                 .link()
-                .set(cell.index)
-                .address(Vec::from(cell.mac_addr.bytes))
+                .set(message)
                 .execute()
                 .await
                 .map_err(|e| VethError::SetError(e.to_string()))?;
@@ -389,10 +396,13 @@ impl VethPairBuilder {
                 .map_err(|e| VethError::SetError(e.to_string()))?;
 
             // Set up
+            let message = LinkMessageBuilder::<LinkUnspec>::new()
+                .index(cell.index)
+                .up()
+                .build();
             rtnl_handle
                 .link()
-                .set(cell.index)
-                .up()
+                .set(message)
                 .execute()
                 .await
                 .map_err(|e| VethError::SetError(e.to_string()))?;
