@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
 use crate::error::Error;
@@ -9,10 +9,11 @@ use super::{
 };
 use futures::TryStreamExt;
 use ipnet::{Ipv4Net, Ipv6Net};
-use netlink_packet_route::{
+use rtnetlink::packet_route::{
     link::{LinkAttribute, LinkLayerType},
     route::RouteScope,
 };
+use rtnetlink::{LinkMessageBuilder, LinkUnspec, RouteMessageBuilder};
 use tracing::{debug, error, span, warn, Level};
 
 fn execute_rtnetlink_with_new_thread<F>(netns: Arc<NetNs>, f: F) -> Result<(), Error>
@@ -59,10 +60,7 @@ pub fn add_route_with_netns<
     execute_rtnetlink_with_new_thread(netns, move |rt, rtnl_handle| {
         match dest {
             Some((IpAddr::V4(dest_v4), prefix_length)) => {
-                let mut handle = rtnl_handle
-                    .route()
-                    .add()
-                    .v4()
+                let mut message = RouteMessageBuilder::<Ipv4Addr>::new()
                     .scope(scope)
                     .destination_prefix(
                         Ipv4Net::new(dest_v4, prefix_length)
@@ -78,7 +76,7 @@ pub fn add_route_with_netns<
                     );
                 if let Some(gateway) = gateway {
                     if let IpAddr::V4(gateway_v4) = gateway {
-                        handle = handle.gateway(gateway_v4);
+                        message = message.gateway(gateway_v4);
                     } else {
                         return Err(Error::ConfigError(format!(
                             "dest {} and gateway {} are not the same type",
@@ -87,15 +85,12 @@ pub fn add_route_with_netns<
                     }
                 }
                 if let Some(if_id) = outif_id {
-                    handle = handle.output_interface(if_id);
+                    message = message.output_interface(if_id);
                 }
-                rt.block_on(handle.execute())
+                rt.block_on(rtnl_handle.route().add(message.build()).execute())
             }
             Some((IpAddr::V6(dest_v6), prefix_length)) => {
-                let mut handle = rtnl_handle
-                    .route()
-                    .add()
-                    .v6()
+                let mut message = RouteMessageBuilder::<Ipv6Addr>::new()
                     .scope(scope)
                     .destination_prefix(
                         Ipv6Net::new(dest_v6, prefix_length)
@@ -111,7 +106,7 @@ pub fn add_route_with_netns<
                     );
                 if let Some(gateway) = gateway {
                     if let IpAddr::V6(gateway_v6) = gateway {
-                        handle = handle.gateway(gateway_v6);
+                        message = message.gateway(gateway_v6);
                     } else {
                         return Err(Error::ConfigError(format!(
                             "dest {} and gateway {} are not the same type",
@@ -120,36 +115,46 @@ pub fn add_route_with_netns<
                     }
                 }
                 if let Some(if_id) = outif_id {
-                    handle = handle.output_interface(if_id);
+                    message = message.output_interface(if_id);
                 }
-                rt.block_on(handle.execute())
+                rt.block_on(rtnl_handle.route().add(message.build()).execute())
             }
-            None => {
-                let mut handle = rtnl_handle.route().add().scope(scope);
-                if let Some(if_id) = outif_id {
-                    handle = handle.output_interface(if_id);
+            None => match gateway {
+                Some(IpAddr::V4(gateway_v4)) => {
+                    let mut message = RouteMessageBuilder::<Ipv4Addr>::new()
+                        .scope(scope)
+                        .gateway(gateway_v4);
+                    if let Some(if_id) = outif_id {
+                        message = message.output_interface(if_id);
+                    }
+                    rt.block_on(rtnl_handle.route().add(message.build()).execute())
                 }
-                match gateway {
-                    Some(IpAddr::V4(gateway_v4)) => {
-                        rt.block_on(handle.v4().gateway(gateway_v4).execute())
+                Some(IpAddr::V6(gateway_v6)) => {
+                    let mut message = RouteMessageBuilder::<Ipv6Addr>::new()
+                        .scope(scope)
+                        .gateway(gateway_v6);
+                    if let Some(if_id) = outif_id {
+                        message = message.output_interface(if_id);
                     }
-                    Some(IpAddr::V6(gateway_v6)) => {
-                        rt.block_on(handle.v6().gateway(gateway_v6).execute())
+                    rt.block_on(rtnl_handle.route().add(message.build()).execute())
+                }
+                _ => {
+                    let mut message = RouteMessageBuilder::<Ipv4Addr>::new().scope(scope);
+                    if let Some(if_id) = outif_id {
+                        message = message.output_interface(if_id);
                     }
-                    _ => {
-                        let res = rt.block_on(handle.v4().execute());
-                        if res.is_ok() {
-                            let mut handle = rtnl_handle.route().add().scope(scope);
-                            if let Some(if_id) = outif_id {
-                                handle = handle.output_interface(if_id);
-                            }
-                            rt.block_on(handle.v6().execute())
-                        } else {
-                            res
+                    let res = rt.block_on(rtnl_handle.route().add(message.build()).execute());
+                    if res.is_ok() {
+                        let mut message = RouteMessageBuilder::<Ipv6Addr>::new().scope(scope);
+                        if let Some(if_id) = outif_id {
+                            message = message.output_interface(if_id);
                         }
+                        rt.block_on(rtnl_handle.route().add(message.build()).execute())
+                    } else {
+                        res
                     }
                 }
-            }
+            },
         }
         .map(|_| {
             debug!(?dest, ?gateway, ?outif_id, "Add route successfully");
@@ -227,10 +232,13 @@ pub fn set_loopback_up_with_netns(netns: Arc<NetNs>) -> Result<(), Error> {
                         }),
                         "Try to set interface with Loopback type up"
                     );
+                    let message = LinkMessageBuilder::<LinkUnspec>::new()
+                        .index(msg.header.index)
+                        .up()
+                        .build();
                     return rtnl_handle
                         .link()
-                        .set(msg.header.index)
-                        .up()
+                        .set(message)
                         .execute()
                         .await
                         .map(|_| {

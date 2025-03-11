@@ -2,7 +2,7 @@
 /// CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test veth -- --ignored --nocapture
 use anyhow::anyhow;
 use futures::stream::TryStreamExt;
-use rtnetlink::Handle;
+use rtnetlink::{Handle, LinkMessageBuilder, LinkUnspec, LinkVeth};
 use std::net::{IpAddr, Ipv4Addr};
 use tokio::{runtime, task};
 
@@ -27,21 +27,27 @@ pub struct VethCell {
 
 impl VethCell {
     async fn enable(&mut self) -> anyhow::Result<()> {
-        Ok(self.handle.link().set(self.index).up().execute().await?)
+        let message = LinkMessageBuilder::<LinkUnspec>::new()
+            .index(self.index)
+            .up()
+            .build();
+        Ok(self.handle.link().set(message).execute().await?)
     }
 
     async fn disable(&mut self) -> anyhow::Result<()> {
-        Ok(self.handle.link().set(self.index).down().execute().await?)
+        let message = LinkMessageBuilder::<LinkUnspec>::new()
+            .index(self.index)
+            .down()
+            .build();
+        Ok(self.handle.link().set(message).execute().await?)
     }
 
     async fn set_l2_addr(&mut self, address: &[u8]) -> anyhow::Result<()> {
-        Ok(self
-            .handle
-            .link()
-            .set(self.index)
+        let message = LinkMessageBuilder::<LinkUnspec>::new()
+            .index(self.index)
             .address(address.into())
-            .execute()
-            .await?)
+            .build();
+        Ok(self.handle.link().set(message).execute().await?)
     }
 
     async fn set_l3_addr(&mut self, address: IpAddr, prefix: u8) -> anyhow::Result<()> {
@@ -67,12 +73,8 @@ impl VethCellPair {
         let veth_left = left_name.to_string();
         let veth_right = right_name.to_string();
 
-        handle
-            .link()
-            .add()
-            .veth(left_name.into(), right_name.into())
-            .execute()
-            .await?;
+        let message = LinkMessageBuilder::<LinkVeth>::new(left_name, right_name).build();
+        handle.link().add(message).execute().await?;
 
         let left_index = get_link_index(&handle, &veth_left).await?;
         let right_index = get_link_index(&handle, &veth_right).await?;
