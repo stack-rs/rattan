@@ -114,7 +114,7 @@ where
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Default, Clone)]
 pub struct DelayCellConfig {
-    #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
+    #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde::duration"))]
     pub delay: Delay,
 }
 

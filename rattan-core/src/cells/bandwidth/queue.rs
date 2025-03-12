@@ -378,9 +378,9 @@ where
 pub struct CoDelQueueConfig {
     pub packet_limit: Option<usize>, // the maximum number of packets in the queue, or None for unlimited
     pub byte_limit: Option<usize>, // the maximum number of bytes in the queue, or None for unlimited
-    #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
+    #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde::duration"))]
     pub interval: Duration, // width of moving time window
-    #[cfg_attr(feature = "serde", serde(with = "humantime_serde"))]
+    #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde::duration"))]
     pub target: Duration, // target queue delay
     pub mtu: u32,                  // cell MTU, or minimal queue backlog in bytes
     #[cfg_attr(

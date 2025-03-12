@@ -34,10 +34,10 @@ pub struct ChannelArgs {
     downlink_loss: Option<f64>,
 
     /// Uplink delay
-    #[arg(long, value_name = "Delay", value_parser = humantime::parse_duration)]
+    #[arg(long, value_name = "Delay", value_parser = parse_delay)]
     uplink_delay: Option<Delay>,
     /// Downlink delay
-    #[arg(long, value_name = "Delay", value_parser = humantime::parse_duration)]
+    #[arg(long, value_name = "Delay", value_parser = parse_delay)]
     downlink_delay: Option<Delay>,
 
     /// Uplink bandwidth
@@ -83,6 +83,11 @@ pub struct ChannelArgs {
     /// Command to run. Only used when in compatible mode
     #[arg(last = true)]
     pub command: Option<Vec<String>>,
+}
+
+fn parse_delay(delay: &str) -> Result<Delay, jiff::Error> {
+    let span: jiff::Span = delay.parse()?;
+    Delay::try_from(span)
 }
 
 #[derive(ValueEnum, Clone, Debug)]
