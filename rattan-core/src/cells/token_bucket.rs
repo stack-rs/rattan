@@ -324,34 +324,6 @@ where
     }
 }
 
-/// serde for ByteSize
-mod byte_serde {
-    use bytesize::ByteSize;
-    use serde::de::Error;
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<ByteSize>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: Option<String> = Option::deserialize(deserializer)?;
-        match s {
-            Some(s) => s.parse::<ByteSize>().map(Some).map_err(D::Error::custom),
-            None => Ok(None),
-        }
-    }
-
-    pub fn serialize<S>(value: &Option<ByteSize>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match value {
-            Some(value) => serializer.serialize_str(&value.to_string()),
-            None => serializer.serialize_none(),
-        }
-    }
-}
-
 #[cfg_attr(
     feature = "serde",
     serde_with::skip_serializing_none,
@@ -366,13 +338,13 @@ pub struct TokenBucketCellConfig {
     #[cfg_attr(feature = "serde", serde(with = "human_bandwidth::serde", default))]
     /// rate of the bucket in bps, default: unlimited
     pub rate: Option<Bandwidth>,
-    #[cfg_attr(feature = "serde", serde(with = "byte_serde", default))]
+    #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde::byte", default))]
     /// burst of the bucket in bytes, default: unlimited
     pub burst: Option<ByteSize>,
     #[cfg_attr(feature = "serde", serde(with = "human_bandwidth::serde", default))]
     /// peakrate of the bucket in bps, default: unlimited
     pub peakrate: Option<Bandwidth>,
-    #[cfg_attr(feature = "serde", serde(with = "byte_serde", default))]
+    #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde::byte", default))]
     /// minburst of the bucket in bytes, default: unlimited
     pub minburst: Option<ByteSize>,
 }

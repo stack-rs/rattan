@@ -2,6 +2,8 @@ use std::borrow::Cow;
 
 use regex::Regex;
 
+#[cfg(feature = "serde")]
+pub(crate) mod serde;
 pub mod sync;
 
 pub fn replace_env_var_in_string(input: &str) -> Cow<'_, str> {
