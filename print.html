@@ -592,7 +592,7 @@ You can use these channels through the <code>rattan link</code> subcommand with 
 This channel is suitable for most common network emulation scenarios.</p>
 <p>You can configure the parameters of each cell by passing the arguments to the subcommand.</p>
 <p>For example, to create a channel with 10Mbps bandwidth, infinite queue, 50ms latency and 1% loss rate in both directions, you can run the following command:</p>
-<pre><code class="language-bash">rattan link uplink-bandwidth 10Mbps uplink-delay 50ms uplink-loss 0.1 downlink-bandwidth 10Mbps downlink-delay 50ms downlink-loss 0.1
+<pre><code class="language-bash">rattan link --uplink-bandwidth 10Mbps --uplink-delay 50ms --uplink-loss 0.1 --downlink-bandwidth 10Mbps --downlink-delay 50ms --downlink-loss 0.1
 </code></pre>
 <p>Then you will be prompted to a shell with the network path set up.</p>
 <p>For detailed usage, you can run <code>rattan link --help</code> to see the available cells and options:</p>
