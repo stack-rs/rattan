@@ -11,7 +11,7 @@ You can configure the parameters of each cell by passing the arguments to the su
 For example, to create a channel with 10Mbps bandwidth, infinite queue, 50ms latency and 1% loss rate in both directions, you can run the following command:
 
 ```bash
-rattan link uplink-bandwidth 10Mbps uplink-delay 50ms uplink-loss 0.1 downlink-bandwidth 10Mbps downlink-delay 50ms downlink-loss 0.1
+rattan link --uplink-bandwidth 10Mbps --uplink-delay 50ms --uplink-loss 0.1 --downlink-bandwidth 10Mbps --downlink-delay 50ms --downlink-loss 0.1
 ```
 
 Then you will be prompted to a shell with the network path set up.
