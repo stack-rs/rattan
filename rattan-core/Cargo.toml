@@ -16,7 +16,7 @@ bandwidth = "0.3.0"
 bytesize = "2.0.1"
 figment = { workspace = true }
 camellia = { git = "https://github.com/minhuw/camellia.git", optional = true }
-etherparse = "0.17.0"
+etherparse = "0.18.0"
 futures = { workspace = true }
 human-bandwidth = { workspace = true }
 ipnet = { version = "2.8.0", features = ["serde"] }
