@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 // 2. In `ns-left` and `ns-right`, the same `a` corresponds to the same `b`;
 // 3. If `ns-right` is NOT Compatible, `b` = 1;
 // 4. If `ns-right` is Compatible, `b` is chosen without conflicting with existing IP.
-
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum VethPairGroup {
     Left = 1,
     Right = 2,
@@ -48,18 +48,18 @@ enum VethPairGroup {
 
 const VETH_COUNT_MAX: usize = 254;
 
-fn get_veth_ip_address(pair_id: usize, p: VethPairGroup, suffix: u8) -> (IpAddr, u8) {
+fn get_veth_ip_address(pair_group: VethPairGroup, pair_id: usize, suffix: u8) -> (IpAddr, u8) {
     assert!((1..=VETH_COUNT_MAX).contains(&pair_id));
     (
-        IpAddr::V4(Ipv4Addr::new(10, p as u8, pair_id as u8, suffix)),
+        IpAddr::V4(Ipv4Addr::new(10, pair_group as u8, pair_id as u8, suffix)),
         32,
     )
 }
 
-fn get_veth_mac_address(pair_id: usize, p: VethPairGroup, suffix: u8) -> MacAddr {
+fn get_veth_mac_address(pair_group: VethPairGroup, pair_id: usize, suffix: u8) -> MacAddr {
     assert!((1..=VETH_COUNT_MAX).contains(&pair_id));
     // just ensure that I/G bit is 0
-    [0x38, 0x7e, 0x58, p as u8, pair_id as u8, suffix].into()
+    [0x38, 0x7e, 0x58, pair_group as u8, pair_id as u8, suffix].into()
 }
 
 fn get_addresses_in_use() -> Result<Vec<IpAddr>, Error> {
@@ -200,13 +200,16 @@ impl StdNetEnv {
     }
 }
 
-/// Try to lock an IP 10.2.pair_id.x in `ns-right`
-fn lock_address_suffix(pair_id: usize) -> Result<(IpAddrLock, u8), Error> {
+/// Try to lock an IP suffix x (e.g. 10.pair_group.pair_id.x) in current netns
+fn lock_address_suffix(
+    pair_group: VethPairGroup,
+    pair_id: usize,
+) -> Result<(IpAddrLock, u8), Error> {
     // start from x=1
     let mut addr_suffix = 1;
     let lock = loop {
         // try to create a lock file
-        let ip = get_veth_ip_address(pair_id, VethPairGroup::Left, addr_suffix).0;
+        let ip = get_veth_ip_address(pair_group, pair_id, addr_suffix).0;
         let lock = IpAddrLock::new(ip)?;
 
         // if locked and not in use, return
@@ -231,8 +234,7 @@ fn lock_address_suffix(pair_id: usize) -> Result<(IpAddrLock, u8), Error> {
                 )
                 .into());
             }
-            if !addresses_in_use
-                .contains(&get_veth_ip_address(pair_id, VethPairGroup::Left, addr_suffix).0)
+            if !addresses_in_use.contains(&get_veth_ip_address(pair_group, pair_id, addr_suffix).0)
             {
                 break;
             }
@@ -326,12 +328,11 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     // lock IPs for right veth pairs
     std::fs::create_dir_all(IP_LOCK_DIR)?;
     let mut addr_locks = vec![];
-
     let mut suffixes = vec![0u8];
     match config.mode {
         StdNetEnvMode::Compatible => {
             for pair_id in 1..=config.right_veth_count {
-                let (lock, suffix) = lock_address_suffix(pair_id)?;
+                let (lock, suffix) = lock_address_suffix(VethPairGroup::Right, pair_id)?;
                 suffixes.push(suffix);
                 addr_locks.push(lock);
             }
@@ -352,12 +353,12 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
                 )
                 .namespace(Some(rattan_netns.clone()), Some(right_netns.clone()))
                 .mac_addr(
-                    get_veth_mac_address(pair_id, VethPairGroup::Right, 2),
-                    get_veth_mac_address(pair_id, VethPairGroup::Right, *suffix),
+                    get_veth_mac_address(VethPairGroup::Right, pair_id, 2),
+                    get_veth_mac_address(VethPairGroup::Right, pair_id, *suffix),
                 )
                 .ip_addr(
-                    get_veth_ip_address(pair_id, VethPairGroup::Right, 2),
-                    get_veth_ip_address(pair_id, VethPairGroup::Right, *suffix),
+                    get_veth_ip_address(VethPairGroup::Right, pair_id, 2),
+                    get_veth_ip_address(VethPairGroup::Right, pair_id, *suffix),
                 )
                 .build()?,
         );
@@ -376,12 +377,12 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
                 )
                 .namespace(Some(left_netns.clone()), Some(rattan_netns.clone()))
                 .mac_addr(
-                    get_veth_mac_address(pair_id, VethPairGroup::Left, *suffix),
-                    get_veth_mac_address(pair_id, VethPairGroup::Left, 2),
+                    get_veth_mac_address(VethPairGroup::Left, pair_id, *suffix),
+                    get_veth_mac_address(VethPairGroup::Left, pair_id, 2),
                 )
                 .ip_addr(
-                    get_veth_ip_address(pair_id, VethPairGroup::Left, *suffix),
-                    get_veth_ip_address(pair_id, VethPairGroup::Left, 2),
+                    get_veth_ip_address(VethPairGroup::Left, pair_id, *suffix),
+                    get_veth_ip_address(VethPairGroup::Left, pair_id, 2),
                 )
                 .build()?,
         );
