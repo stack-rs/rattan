@@ -11,7 +11,6 @@ use once_cell::sync::Lazy;
 use std::time::Duration;
 use std::{
     collections::VecDeque,
-    io::ErrorKind,
     os::fd::{AsFd, AsRawFd},
     sync::Arc,
 };
