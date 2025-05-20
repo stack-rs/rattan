@@ -63,7 +63,7 @@ impl InterfaceSender<XDPPacket> for XDPSender {
         for packet in packets {
             self.sender
                 .blocking_send(packet)
-                .map_err(|_| std::io::Error::new(ErrorKind::Other, "send error"))?;
+                .map_err(|_| std::io::Error::other("send error"))?;
         }
 
         Ok(len)
@@ -181,7 +181,7 @@ impl XDPDriver {
             .lock()
             .await
             .send_bulk(packets)
-            .map_err(|_| std::io::Error::new(ErrorKind::Other, "camellia error"))?;
+            .map_err(|_| std::io::Error::other("camellia error"))?;
 
         Ok(len - remaining.len())
     }
