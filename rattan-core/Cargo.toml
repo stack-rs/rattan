@@ -45,7 +45,7 @@ regex = "1.7.3"
 
 [dev-dependencies]
 anyhow = "1.0.69"
-criterion = "0.5.1"
+criterion = "0.6.0"
 ctrlc = { workspace = true }
 insta = { version = "1.39.0", features = ["json"] }
 itertools = "0.14.0"
