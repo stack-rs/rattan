@@ -8,7 +8,7 @@ use tracing::debug;
 
 use crate::{
     cells::{
-        reorder_delay::{delay::Delay, queue::DelayQueue},
+        reorder_delay::{delay::DelayGenerator, queue::DelayQueue},
         Cell, ControlInterface, Egress, Ingress, Packet,
     },
     error::Error,
@@ -52,7 +52,7 @@ where
 pub struct ReorderDelayCellEgress<P, D>
 where
     P: Packet,
-    D: Delay,
+    D: DelayGenerator,
 {
     egress: mpsc::UnboundedReceiver<P>,
     delay: D,
@@ -65,7 +65,7 @@ where
 impl<P, D> ReorderDelayCellEgress<P, D>
 where
     P: Packet + Send + Sync,
-    D: Delay,
+    D: DelayGenerator,
 {
     fn set_config(&mut self, config: ReorderDelayCellConfig<D>) {
         self.delay = config.delay;
@@ -76,7 +76,7 @@ where
 impl<P, D> Egress<P> for ReorderDelayCellEgress<P, D>
 where
     P: Packet + Send + Sync,
-    D: Delay + Send,
+    D: DelayGenerator + Send,
 {
     async fn dequeue(&mut self) -> Option<P> {
         // wait until next_available
@@ -171,14 +171,14 @@ where
 #[derive(Debug)]
 pub struct ReorderDelayCellConfig<D>
 where
-    D: Delay,
+    D: DelayGenerator,
 {
     pub delay: D,
 }
 
 impl<D> Clone for ReorderDelayCellConfig<D>
 where
-    D: Delay + Clone,
+    D: DelayGenerator + Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -189,7 +189,7 @@ where
 
 impl<D> ReorderDelayCellConfig<D>
 where
-    D: Delay,
+    D: DelayGenerator,
 {
     pub fn new(delay: impl Into<D>) -> Self {
         Self {
@@ -200,7 +200,7 @@ where
 
 pub struct ReorderDelayCellControlInterface<D>
 where
-    D: Delay,
+    D: DelayGenerator,
 {
     config_tx: mpsc::UnboundedSender<ReorderDelayCellConfig<D>>,
 }
@@ -208,7 +208,7 @@ where
 #[cfg(feature = "serde")]
 impl<D> ControlInterface for ReorderDelayCellControlInterface<D>
 where
-    D: Delay + Send + Sync + for<'a> Deserialize<'a> + 'static,
+    D: DelayGenerator + Send + Sync + for<'a> Deserialize<'a> + 'static,
 {
     type Config = ReorderDelayCellConfig<D>;
 
@@ -223,7 +223,7 @@ where
 #[cfg(not(feature = "serde"))]
 impl<D> ControlInterface for ReorderDelayCellControlInterface<D>
 where
-    D: Delay + Send + Sync + 'static,
+    D: DelayGenerator + Send + Sync + 'static,
 {
     type Config = ReorderDelayCellConfig<D>;
 
@@ -235,7 +235,7 @@ where
     }
 }
 
-pub struct ReorderDelayCell<P: Packet, D: Delay> {
+pub struct ReorderDelayCell<P: Packet, D: DelayGenerator> {
     ingress: Arc<ReorderDelayCellIngress<P>>,
     egress: ReorderDelayCellEgress<P, D>,
     control_interface: Arc<ReorderDelayCellControlInterface<D>>,
@@ -245,7 +245,7 @@ pub struct ReorderDelayCell<P: Packet, D: Delay> {
 impl<P, D> Cell<P> for ReorderDelayCell<P, D>
 where
     P: Packet + Send + Sync + 'static,
-    D: Delay + Send + Sync + 'static,
+    D: DelayGenerator + Send + Sync + 'static,
 {
     type IngressType = ReorderDelayCellIngress<P>;
     type EgressType = ReorderDelayCellEgress<P, D>;
@@ -272,7 +272,7 @@ where
 impl<P, D> Cell<P> for ReorderDelayCell<P, D>
 where
     P: Packet + Send + Sync + 'static,
-    D: Delay + Send + Sync + 'static + for<'a> Deserialize<'a>,
+    D: DelayGenerator + Send + Sync + 'static + for<'a> Deserialize<'a>,
 {
     type IngressType = ReorderDelayCellIngress<P>;
     type EgressType = ReorderDelayCellEgress<P, D>;
@@ -298,7 +298,7 @@ where
 impl<P, D> ReorderDelayCell<P, D>
 where
     P: Packet,
-    D: Delay,
+    D: DelayGenerator,
 {
     pub fn new(delay: impl Into<D>) -> Result<ReorderDelayCell<P, D>, Error> {
         debug!("New ReorderDelayCell");

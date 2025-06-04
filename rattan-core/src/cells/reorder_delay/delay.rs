@@ -4,42 +4,42 @@ use tokio::time::Duration;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// A delay implementation that can be used in the reorder delay cell.
-pub trait Delay {
+/// A delay generator that can be used in the reorder delay cell.
+pub trait DelayGenerator {
     /// Creates a new delay
     fn new_delay(&self) -> Duration;
 }
 
-impl Delay for std::time::Duration {
+impl DelayGenerator for std::time::Duration {
     fn new_delay(&self) -> Duration {
         *self
     }
 }
 
-/// A delay implementation that uses a normal distribution.
+/// A delay generator that uses a normal distribution.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug)]
-pub struct NormalLawDelay {
+pub struct NormalLawDelayGenerator {
     law: rand_distr::Normal<f64>,
 }
 
-/// A delay implementation that uses a log-normal distribution.
+/// A delay generator that uses a log-normal distribution.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug)]
-pub struct LogNormalLawDelay {
+pub struct LogNormalLawDelayGenerator {
     law: rand_distr::LogNormal<f64>,
 }
 
-impl NormalLawDelay {
-    /// Creates a new normal law delay with the specified average and jitter of delay.
+impl NormalLawDelayGenerator {
+    /// Creates a new normal law delay generator with the specified average and jitter of delay.
     pub fn new(average: Duration, jitter: Duration) -> Result<Self, rand_distr::NormalError> {
         let law = rand_distr::Normal::new(average.as_secs_f64(), jitter.as_secs_f64())?;
         Ok(Self { law })
     }
 }
 
-impl LogNormalLawDelay {
-    /// Creates a new log-normal law delay with the specified average and jitter of delay.
+impl LogNormalLawDelayGenerator {
+    /// Creates a new log-normal law delay generator with the specified average and jitter of delay.
     ///
     /// The arguments are not the one for the underlying normal distribution, but the real average and jitter
     pub fn new(average: Duration, jitter: Duration) -> Result<Self, rand_distr::NormalError> {
@@ -52,13 +52,13 @@ impl LogNormalLawDelay {
     }
 }
 
-impl Delay for NormalLawDelay {
+impl DelayGenerator for NormalLawDelayGenerator {
     fn new_delay(&self) -> Duration {
         Duration::from_secs_f64(self.law.sample(&mut rand::rng()).max(0.0))
     }
 }
 
-impl Delay for LogNormalLawDelay {
+impl DelayGenerator for LogNormalLawDelayGenerator {
     fn new_delay(&self) -> Duration {
         Duration::from_secs_f64(self.law.sample(&mut rand::rng()))
     }

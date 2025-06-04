@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::{
     cells::{
         reorder_delay::{
-            delay::{Delay, LogNormalLawDelay, NormalLawDelay},
+            delay::{DelayGenerator, LogNormalLawDelayGenerator, NormalLawDelayGenerator},
             ReorderDelayCell, ReorderDelayCellConfig,
         },
         Packet,
@@ -18,11 +18,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug)]
 pub enum ReorderDelayCellBuildConfig {
     Constant(ReorderDelayCellConfig<Duration>),
-    NormalLaw(ReorderDelayCellConfig<NormalLawDelay>),
-    LogNormalLaw(ReorderDelayCellConfig<LogNormalLawDelay>),
+    NormalLaw(ReorderDelayCellConfig<NormalLawDelayGenerator>),
+    LogNormalLaw(ReorderDelayCellConfig<LogNormalLawDelayGenerator>),
 }
 
-impl<D: Delay> ReorderDelayCellConfig<D> {
+impl<D: DelayGenerator> ReorderDelayCellConfig<D> {
     pub fn into_factory<P: Packet>(self) -> impl CellFactory<ReorderDelayCell<P, D>> {
         move |handle| {
             let _guard = handle.enter();

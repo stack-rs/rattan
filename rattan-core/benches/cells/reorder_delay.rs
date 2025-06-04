@@ -4,7 +4,7 @@ use criterion::{measurement::WallTime, BenchmarkGroup, BenchmarkId};
 use rand::random_range;
 use rattan_core::cells::{
     reorder_delay::{
-        delay::{Delay, LogNormalLawDelay, NormalLawDelay},
+        delay::{DelayGenerator, LogNormalLawDelayGenerator, NormalLawDelayGenerator},
         ReorderDelayCell, ReorderDelayCellConfig,
     },
     Cell as _, Egress as _, Ingress as _, Packet, StdPacket,
@@ -13,7 +13,7 @@ use tokio::{runtime::Handle, time::Interval};
 
 use crate::{utils::clock, MTU};
 
-fn init<P: Packet + Sync, D: Delay + Send + Sync + 'static>(
+fn init<P: Packet + Sync, D: DelayGenerator + Send + Sync + 'static>(
     delay: D,
     handle: &Handle,
 ) -> ReorderDelayCell<P, D> {
@@ -21,7 +21,7 @@ fn init<P: Packet + Sync, D: Delay + Send + Sync + 'static>(
     crate::utils::create_cell(config.into_factory(), handle).expect("Failed to create the cell")
 }
 
-async fn test<P: Packet + Sync, D: Delay + Send + Sync + 'static>(
+async fn test<P: Packet + Sync, D: DelayGenerator + Send + Sync + 'static>(
     cell: &mut ReorderDelayCell<P, D>,
     clock: &mut Interval,
 ) {
@@ -85,8 +85,8 @@ pub fn run(group: &mut BenchmarkGroup<WallTime>, handle: &Handle) {
                 &delay,
                 |b, &delay| {
                     b.to_async(handle).iter_custom(|batch_size| async move {
-                        let mut cell = init::<StdPacket, NormalLawDelay>(
-                            NormalLawDelay::new(delay, delay / 10)
+                        let mut cell = init::<StdPacket, NormalLawDelayGenerator>(
+                            NormalLawDelayGenerator::new(delay, delay / 10)
                                 .expect("Failed to create the delay"),
                             handle,
                         );
@@ -115,8 +115,8 @@ pub fn run(group: &mut BenchmarkGroup<WallTime>, handle: &Handle) {
                 &delay,
                 |b, &delay| {
                     b.to_async(handle).iter_custom(|batch_size| async move {
-                        let mut cell = init::<StdPacket, LogNormalLawDelay>(
-                            LogNormalLawDelay::new(delay, delay / 10)
+                        let mut cell = init::<StdPacket, LogNormalLawDelayGenerator>(
+                            LogNormalLawDelayGenerator::new(delay, delay / 10)
                                 .expect("Failed to create the delay"),
                             handle,
                         );
@@ -147,8 +147,8 @@ pub fn run(group: &mut BenchmarkGroup<WallTime>, handle: &Handle) {
                     &delay,
                     |b, &delay| {
                         b.to_async(handle).iter_custom(|batch_size| async move {
-                            let mut cell = init::<StdPacket, NormalLawDelay>(
-                                NormalLawDelay::new(delay, delay / 5)
+                            let mut cell = init::<StdPacket, NormalLawDelayGenerator>(
+                                NormalLawDelayGenerator::new(delay, delay / 5)
                                     .expect("Failed to create the delay"),
                                 handle,
                             );
@@ -177,8 +177,8 @@ pub fn run(group: &mut BenchmarkGroup<WallTime>, handle: &Handle) {
                     &delay,
                     |b, &delay| {
                         b.to_async(handle).iter_custom(|batch_size| async move {
-                            let mut cell = init::<StdPacket, LogNormalLawDelay>(
-                                LogNormalLawDelay::new(delay, delay / 5)
+                            let mut cell = init::<StdPacket, LogNormalLawDelayGenerator>(
+                                LogNormalLawDelayGenerator::new(delay, delay / 5)
                                     .expect("Failed to create the delay"),
                                 handle,
                             );
