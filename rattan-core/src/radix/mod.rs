@@ -386,6 +386,17 @@ where
                 CellBuildConfig::Shadow(config) => {
                     self.build_cell(id, config.into_factory())?;
                 }
+                CellBuildConfig::ReorderDelay(config) => match config {
+                    crate::config::ReorderDelayCellBuildConfig::Constant(config) => {
+                        self.build_cell(id, config.into_factory())?;
+                    }
+                    crate::config::ReorderDelayCellBuildConfig::NormalLaw(config) => {
+                        self.build_cell(id, config.into_factory())?;
+                    }
+                    crate::config::ReorderDelayCellBuildConfig::LogNormalLaw(config) => {
+                        self.build_cell(id, config.into_factory())?;
+                    }
+                },
                 CellBuildConfig::Router(config) => {
                     // ignore routers, build them after other cells
                     router_configs.push((id, config));

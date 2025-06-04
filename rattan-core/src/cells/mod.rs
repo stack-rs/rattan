@@ -11,6 +11,7 @@ pub mod bandwidth;
 pub mod delay;
 pub mod external;
 pub mod loss;
+pub mod reorder_delay;
 pub mod router;
 pub mod shadow;
 pub mod token_bucket;
