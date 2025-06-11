@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 
 mod bandwidth;
 mod delay;
-mod reorder_delay;
+mod delay_per_packet;
 
 mod utils;
 
@@ -15,8 +15,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     // group.sample_size(10);
 
     delay::run(&mut c.benchmark_group("Delay Cell"), runtime.handle());
-    reorder_delay::run(
-        &mut c.benchmark_group("Reorder Delay Cell"),
+    delay_per_packet::run(
+        &mut c.benchmark_group("Delay Per-Packet Cell"),
         runtime.handle(),
     );
     bandwidth::run(&mut c.benchmark_group("Bandwidth Cell"), runtime.handle());

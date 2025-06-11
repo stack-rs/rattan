@@ -85,12 +85,12 @@ fn format_bandwidth(bandwidth: &Bandwidth) -> String {
 pub fn run(group: &mut BenchmarkGroup<WallTime>, handle: &Handle) {
     for bandwidth in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
         .into_iter()
-        .map(|mbps| Bandwidth::from_bps(mbps * 1024 * 1024))
+        .map(|mibps| Bandwidth::from_bps(mibps * 1024 * 1024))
     {
         let size = (bandwidth.as_bps() / 8) as u64;
         group
             .warm_up_time(Duration::from_secs(1))
-            .measurement_time(Duration::from_secs(30))
+            .measurement_time(Duration::from_secs(32))
             .sample_size(30)
             .throughput(criterion::Throughput::Bytes(size))
             .bench_with_input(

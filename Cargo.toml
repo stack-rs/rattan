@@ -15,7 +15,8 @@ figment = { version = "0.10", features = ["toml", "env", "json"] }
 futures = "0.3.29"
 human-bandwidth = { version = "0.1.1", features = ["serde"] }
 jiff = "0.2.4"
-netem-trace = { version = "0.4.0", features = ["serde", "human", "mahimahi"] }
+# netem-trace = { version = "0.4.1", features = ["serde", "human", "mahimahi"] }
+netem-trace = { version = "0.4.1", features = ["serde", "human", "mahimahi"], git = "https://github.com/maxime-bruno/netem-trace/", branch = "minor_correction" }
 nix = { version = "0.29.0", features = [
   "time",
   "net",

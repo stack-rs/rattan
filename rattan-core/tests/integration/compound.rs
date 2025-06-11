@@ -181,6 +181,7 @@ fn test_compound() {
             ))
             .unwrap();
 
+        sleep(Duration::from_millis(500));
         let right_handle = radix
             .right_spawn(None, || {
                 let mut iperf_server = std::process::Command::new("iperf3")
@@ -226,6 +227,9 @@ fn test_compound() {
         bandwidth.drain(0..4);
         let bitrate = bandwidth.iter().sum::<u64>() / bandwidth.len() as u64;
         info!("bitrate: {:?}", Bandwidth::from_bps(bitrate));
-        assert!(bitrate > 80000000 && bitrate < 100000000);
+        assert!(
+            bitrate > 80_000_000 && bitrate < 100_000_000,
+            "The bitrate is {bitrate} and should be between 80000000 and 100000000"
+        );
     }
 }

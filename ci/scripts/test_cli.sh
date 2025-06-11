@@ -2,8 +2,8 @@
 
 PING_ITERS=10
 WORKDIR=$(
-	cd "$(dirname "$0")"
-	pwd
+    cd "$(dirname "$0")"
+    pwd
 )
 
 echo "CLI Test #1"

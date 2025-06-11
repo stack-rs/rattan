@@ -1,17 +1,19 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
-use tokio::time::{Duration, Instant};
+use tokio::time::Instant;
 
 use crate::cells::Packet;
 
+pub mod delay;
+
 /// A priority queue to store packets and returns them after a certain delay
 #[derive(Default)]
-pub struct DelayQueue<P> {
+pub struct DelayedQueue<P> {
     /// The BTreeMap stores packets ordered by the Instant they need to be sent
     queue: BTreeMap<Instant, P>,
 }
 
-impl<P> DelayQueue<P> {
+impl<P> DelayedQueue<P> {
     /// Creates a new DelayQueue instance.
     pub fn new() -> Self {
         Self {
@@ -20,7 +22,7 @@ impl<P> DelayQueue<P> {
     }
 }
 
-impl<P: Packet> DelayQueue<P> {
+impl<P: Packet> DelayedQueue<P> {
     /// Enqueues a packet with a specified delay.
     ///
     /// The delay is computed since the timestamp of the packet

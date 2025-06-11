@@ -1,31 +1,28 @@
 use std::sync::{atomic::AtomicI32, Arc};
 
 use async_trait::async_trait;
+use netem_trace::{model::DelayPerPacketTraceConfig, DelayPerPacketTrace};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::Instant};
-use tracing::debug;
+use tracing::{debug, error};
 
+use crate::cells::per_packet::DelayedQueue;
+#[cfg(feature = "serde")]
 use crate::{
-    cells::{
-        reorder_delay::{delay::DelayGenerator, queue::DelayQueue},
-        Cell, ControlInterface, Egress, Ingress, Packet,
-    },
+    cells::{Cell, ControlInterface, Egress, Ingress, Packet},
     error::Error,
     metal::timer::Timer,
 };
 
-pub mod delay;
-pub mod queue;
-
-pub struct ReorderDelayCellIngress<P>
+pub struct DelayPerPacketCellIngress<P>
 where
     P: Packet,
 {
     ingress: mpsc::UnboundedSender<P>,
 }
 
-impl<P> Clone for ReorderDelayCellIngress<P>
+impl<P> Clone for DelayPerPacketCellIngress<P>
 where
     P: Packet,
 {
@@ -36,7 +33,7 @@ where
     }
 }
 
-impl<P> Ingress<P> for ReorderDelayCellIngress<P>
+impl<P> Ingress<P> for DelayPerPacketCellIngress<P>
 where
     P: Packet + Send,
 {
@@ -49,34 +46,31 @@ where
     }
 }
 
-pub struct ReorderDelayCellEgress<P, D>
+pub struct DelayPerPacketCellEgress<P>
 where
     P: Packet,
-    D: DelayGenerator,
 {
     egress: mpsc::UnboundedReceiver<P>,
-    delay: D,
-    packet_queue: DelayQueue<P>,
-    config_rx: mpsc::UnboundedReceiver<ReorderDelayCellConfig<D>>,
+    delay: Box<dyn DelayPerPacketTrace>,
+    packet_queue: DelayedQueue<P>,
+    config_rx: mpsc::UnboundedReceiver<DelayPerPacketCellConfig>,
     timer: Timer,
     state: AtomicI32,
 }
 
-impl<P, D> ReorderDelayCellEgress<P, D>
+impl<P> DelayPerPacketCellEgress<P>
 where
     P: Packet + Send + Sync,
-    D: DelayGenerator,
 {
-    fn set_config(&mut self, config: ReorderDelayCellConfig<D>) {
-        self.delay = config.delay;
+    fn set_config(&mut self, config: DelayPerPacketCellConfig) {
+        self.delay = config.delay.into_model();
     }
 }
 
 #[async_trait]
-impl<P, D> Egress<P> for ReorderDelayCellEgress<P, D>
+impl<P> Egress<P> for DelayPerPacketCellEgress<P>
 where
     P: Packet + Send + Sync,
-    D: DelayGenerator + Send,
 {
     async fn dequeue(&mut self) -> Option<P> {
         // wait until next_available
@@ -97,7 +91,8 @@ where
                                     return Some(new_packet);
                                 }
                                 _ => {
-                                    self.packet_queue.enqueue(new_packet, self.delay.new_delay());
+                                    let Some(delay) = self.delay.next_delay() else { continue };
+                                    self.packet_queue.enqueue(new_packet, delay);
                                 }
                             }
                         }
@@ -132,7 +127,8 @@ where
                                     return Some(new_packet);
                                 }
                                 _ => {
-                                    self.packet_queue.enqueue(new_packet, self.delay.new_delay());
+                                    let Some(delay) = self.delay.next_delay() else { continue };
+                                    self.packet_queue.enqueue(new_packet, delay);
                                     packet = self.packet_queue.dequeue();
                                 }
                             }
@@ -168,18 +164,11 @@ where
     serde_with::skip_serializing_none,
     derive(Deserialize, Serialize)
 )]
-#[derive(Debug)]
-pub struct ReorderDelayCellConfig<D>
-where
-    D: DelayGenerator,
-{
-    pub delay: D,
+pub struct DelayPerPacketCellConfig {
+    pub delay: Box<dyn DelayPerPacketTraceConfig>,
 }
 
-impl<D> Clone for ReorderDelayCellConfig<D>
-where
-    D: DelayGenerator + Clone,
-{
+impl Clone for DelayPerPacketCellConfig {
     fn clone(&self) -> Self {
         Self {
             delay: self.delay.clone(),
@@ -187,30 +176,38 @@ where
     }
 }
 
-impl<D> ReorderDelayCellConfig<D>
-where
-    D: DelayGenerator,
-{
-    pub fn new(delay: impl Into<D>) -> Self {
+impl std::fmt::Debug for DelayPerPacketCellConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = if f.alternate() {
+            serde_json::to_string_pretty(self.delay.as_ref())
+        } else {
+            serde_json::to_string(self.delay.as_ref())
+        }
+        .map_err(|err| {
+            error!("Failed to serialize a DelayPerPacketTraceConfig: {err}");
+            std::fmt::Error
+        })?;
+        let mut f = f.debug_struct("DelayPerPacketCellConfig");
+        f.field("delay", &value);
+        f.finish()
+    }
+}
+
+impl DelayPerPacketCellConfig {
+    pub fn new(delay: impl DelayPerPacketTraceConfig + 'static) -> Self {
         Self {
-            delay: delay.into(),
+            delay: Box::new(delay),
         }
     }
 }
 
-pub struct ReorderDelayCellControlInterface<D>
-where
-    D: DelayGenerator,
-{
-    config_tx: mpsc::UnboundedSender<ReorderDelayCellConfig<D>>,
+pub struct DelayPerPacketCellControlInterface {
+    config_tx: mpsc::UnboundedSender<DelayPerPacketCellConfig>,
 }
 
 #[cfg(feature = "serde")]
-impl<D> ControlInterface for ReorderDelayCellControlInterface<D>
-where
-    D: DelayGenerator + Send + Sync + for<'a> Deserialize<'a> + 'static,
-{
-    type Config = ReorderDelayCellConfig<D>;
+impl ControlInterface for DelayPerPacketCellControlInterface {
+    type Config = DelayPerPacketCellConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         self.config_tx
@@ -221,11 +218,8 @@ where
 }
 
 #[cfg(not(feature = "serde"))]
-impl<D> ControlInterface for ReorderDelayCellControlInterface<D>
-where
-    D: DelayGenerator + Send + Sync + 'static,
-{
-    type Config = ReorderDelayCellConfig<D>;
+impl ControlInterface for DelayPerPacketCellControlInterface {
+    type Config = DelayPerPacketCellConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         self.config_tx
@@ -235,21 +229,20 @@ where
     }
 }
 
-pub struct ReorderDelayCell<P: Packet, D: DelayGenerator> {
-    ingress: Arc<ReorderDelayCellIngress<P>>,
-    egress: ReorderDelayCellEgress<P, D>,
-    control_interface: Arc<ReorderDelayCellControlInterface<D>>,
+pub struct DelayPerPacketCell<P: Packet> {
+    ingress: Arc<DelayPerPacketCellIngress<P>>,
+    egress: DelayPerPacketCellEgress<P>,
+    control_interface: Arc<DelayPerPacketCellControlInterface>,
 }
 
 #[cfg(not(feature = "serde"))]
-impl<P, D> Cell<P> for ReorderDelayCell<P, D>
+impl<P> Cell<P> for DelayPerPacketCell<P>
 where
     P: Packet + Send + Sync + 'static,
-    D: DelayGenerator + Send + Sync + 'static,
 {
-    type IngressType = ReorderDelayCellIngress<P>;
-    type EgressType = ReorderDelayCellEgress<P, D>;
-    type ControlInterfaceType = ReorderDelayCellControlInterface<D>;
+    type IngressType = DelayPerPacketCellIngress<P>;
+    type EgressType = DelayPerPacketCellEgress<P>;
+    type ControlInterfaceType = DelayPerPacketCellControlInterface;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -269,14 +262,13 @@ where
 }
 
 #[cfg(feature = "serde")]
-impl<P, D> Cell<P> for ReorderDelayCell<P, D>
+impl<P> Cell<P> for DelayPerPacketCell<P>
 where
     P: Packet + Send + Sync + 'static,
-    D: DelayGenerator + Send + Sync + 'static + for<'a> Deserialize<'a>,
 {
-    type IngressType = ReorderDelayCellIngress<P>;
-    type EgressType = ReorderDelayCellEgress<P, D>;
-    type ControlInterfaceType = ReorderDelayCellControlInterface<D>;
+    type IngressType = DelayPerPacketCellIngress<P>;
+    type EgressType = DelayPerPacketCellEgress<P>;
+    type ControlInterfaceType = DelayPerPacketCellControlInterface;
 
     fn sender(&self) -> Arc<Self::IngressType> {
         self.ingress.clone()
@@ -295,32 +287,42 @@ where
     }
 }
 
-impl<P, D> ReorderDelayCell<P, D>
+impl<P> DelayPerPacketCell<P>
 where
     P: Packet,
-    D: DelayGenerator,
 {
-    pub fn new(delay: impl Into<D>) -> Result<ReorderDelayCell<P, D>, Error> {
-        debug!("New ReorderDelayCell");
+    pub fn new(
+        config: impl Into<Box<dyn DelayPerPacketTrace>>,
+    ) -> Result<DelayPerPacketCell<P>, Error> {
+        debug!("New DelayPerPacketCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
-        Ok(ReorderDelayCell {
-            ingress: Arc::new(ReorderDelayCellIngress { ingress: rx }),
-            egress: ReorderDelayCellEgress {
+        Ok(DelayPerPacketCell {
+            ingress: Arc::new(DelayPerPacketCellIngress { ingress: rx }),
+            egress: DelayPerPacketCellEgress {
                 egress: tx,
-                delay: delay.into(),
-                packet_queue: DelayQueue::new(),
+                delay: config.into(),
+                packet_queue: DelayedQueue::new(),
                 config_rx,
                 timer: Timer::new()?,
                 state: AtomicI32::new(0),
             },
-            control_interface: Arc::new(ReorderDelayCellControlInterface { config_tx }),
+            control_interface: Arc::new(DelayPerPacketCellControlInterface { config_tx }),
         })
     }
 }
 
+// impl<Config: DelayPerPacketTraceConfig + 'static> From<Config> for DelayPerPacketCellConfig {
+//     fn from(config: Config) -> Self {
+//         Self {
+//             delay: Box::new(config),
+//         }
+//     }
+// }
+
 #[cfg(test)]
 mod tests {
+    use netem_trace::{model::StaticDelayPerPacketConfig, Delay};
     use std::time::{Duration, Instant};
     use tracing::{info, span, Level};
 
@@ -344,7 +346,11 @@ mod tests {
             let _guard = rt.enter();
 
             info!("Creating cell with {}ms delay", testing_delay);
-            let cell = ReorderDelayCell::<_, Duration>::new(Duration::from_millis(testing_delay))?;
+            let cell = DelayPerPacketCell::new(
+                StaticDelayPerPacketConfig::new()
+                    .delay(Delay::from_millis(testing_delay))
+                    .build(),
+            )?;
             let ingress = cell.sender();
             let mut egress = cell.into_receiver();
             egress.reset();
@@ -402,7 +408,11 @@ mod tests {
         let _guard = rt.enter();
 
         info!("Creating cell with 10ms delay");
-        let cell = ReorderDelayCell::<_, Duration>::new(Duration::from_millis(10))?;
+        let cell = DelayPerPacketCell::new(
+            StaticDelayPerPacketConfig::new()
+                .delay(Delay::from_millis(10))
+                .build(),
+        )?;
         let config_changer = cell.control_interface();
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
@@ -417,7 +427,9 @@ mod tests {
 
         // Wait for 5ms, then change the config to let the delay be longer
         std::thread::sleep(Duration::from_millis(5));
-        config_changer.set_config(ReorderDelayCellConfig::new(Duration::from_millis(20)))?;
+        config_changer.set_config(DelayPerPacketCellConfig::new(
+            StaticDelayPerPacketConfig::new().delay(Delay::from_millis(20)),
+        ))?;
 
         let received = rt.block_on(async { egress.dequeue().await });
 
@@ -439,7 +451,9 @@ mod tests {
 
         // Wait for 15ms, then change the config back to 10ms
         std::thread::sleep(Duration::from_millis(15));
-        config_changer.set_config(ReorderDelayCellConfig::new(Duration::from_millis(10)))?;
+        config_changer.set_config(DelayPerPacketCellConfig::new(
+            StaticDelayPerPacketConfig::new().delay(Delay::from_millis(10)),
+        ))?;
 
         let received = rt.block_on(async { egress.dequeue().await });
 
