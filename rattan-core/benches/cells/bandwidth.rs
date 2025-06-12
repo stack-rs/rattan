@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use bandwidth::Bandwidth;
 use criterion::{measurement::WallTime, BenchmarkGroup, BenchmarkId};
+use human_bandwidth::binary_system::format_binary_bandwidth;
 use rand::random_range;
 use rattan_core::cells::{
     bandwidth::{
@@ -70,18 +71,6 @@ async fn test<P: Packet + Sync>(cell: &mut Cell<P>, clock: &mut Interval, total:
     );
 }
 
-fn format_bandwidth(bandwidth: &Bandwidth) -> String {
-    let bytes_ps = bandwidth.as_bps() / 8;
-    match bytes_ps.ilog2() {
-        0..10 => format!("{}Bps", bytes_ps),
-        10..20 => format!("{:.3}kiBps", bytes_ps as f64 / 2_u64.pow(10) as f64),
-        20..30 => format!("{:.3}MiBps", bytes_ps as f64 / 2_u64.pow(20) as f64),
-        30..40 => format!("{:.3}GiBps", bytes_ps as f64 / 2_u64.pow(30) as f64),
-        40..50 => format!("{:.3}TiBps", bytes_ps as f64 / 2_u64.pow(40) as f64),
-        _ => format!("{:.3}PiBps", bytes_ps as f64 / 2_u64.pow(50) as f64),
-    }
-}
-
 pub fn run(group: &mut BenchmarkGroup<WallTime>, handle: &Handle) {
     for bandwidth in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
         .into_iter()
@@ -94,7 +83,7 @@ pub fn run(group: &mut BenchmarkGroup<WallTime>, handle: &Handle) {
             .sample_size(30)
             .throughput(criterion::Throughput::Bytes(size))
             .bench_with_input(
-                BenchmarkId::new("Bandwidth", format_bandwidth(&bandwidth)),
+                BenchmarkId::new("Bandwidth", format_binary_bandwidth(bandwidth)),
                 &bandwidth,
                 |b, &delay| {
                     b.to_async(handle).iter_custom(|batch_size| async move {

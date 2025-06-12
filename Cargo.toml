@@ -13,7 +13,7 @@ rust-version = "1.77"
 ctrlc = "3.2.5"
 figment = { version = "0.10", features = ["toml", "env", "json"] }
 futures = "0.3.29"
-human-bandwidth = { version = "0.1.1", features = ["serde"] }
+human-bandwidth = { version = "0.1.4", features = ["serde", "binary-system"] }
 jiff = "0.2.4"
 # netem-trace = { version = "0.4.1", features = ["serde", "human", "mahimahi"] }
 netem-trace = { version = "0.4.1", features = ["serde", "human", "mahimahi"], git = "https://github.com/maxime-bruno/netem-trace/", branch = "minor_correction" }

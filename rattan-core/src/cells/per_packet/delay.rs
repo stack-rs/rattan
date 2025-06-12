@@ -312,6 +312,14 @@ where
     }
 }
 
+impl<Config: DelayPerPacketTraceConfig + 'static> From<Config> for DelayPerPacketCellConfig {
+    fn from(value: Config) -> Self {
+        Self {
+            delay: Box::new(value),
+        }
+    }
+}
+
 // impl<Config: DelayPerPacketTraceConfig + 'static> From<Config> for DelayPerPacketCellConfig {
 //     fn from(config: Config) -> Self {
 //         Self {
