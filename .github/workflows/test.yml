@@ -46,4 +46,3 @@ jobs:
       - name: Test CLI
         run: ./ci/scripts/test_cli.sh
       - run: sudo ./scripts/clean_stdenv.sh -a
-

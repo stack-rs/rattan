@@ -38,7 +38,7 @@ variable "release_name" {
 
 variable "kernel_version" {
   type = string
-} 
+}
 
 variable "key_import_user" {
   type = string

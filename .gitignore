@@ -31,3 +31,6 @@ flamegraph.svg
 
 # Ignore generated documentation
 guide/book
+
+# Ignore pre-commit files
+.pre-commit-config.yaml

@@ -298,6 +298,9 @@ fn test_http() {
         bandwidth.drain(0..4);
         let bitrate = bandwidth.iter().sum::<u64>() / bandwidth.len() as u64;
         info!("bitrate: {:?}", Bandwidth::from_bps(bitrate));
-        assert!(bitrate > 80000000 && bitrate < 100000000);
+        assert!(
+            bitrate > 80000000 && bitrate < 100000000,
+            "The bitrate is {bitrate} and should be between 80000000 and 100000000"
+        );
     }
 }

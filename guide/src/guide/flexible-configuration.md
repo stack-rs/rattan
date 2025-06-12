@@ -54,6 +54,7 @@ Possible cell types:
 - `Bw`: Fixed bandwidth
 - `BwReplay`: Bandwidth trace replayer
 - `Delay`: Fixed delay
+- `DelayPerPacket`: Delay specified per-packet
 - `Loss`: Loss pattern
 - `Custom`: Custom cell, only specify the cell ID used in link section, and the cell must be built by the user
 
