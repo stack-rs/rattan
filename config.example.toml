@@ -1,6 +1,6 @@
 # This is an example configuration file for Rattan CLI.
 #
-# Fileds with "Default" are optional.
+# Fields with "Default" are optional.
 # User can specify the configuration file by the `-c` option of `rattan`.
 #
 # **ATTENTION**: Check firewall settings before running Rattan CLI.
@@ -186,7 +186,7 @@ type = "DelayReplay"
 # Should specify the delay trace file in JSON or TOML format.
 # The parser will automatically detect the format by the file extension.
 #
-# The Delay trace is formated as DelayTraceConfig in `netem-trace` crate.
+# The Delay trace is formatted as DelayTraceConfig in `netem-trace` crate.
 # Refer to: <https://docs.rs/netem-trace/latest/netem_trace/>
 # For example, the following trace will switch between 10ms and 50ms delays at 1-second intervals and the trace will repeat forever.
 trace = "./assets/dynamic-delay.json"
@@ -200,7 +200,7 @@ type = "LossReplay"
 # Should specify the loss trace file in JSON or TOML format.
 # The parser will automatically detect the format by the file extension.
 #
-# The Loss trace is formated as LossTraceConfig in `netem-trace` crate.
+# The Loss trace is formatted as LossTraceConfig in `netem-trace` crate.
 # Refer to: <https://docs.rs/netem-trace/latest/netem_trace/>
 # For example, the following trace will switch between 0.0 and 0.5 loss rates at 1-second intervals and the trace will repeat forever.
 trace = "./assets/dynamic-loss.toml"
@@ -209,13 +209,13 @@ trace = "./assets/dynamic-loss.toml"
 [cells.down_1]
 type = "BwReplay"
 
-# Bandwitdh trace
+# Bandwidth trace
 #
 # Should specify the bandwidth trace file either in Mahimahi format, or in JSON or TOML format (netem-trace) .
 # The parser will automatically detect the format by the file extension.
 #
-# Bandwitdh trace in JSON or TOML format (netem-trace format)
-# Formated as BwTraceConfig in `netem-trace` crate.
+# Bandwidth trace in JSON or TOML format (netem-trace format)
+# Formatted as BwTraceConfig in `netem-trace` crate.
 # Refer to: <https://docs.rs/netem-trace/latest/netem_trace/>
 #
 # Bandwidth trace file (Mahimahi format)
@@ -245,6 +245,11 @@ type = "Loss"
 # Default: []
 pattern = [0.1, 0.2]
 
+# Delay Per-Packet Cell Example
+[cells.down_3]
+type = "DelayPerPacket"
+
+FromFile = "./assets/delay-per-packet.toml"
 
 # Shadow Cell Example
 [cells.shadow]

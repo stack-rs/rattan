@@ -1,0 +1,7 @@
+[NormalizedDelayPerPacketConfig]
+mean = "10ms"
+std_dev = "5ms"
+# upper_bound = "20ms"
+lower_bound = "0ms"
+count = 0
+seed = 42
