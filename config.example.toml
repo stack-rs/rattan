@@ -1,6 +1,6 @@
 # This is an example configuration file for Rattan CLI.
 #
-# Fileds with "Default" are optional.
+# Fields with "Default" are optional.
 # User can specify the configuration file by the `-c` option of `rattan`.
 #
 # **ATTENTION**: Check firewall settings before running Rattan CLI.
@@ -10,7 +10,7 @@
 # For example, you can run the following commands if using `ufw`:
 # - `ufw allow from 10.1.1.0/24`
 # - `ufw allow from 10.2.1.0/24`
-# 
+#
 # Run `rattan` will generate some network namespaces and veth pairs to
 # emulate the network environment. The network topology is like:
 #
@@ -186,7 +186,7 @@ type = "DelayReplay"
 # Should specify the delay trace file in JSON or TOML format.
 # The parser will automatically detect the format by the file extension.
 #
-# The Delay trace is formated as DelayTraceConfig in `netem-trace` crate.
+# The Delay trace is formatted as DelayTraceConfig in `netem-trace` crate.
 # Refer to: <https://docs.rs/netem-trace/latest/netem_trace/>
 # For example, the following trace will switch between 10ms and 50ms delays at 1-second intervals and the trace will repeat forever.
 trace = "./assets/dynamic-delay.json"
@@ -200,7 +200,7 @@ type = "LossReplay"
 # Should specify the loss trace file in JSON or TOML format.
 # The parser will automatically detect the format by the file extension.
 #
-# The Loss trace is formated as LossTraceConfig in `netem-trace` crate.
+# The Loss trace is formatted as LossTraceConfig in `netem-trace` crate.
 # Refer to: <https://docs.rs/netem-trace/latest/netem_trace/>
 # For example, the following trace will switch between 0.0 and 0.5 loss rates at 1-second intervals and the trace will repeat forever.
 trace = "./assets/dynamic-loss.toml"
@@ -209,13 +209,13 @@ trace = "./assets/dynamic-loss.toml"
 [cells.down_1]
 type = "BwReplay"
 
-# Bandwitdh trace
+# Bandwidth trace
 #
 # Should specify the bandwidth trace file either in Mahimahi format, or in JSON or TOML format (netem-trace) .
 # The parser will automatically detect the format by the file extension.
 #
-# Bandwitdh trace in JSON or TOML format (netem-trace format)
-# Formated as BwTraceConfig in `netem-trace` crate.
+# Bandwidth trace in JSON or TOML format (netem-trace format)
+# Formatted as BwTraceConfig in `netem-trace` crate.
 # Refer to: <https://docs.rs/netem-trace/latest/netem_trace/>
 #
 # Bandwidth trace file (Mahimahi format)
@@ -256,14 +256,14 @@ type = "Shadow"
 type = "Router"
 
 # Egress connections
-# 
+#
 # It is an ordered list of strings, where each one is a cell ID.
 # Each item represents the cell connected to the i-th interface of the Router Cell.
 # For example, the following one means `left1` connected to interface 0, and `left2` connected to interface 1.
 # At the same time, the length of the list determines the range of interfaces id in the routing_table.
 #
 # Warning: Due to the order of cell construction, Router Cells should not be directly connected to another Router Cell.
-# The recommended solution is to add a Shadow Cell to represent the Router Cell being connected, and link them in Links Section. 
+# The recommended solution is to add a Shadow Cell to represent the Router Cell being connected, and link them in Links Section.
 egress_connections = ["left1", "left2"]
 
 # Initial routing table
@@ -284,7 +284,7 @@ prefix = "10.2.0.0/16"
 type = "TokenBucket"
 
 # Token Bucket configuration
-# We have 5 fields for TokenBucket: 
+# We have 5 fields for TokenBucket:
 # "limit" : Size of the queue of TokenBucket cell in bytes.
 # Default: Unlimited
 limit = 1024
@@ -324,7 +324,7 @@ peakrate = "1Mbps"
 # +-------+    }= router <-|------- down_2 <--- down_1 <--- +-------+
 # | left2 | <==+           |
 # +-------+  --------------+
-# 
+#
 # Note: The double line "<===" from router is connected in Cells Section
 
 [links]

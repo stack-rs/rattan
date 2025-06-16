@@ -8,6 +8,7 @@ Rattan now contains two parts of tests:
 * Verification Tests: run **only in the main branch** every day. (see .github/workflows/verify.yaml)
 
 ## Kernels
+
 Rattan is currently tested on the latest four LTS kernels, that are 5.4 (the default one on Ubuntu 20.04), 5.15 (the default one on Ubuntu 22.04), 6.8 (the default one on Ubuntu 24.04) and 6.10 (the latest upstream release).
 
 This directory contains artifacts setting up four test machines with equipped aforementioned four kernels as our development and CI environments.
@@ -32,7 +33,7 @@ packer build -var "github_access_key=<git_PAT>" -var "release_name=<Distribution
 * `<Kernel>` should be `5.4`, `5.15` or `6.8`.
 * `<GitHub User>` should be the user whose public keys will be imported to the VM.
 
-Run VMs on a mchine with `libvirtd` availble.
+Run VMs on a mchine with `libvirtd` available.
 
 ```shell
 virsh create ./libvirt/<Distribution>-<Kernel>.xml
