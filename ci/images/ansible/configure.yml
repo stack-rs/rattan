@@ -53,18 +53,17 @@
       name: net.ipv4.tcp_mem
       value: '268435456 268435456 268435456'
       sysctl_set: true
-  
+
   - name: Tune net core write buffer
     become: true
     ansible.posix.sysctl:
       name: net.core.rmem_max
       value: "268435456"
       sysctl_set: true
-  
+
   - name: Tune net core read buffer
     become: true
     ansible.posix.sysctl:
       name: net.core.wmem_max
       value: "268435456"
       sysctl_set: true
- 

@@ -1,3 +1,10 @@
+[package]
+name = "rattan"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 [workspace]
 members = ['.', 'rattan-core']
 resolver = "2"
@@ -40,13 +47,9 @@ tokio = { version = "1.26.0", features = [
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
-[package]
-name = "rattan"
-version.workspace = true
-edition.workspace = true
-homepage.workspace = true
-repository.workspace = true
-rust-version.workspace = true
+[features]
+http = ["rattan-core/http"]
+packet-dump = ["rattan-core/packet-dump"]
 
 [dependencies]
 # anyhow = "1.0.75"
@@ -71,10 +74,6 @@ toml = "0.8.12"
 tracing = { workspace = true }
 tracing-appender = "0.2.3"
 tracing-subscriber = { workspace = true }
-
-[features]
-http = ["rattan-core/http"]
-packet-dump = ["rattan-core/packet-dump"]
 
 # required for cargo flamegraph
 [profile.release]

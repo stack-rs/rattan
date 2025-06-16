@@ -21,7 +21,7 @@ pub trait TimeProvider {
     fn sleep(d: Self::Duration);
 }
 
-struct CodelQueue<T> 
+struct CodelQueue<T>
 where
     T: TimeProvider
 {
@@ -54,12 +54,12 @@ pub trait HasEgressL3Address {}
 We can declare requirements on the packet type in the trait bound of `P` on types depending on `P`.
 
 ```rust
-struct SimpleRoutingTable<P> 
+struct SimpleRoutingTable<P>
 where
     P: HasIngress + HasEgress
 {}
 
-struct QosRoutingTable<P> 
+struct QosRoutingTable<P>
 where
     P: HasIngress + HasEgress + HasIngressL3Address + HasEgressL3Address
 {}
@@ -87,8 +87,8 @@ pub trait DeviceInterface<P> {
     fn write(packet: P);
 }
 
-pub trait PollInterface<E> 
-where 
+pub trait PollInterface<E>
+where
     E: Poll<Self>,
     Self: Sized
 {
@@ -100,7 +100,7 @@ where
 
 ### Poller Type (`E`)
 
-We use a generic type `E` to denote a poller that monitors multiple devices and gets nonified when one of them are avialble for read or write.
+We use a generic type `E` to denote a poller that monitors multiple devices and gets nonified when one of them are available for read or write.
 
 ```rust
 pub trait Poll<D> {
