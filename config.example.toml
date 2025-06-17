@@ -249,7 +249,7 @@ pattern = [0.1, 0.2]
 [cells.down_3]
 type = "DelayPerPacket"
 
-FromFile = "./assets/delay-per-packet.toml"
+trace = "./assets/delay-per-packet.toml"
 
 # Shadow Cell Example
 [cells.shadow]

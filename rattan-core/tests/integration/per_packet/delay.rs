@@ -1,8 +1,7 @@
-use netem_trace::model::StaticDelayPerPacketConfig;
-use netem_trace::Delay;
-use rattan_core::cells::{per_packet::delay::DelayPerPacketCellConfig, StdPacket};
 /// This test need to be run as root (CAP_NET_ADMIN, CAP_SYS_ADMIN and CAP_SYS_RAW)
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test delay --all-features -- --nocapture
+use netem_trace::{model::StaticDelayPerPacketConfig, Delay};
+use rattan_core::cells::{per_packet::delay::DelayPerPacketCellConfig, StdPacket};
 use rattan_core::config::{CellBuildConfig, DelayPerPacketCellBuildConfig, RattanConfig};
 use rattan_core::control::RattanOp;
 use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
@@ -26,13 +25,13 @@ fn test_delay() {
     };
     config.cells.insert(
         "up_delay".to_string(),
-        CellBuildConfig::DelayPerPacket(DelayPerPacketCellBuildConfig::FromConfig(
+        CellBuildConfig::DelayPerPacket(DelayPerPacketCellBuildConfig::Config(
             StaticDelayPerPacketConfig::new().delay(Delay::ZERO).into(),
         )),
     );
     config.cells.insert(
         "down_delay".to_string(),
-        CellBuildConfig::DelayPerPacket(DelayPerPacketCellBuildConfig::FromConfig(
+        CellBuildConfig::DelayPerPacket(DelayPerPacketCellBuildConfig::Config(
             StaticDelayPerPacketConfig::new().delay(Delay::ZERO).into(),
         )),
     );

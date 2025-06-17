@@ -18,15 +18,15 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug)]
 pub enum DelayPerPacketCellBuildConfig {
-    FromFile(std::path::PathBuf),
-    FromConfig(DelayPerPacketCellConfig),
+    Trace(std::path::PathBuf),
+    Config(DelayPerPacketCellConfig),
 }
 
 impl DelayPerPacketCellBuildConfig {
     fn load(self) -> Result<DelayPerPacketCellConfig, Error> {
         match self {
-            Self::FromConfig(config) => Ok(config),
-            Self::FromFile(path) => {
+            Self::Config(config) => Ok(config),
+            Self::Trace(path) => {
                 if let Some(ext) = path.extension() {
                     if ext == "json" {
                         let trace: Box<dyn DelayPerPacketTraceConfig> = Figment::new()

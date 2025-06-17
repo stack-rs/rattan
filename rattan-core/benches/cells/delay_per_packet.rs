@@ -21,7 +21,7 @@ fn init<P: Packet + Sync, D: DelayPerPacketTraceConfig + 'static>(
     delay: D,
     handle: &Handle,
 ) -> DelayPerPacketCell<P> {
-    let config = DelayPerPacketCellBuildConfig::FromConfig(DelayPerPacketCellConfig::new(delay));
+    let config = DelayPerPacketCellBuildConfig::Config(DelayPerPacketCellConfig::new(delay));
     crate::utils::create_cell(config.into_factory(), handle).expect("Failed to create the cell")
 }
 
