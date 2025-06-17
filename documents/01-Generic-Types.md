@@ -100,7 +100,7 @@ where
 
 ### Poller Type (`E`)
 
-We use a generic type `E` to denote a poller that monitors multiple devices and gets nonified when one of them are avialble for read or write.
+We use a generic type `E` to denote a poller that monitors multiple devices and gets nonified when one of them are available for read or write.
 
 ```rust
 pub trait Poll<D> {
