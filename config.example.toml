@@ -245,6 +245,11 @@ type = "Loss"
 # Default: []
 pattern = [0.1, 0.2]
 
+# Delay Per-Packet Cell Example
+[cells.down_3]
+type = "DelayPerPacket"
+
+trace = "./assets/delay-per-packet.toml"
 
 # Shadow Cell Example
 [cells.shadow]

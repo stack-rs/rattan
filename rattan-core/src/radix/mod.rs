@@ -386,6 +386,9 @@ where
                 CellBuildConfig::Shadow(config) => {
                     self.build_cell(id, config.into_factory())?;
                 }
+                CellBuildConfig::DelayPerPacket(config) => {
+                    self.build_cell(id, config.into_factory())?;
+                }
                 CellBuildConfig::Router(config) => {
                     // ignore routers, build them after other cells
                     router_configs.push((id, config));

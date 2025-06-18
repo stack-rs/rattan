@@ -13,6 +13,7 @@ async-trait = "0.1.68"
 axum = { version = "0.8.1", optional = true }
 backon = "1.2.0"
 bandwidth = "0.3.0"
+bitfield = "0.19.0"
 bytesize = "2.0.1"
 figment = { workspace = true }
 camellia = { git = "https://github.com/minhuw/camellia.git", optional = true }
@@ -28,30 +29,30 @@ nix = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = "0.12.1"
 pcap-file = { version = "2.0.0", optional = true }
+plain = "0.2.3"
 rand = { workspace = true }
+rand_distr = "0.5"
+regex = "1.7.3"
 rtnetlink = "0.17.0"
 serde = { workspace = true, optional = true }
 serde_json = { version = "1.0.96", optional = true }
+serde_with = "3.11.0"
 thiserror = "2.0.0"
 tokio = { workspace = true }
 tokio-util = "0.7.7"
 tracing = { workspace = true }
 tempfile = "3.10.1"
 uuid = { version = "1.10.0", features = ["v4"] }
-serde_with = "3.9.0"
-bitfield = "0.19.0"
-plain = "0.2.3"
-regex = "1.7.3"
 
 [dev-dependencies]
 anyhow = "1.0.69"
-criterion = "0.6.0"
+clap = { version = "4.5.4", features = ["derive"] }
+criterion = { version = "0.6.0", features = ["async_tokio"] }
 ctrlc = { workspace = true }
 insta = { version = "1.39.0", features = ["json"] }
 itertools = "0.14.0"
 netns-rs = "0.1.0"
 regex = "1.7.3"
-clap = { version = "4.5.4", features = ["derive"] }
 reqwest = { version = "0.12.9", default-features = false, features = [
   "json",
   "blocking",
@@ -65,11 +66,15 @@ tracing-subscriber = { workspace = true }
 name = "bandwidth"
 harness = false
 
+[[bench]]
+name = "cells"
+harness = false
+
 [features]
 default = []
 http = ["serde", "dep:axum"]
 packet-dump = ["dep:pcap-file"]
-serde = ["dep:serde", "dep:serde_json", "bandwidth/serde", "bytesize/serde"]
+serde = ["dep:serde", "dep:serde_json", "bandwidth/serde", "bytesize/serde", "rand_distr/serde"]
 camellia = ["dep:camellia"]
 
 [[example]]

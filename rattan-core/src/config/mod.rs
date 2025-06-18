@@ -11,6 +11,7 @@ use crate::control::http::HttpConfig;
 mod bandwidth;
 mod delay;
 mod loss;
+mod per_packet;
 mod router;
 mod shadow;
 mod token_bucket;
@@ -18,6 +19,7 @@ mod token_bucket;
 pub use bandwidth::*;
 pub use delay::*;
 pub use loss::*;
+pub use per_packet::*;
 pub use router::*;
 pub use shadow::*;
 pub use token_bucket::*;
@@ -107,6 +109,7 @@ pub enum CellBuildConfig<P: Packet> {
     Loss(LossCellBuildConfig),
     LossReplay(LossReplayCellBuildConfig),
     Shadow(ShadowCellBuildConfig),
+    DelayPerPacket(DelayPerPacketCellBuildConfig),
     Router(RouterCellBuildConfig),
     TokenBucket(TokenBucketCellBuildConfig),
     Custom,
