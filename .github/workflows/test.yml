@@ -3,9 +3,9 @@ name: Test
 on:
   push:
     paths-ignore:
-      - 'documents/**'
-      - 'assets/**'
-# Allows you to run this workflow manually from the Actions tab
+      - "documents/**"
+      - "assets/**"
+  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
 concurrency:
@@ -16,9 +16,10 @@ jobs:
   test-all-features:
     name: cargo test with all features
     strategy:
+      max-parallel: 1
       fail-fast: false
       matrix:
-        kernel: [ "5.4", "5.15", "6.8", "6.12" ]
+        kernel: ["5.4", "5.15", "6.8", "6.12"]
     runs-on: ${{ matrix.kernel }}
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     steps:
@@ -39,10 +40,10 @@ jobs:
         uses: taiki-e/install-action@nextest
       - run: cargo nextest run --profile ci --all-features --release --workspace
         env:
-          RUST_LOG: 'info'
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: 'sudo -E'
+          RUST_LOG: "info"
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: "sudo -E"
           # For insta to disable writing new snapshot files and fail on mismatch
-          CI: 'true'
+          CI: "true"
       - name: Test CLI
         run: ./ci/scripts/test_cli.sh
       - run: sudo ./scripts/clean_stdenv.sh -a
