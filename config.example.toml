@@ -251,6 +251,12 @@ type = "DelayPerPacket"
 
 trace = "./assets/delay-per-packet.toml"
 
+# Spy Cell Example
+[cells.spy]
+type = "Spy"
+
+path = "/tmp/spy.pcap"
+
 # Shadow Cell Example
 [cells.shadow]
 type = "Shadow"
