@@ -14,6 +14,7 @@ mod loss;
 mod per_packet;
 mod router;
 mod shadow;
+mod spy;
 mod token_bucket;
 
 pub use bandwidth::*;
@@ -22,6 +23,7 @@ pub use loss::*;
 pub use per_packet::*;
 pub use router::*;
 pub use shadow::*;
+pub use spy::*;
 pub use token_bucket::*;
 
 /// Configuration for the whole Rattan system.
@@ -109,6 +111,7 @@ pub enum CellBuildConfig<P: Packet> {
     Loss(LossCellBuildConfig),
     LossReplay(LossReplayCellBuildConfig),
     Shadow(ShadowCellBuildConfig),
+    Spy(SpyCellBuildConfig),
     DelayPerPacket(DelayPerPacketCellBuildConfig),
     Router(RouterCellBuildConfig),
     TokenBucket(TokenBucketCellBuildConfig),
