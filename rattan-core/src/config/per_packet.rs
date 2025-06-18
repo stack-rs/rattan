@@ -16,6 +16,7 @@ use netem_trace::model::DelayPerPacketTraceConfig;
 use serde::{Deserialize, Serialize};
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[derive(Clone, Debug)]
 pub enum DelayPerPacketCellBuildConfig {
     Trace(std::path::PathBuf),
