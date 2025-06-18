@@ -8,7 +8,6 @@ use tokio::{sync::mpsc, time::Instant};
 use tracing::debug;
 
 use crate::cells::per_packet::DelayedQueue;
-#[cfg(feature = "serde")]
 use crate::{
     cells::{Cell, ControlInterface, Egress, Ingress, Packet},
     error::Error,
