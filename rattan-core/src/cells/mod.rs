@@ -14,6 +14,7 @@ pub mod loss;
 pub mod per_packet;
 pub mod router;
 pub mod shadow;
+pub mod spy;
 pub mod token_bucket;
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
