@@ -14,7 +14,7 @@ version = "0.1.0"
 edition = "2021"
 homepage = "https://github.com/stack-rs/rattan"
 repository = "https://github.com/stack-rs/rattan"
-rust-version = "1.77"
+rust-version = "1.86"
 
 [workspace.dependencies]
 ctrlc = "3.2.5"
