@@ -1,31 +1,35 @@
 /// This test need to be run as root (CAP_NET_ADMIN, CAP_SYS_ADMIN and CAP_SYS_RAW)
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test bandwidth --all-features -- --nocapture
-use std::thread::sleep;
-use std::time::{Duration, Instant};
-use std::{collections::HashMap, sync::mpsc};
+use std::{collections::HashMap, thread::sleep, time::Duration};
+#[cfg(feature = "serde")]
+use std::{sync::mpsc, time::Instant};
 
 use netem_trace::{
     model::{BwTraceConfig, RepeatedBwPatternConfig, StaticBwConfig},
     Bandwidth, BwTrace,
 };
-use rattan_core::cells::{
-    bandwidth::{
-        queue::{
-            CoDelQueue, CoDelQueueConfig, DropHeadQueue, DropHeadQueueConfig, DropTailQueue,
-            DropTailQueueConfig, InfiniteQueue, InfiniteQueueConfig,
-        },
-        BwCellConfig, BwReplayCell, BwReplayCellConfig, BwType,
-    },
-    ControlInterface, StdPacket,
-};
-use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
-use rattan_core::metal::io::af_packet::AfPacketDriver;
-use rattan_core::radix::RattanRadix;
+#[cfg(feature = "serde")]
 use rattan_core::{
-    config::{BwCellBuildConfig, CellBuildConfig, RattanConfig},
+    cells::bandwidth::queue::{
+        CoDelQueue, CoDelQueueConfig, DropHeadQueue, DropHeadQueueConfig, InfiniteQueue,
+    },
     control::RattanOp,
 };
+use rattan_core::{
+    cells::{
+        bandwidth::{
+            queue::{DropTailQueue, DropTailQueueConfig, InfiniteQueueConfig},
+            BwCellConfig, BwReplayCell, BwReplayCellConfig, BwType,
+        },
+        ControlInterface, StdPacket,
+    },
+    config::{BwCellBuildConfig, CellBuildConfig, RattanConfig},
+    env::{StdNetEnvConfig, StdNetEnvMode},
+    metal::io::af_packet::AfPacketDriver,
+    radix::RattanRadix,
+};
 use regex::Regex;
+#[cfg(feature = "serde")]
 use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument, span, warn, Level};
 
@@ -122,6 +126,7 @@ fn test_bandwidth() {
 
     // After set the BwCell, the bandwidth should be between 90-100Mbps
     std::thread::sleep(std::time::Duration::from_millis(100));
+    #[cfg(feature = "serde")]
     {
         let _span = span!(Level::INFO, "iperf_with_limit").entered();
         info!("try to iperf with bandwidth limit set to 100Mbps");
@@ -187,6 +192,7 @@ fn test_bandwidth() {
     }
 }
 
+#[cfg(feature = "serde")]
 #[instrument]
 #[test_log::test]
 fn test_droptail_queue() {
@@ -356,6 +362,7 @@ fn test_droptail_queue() {
     }
 }
 
+#[cfg(feature = "serde")]
 #[instrument]
 #[test_log::test]
 fn test_drophead_queue() {
@@ -530,6 +537,7 @@ fn test_drophead_queue() {
     }
 }
 
+#[cfg(feature = "serde")]
 #[instrument]
 #[test_log::test]
 fn test_codel_queue() {

@@ -5,10 +5,9 @@ use netem_trace::{model::DelayPerPacketTraceConfig, DelayPerPacketTrace};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::Instant};
-use tracing::{debug, error};
+use tracing::debug;
 
 use crate::cells::per_packet::DelayedQueue;
-#[cfg(feature = "serde")]
 use crate::{
     cells::{Cell, ControlInterface, Egress, Ingress, Packet},
     error::Error,
@@ -164,33 +163,9 @@ where
     serde_with::skip_serializing_none,
     derive(Deserialize, Serialize)
 )]
+#[derive(Debug, Clone)]
 pub struct DelayPerPacketCellConfig {
     pub delay: Box<dyn DelayPerPacketTraceConfig>,
-}
-
-impl Clone for DelayPerPacketCellConfig {
-    fn clone(&self) -> Self {
-        Self {
-            delay: self.delay.clone(),
-        }
-    }
-}
-
-impl std::fmt::Debug for DelayPerPacketCellConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = if f.alternate() {
-            serde_json::to_string_pretty(self.delay.as_ref())
-        } else {
-            serde_json::to_string(self.delay.as_ref())
-        }
-        .map_err(|err| {
-            error!("Failed to serialize a DelayPerPacketTraceConfig: {err}");
-            std::fmt::Error
-        })?;
-        let mut f = f.debug_struct("DelayPerPacketCellConfig");
-        f.field("delay", &value);
-        f.finish()
-    }
 }
 
 impl DelayPerPacketCellConfig {
@@ -205,19 +180,6 @@ pub struct DelayPerPacketCellControlInterface {
     config_tx: mpsc::UnboundedSender<DelayPerPacketCellConfig>,
 }
 
-#[cfg(feature = "serde")]
-impl ControlInterface for DelayPerPacketCellControlInterface {
-    type Config = DelayPerPacketCellConfig;
-
-    fn set_config(&self, config: Self::Config) -> Result<(), Error> {
-        self.config_tx
-            .send(config)
-            .map_err(|_| Error::ConfigError("Control channel is closed.".to_string()))?;
-        Ok(())
-    }
-}
-
-#[cfg(not(feature = "serde"))]
 impl ControlInterface for DelayPerPacketCellControlInterface {
     type Config = DelayPerPacketCellConfig;
 
@@ -235,33 +197,6 @@ pub struct DelayPerPacketCell<P: Packet> {
     control_interface: Arc<DelayPerPacketCellControlInterface>,
 }
 
-#[cfg(not(feature = "serde"))]
-impl<P> Cell<P> for DelayPerPacketCell<P>
-where
-    P: Packet + Send + Sync + 'static,
-{
-    type IngressType = DelayPerPacketCellIngress<P>;
-    type EgressType = DelayPerPacketCellEgress<P>;
-    type ControlInterfaceType = DelayPerPacketCellControlInterface;
-
-    fn sender(&self) -> Arc<Self::IngressType> {
-        self.ingress.clone()
-    }
-
-    fn receiver(&mut self) -> &mut Self::EgressType {
-        &mut self.egress
-    }
-
-    fn into_receiver(self) -> Self::EgressType {
-        self.egress
-    }
-
-    fn control_interface(&self) -> Arc<Self::ControlInterfaceType> {
-        self.control_interface.clone()
-    }
-}
-
-#[cfg(feature = "serde")]
 impl<P> Cell<P> for DelayPerPacketCell<P>
 where
     P: Packet + Send + Sync + 'static,
