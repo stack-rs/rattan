@@ -36,6 +36,8 @@ pub enum Error {
     #[cfg(feature = "http")]
     #[error("Http server error: {0}")]
     HttpServerError(#[from] HttpServerError),
+    #[error("Pcap error: {0}")]
+    PcapError(#[from] pcap_file::PcapError),
     #[error("Error: {0}")]
     Custom(String),
 }
@@ -176,6 +178,7 @@ impl axum::response::IntoResponse for Error {
             Error::SerdeError(_) => StatusCode::BAD_REQUEST,
             #[cfg(feature = "http")]
             Error::HttpServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::PcapError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::Custom(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
@@ -202,6 +205,7 @@ impl Termination for Error {
             Error::SerdeError(_) => ExitCode::from(65),
             #[cfg(feature = "http")]
             Error::HttpServerError(_) => ExitCode::from(70),
+            Error::PcapError(_) => ExitCode::from(74),
             Error::Custom(_) => ExitCode::from(1),
         }
     }
