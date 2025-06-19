@@ -2,15 +2,19 @@
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test token_bucket --all-features -- --nocapture
 use std::collections::HashMap;
 
+#[cfg(feature = "serde")]
 use bandwidth::Bandwidth;
+#[cfg(feature = "serde")]
 use bytesize::ByteSize;
-use rattan_core::cells::token_bucket::TokenBucketCellConfig;
-use rattan_core::cells::StdPacket;
-use rattan_core::config::{CellBuildConfig, RattanConfig, TokenBucketCellBuildConfig};
-use rattan_core::control::RattanOp;
-use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
-use rattan_core::metal::io::af_packet::AfPacketDriver;
-use rattan_core::radix::RattanRadix;
+#[cfg(feature = "serde")]
+use rattan_core::{cells::token_bucket::TokenBucketCellConfig, control::RattanOp};
+use rattan_core::{
+    cells::StdPacket,
+    config::{CellBuildConfig, RattanConfig, TokenBucketCellBuildConfig},
+    env::{StdNetEnvConfig, StdNetEnvMode},
+    metal::io::af_packet::AfPacketDriver,
+    radix::RattanRadix,
+};
 use regex::Regex;
 use tracing::{info, instrument, span, Level};
 
@@ -84,6 +88,7 @@ fn test_token_bucket() {
     }
 
     // After set the TokenBucketCell, the average latency should be around 500ms
+    #[cfg(feature = "serde")]
     {
         let _span = span!(Level::INFO, "ping_with_tb_set").entered();
         info!("try to ping with the burst set to 256 B and the rate set to 4096 bps");
