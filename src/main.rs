@@ -306,11 +306,11 @@ fn main() -> ExitCode {
             let command_string = toml::to_string_pretty(&display_commands)
                 .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
 
-            toml_string.push_str(format!("\n{}", command_string).as_str());
+            toml_string.push_str(format!("\n{command_string}").as_str());
             if let Some(output) = opts.generate_path {
                 std::fs::write(output, toml_string)?;
             } else {
-                println!("{}", toml_string);
+                println!("{toml_string}");
             }
             return Ok(());
         }
@@ -380,28 +380,24 @@ fn main() -> ExitCode {
                     Ok(Ok(status)) => {
                         if let Some(code) = status.code() {
                             if code == 0 {
-                                tracing::info!("Left handle {}", status);
+                                tracing::info!("Left handle {status}");
                                 Ok(())
                             } else {
                                 Err(rattan_core::error::Error::Custom(format!(
-                                    "Left handle {}",
-                                    status
+                                    "Left handle {status}"
                                 )))
                             }
                         } else {
                             Err(rattan_core::error::Error::Custom(format!(
-                                "Left handle {}",
-                                status
+                                "Left handle {status}"
                             )))
                         }
                     }
                     Ok(Err(e)) => Err(rattan_core::error::Error::Custom(format!(
-                        "Left handle exited with error: {:?}",
-                        e
+                        "Left handle exited with error: {e:?}"
                     ))),
                     Err(e) => Err(rattan_core::error::Error::Custom(format!(
-                        "Fail to join left handle: {:?}",
-                        e
+                        "Fail to join left handle: {e:?}"
                     ))),
                 }
             }
@@ -417,14 +413,14 @@ fn main() -> ExitCode {
                     if let Some(arguments) = commands.right {
                         server_handle.args(arguments);
                     }
-                    tracing::info!("Running in right NS {:?}", server_handle);
+                    tracing::info!("Running in right NS {server_handle:?}");
                     let mut server_handle = server_handle
                         .stdin(Stdio::null())
                         .stdout(Stdio::null())
                         .stderr(Stdio::null())
                         .spawn()?;
                     let pid = server_handle.id() as i32;
-                    tracing::debug!("Right pid: {}", pid);
+                    tracing::debug!("Right pid: {pid}");
                     let _ = RIGHT_PID.set(pid);
                     let status = server_handle.wait()?;
                     right_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -441,14 +437,14 @@ fn main() -> ExitCode {
                     if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     }
-                    tracing::info!("Running in left NS {:?}", client_handle);
+                    tracing::info!("Running in left NS {client_handle:?}");
                     let mut client_handle = client_handle
                         .stdin(Stdio::null())
                         .stdout(Stdio::null())
                         .stderr(Stdio::null())
                         .spawn()?;
                     let pid = client_handle.id() as i32;
-                    tracing::debug!("Left pid: {}", pid);
+                    tracing::debug!("Left pid: {pid}");
                     let _ = LEFT_PID.set(pid);
                     let status = client_handle.wait()?;
                     left_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -463,20 +459,19 @@ fn main() -> ExitCode {
                                 Ok(Ok(status)) => {
                                     if let Some(code) = status.code() {
                                         if code == 0 {
-                                            tracing::info!("Left handle {}", status);
+                                            tracing::info!("Left handle {status}");
                                         } else {
-                                            left_res = left_res.and_then(|_| {
-                                                Err(format!("Left handle {}", status))
-                                            });
+                                            left_res = left_res
+                                                .and_then(|_| Err(format!("Left handle {status}")));
                                         }
                                     } else {
                                         left_res = left_res
-                                            .and_then(|_| Err(format!("Left handle {}", status)));
+                                            .and_then(|_| Err(format!("Left handle {status}")));
                                     }
                                 }
                                 Ok(Err(e)) => {
                                     left_res = left_res.and_then(|_| {
-                                        Err(format!("Left handle exited with error: {:?}", e))
+                                        Err(format!("Left handle exited with error: {e:?}"))
                                     });
                                     // TODO: we may also add other arguments to disable the killing of the other half
                                     if right_handle.is_finished() {
@@ -490,8 +485,7 @@ fn main() -> ExitCode {
                                                 signal::kill(Pid::from_raw(*pid), Signal::SIGTERM)
                                                     .inspect_err(|e| {
                                                         tracing::error!(
-                                                            "Failed to send SIGTERM: {}",
-                                                            e
+                                                            "Failed to send SIGTERM: {e}"
                                                         );
                                                     });
                                         }
@@ -500,7 +494,7 @@ fn main() -> ExitCode {
                                 }
                                 Err(e) => {
                                     left_res = left_res.and_then(|_| {
-                                        Err(format!("Fail to join left handle: {:?}", e))
+                                        Err(format!("Fail to join left handle: {e:?}"))
                                     });
                                 }
                             }
@@ -508,25 +502,25 @@ fn main() -> ExitCode {
                                 Ok(Ok(status)) => {
                                     if let Some(code) = status.code() {
                                         if code == 0 {
-                                            tracing::info!("Right handle {}", status);
+                                            tracing::info!("Right handle {status}");
                                         } else {
                                             right_res = right_res.and_then(|_| {
-                                                Err(format!("Right handle {}", status))
+                                                Err(format!("Right handle {status}"))
                                             });
                                         }
                                     } else {
                                         right_res = right_res
-                                            .and_then(|_| Err(format!("Right handle {}", status)));
+                                            .and_then(|_| Err(format!("Right handle {status}")));
                                     }
                                 }
                                 Ok(Err(e)) => {
                                     right_res = right_res.and_then(|_| {
-                                        Err(format!("Right handle exited with error: {:?}", e))
+                                        Err(format!("Right handle exited with error: {e:?}"))
                                     });
                                 }
                                 Err(e) => {
                                     right_res = right_res.and_then(|_| {
-                                        Err(format!("Fail to join right handle: {:?}", e))
+                                        Err(format!("Fail to join right handle: {e:?}"))
                                     });
                                 }
                             }
@@ -536,20 +530,20 @@ fn main() -> ExitCode {
                                 Ok(Ok(status)) => {
                                     if let Some(code) = status.code() {
                                         if code == 0 {
-                                            tracing::info!("Right handle {}", status);
+                                            tracing::info!("Right handle {status}");
                                         } else {
                                             right_res = right_res.and_then(|_| {
-                                                Err(format!("Right handle {}", status))
+                                                Err(format!("Right handle {status}"))
                                             });
                                         }
                                     } else {
                                         right_res = right_res
-                                            .and_then(|_| Err(format!("Right handle {}", status)));
+                                            .and_then(|_| Err(format!("Right handle {status}")));
                                     }
                                 }
                                 Ok(Err(e)) => {
                                     right_res = right_res.and_then(|_| {
-                                        Err(format!("Right handle exited with error: {:?}", e))
+                                        Err(format!("Right handle exited with error: {e:?}"))
                                     });
                                     // TODO: we may also add other arguments to disable the killing of the other half
                                     if left_handle.is_finished() {
@@ -563,8 +557,7 @@ fn main() -> ExitCode {
                                                 signal::kill(Pid::from_raw(*pid), Signal::SIGTERM)
                                                     .inspect_err(|e| {
                                                         tracing::error!(
-                                                            "Failed to send SIGTERM: {}",
-                                                            e
+                                                            "Failed to send SIGTERM: {e}"
                                                         );
                                                     });
                                         }
@@ -573,7 +566,7 @@ fn main() -> ExitCode {
                                 }
                                 Err(e) => {
                                     right_res = right_res.and_then(|_| {
-                                        Err(format!("Fail to join right handle: {:?}", e))
+                                        Err(format!("Fail to join right handle: {e:?}"))
                                     });
                                 }
                             }
@@ -581,25 +574,24 @@ fn main() -> ExitCode {
                                 Ok(Ok(status)) => {
                                     if let Some(code) = status.code() {
                                         if code == 0 {
-                                            tracing::info!("Left handle {}", status);
+                                            tracing::info!("Left handle {status}");
                                         } else {
-                                            left_res = left_res.and_then(|_| {
-                                                Err(format!("Left handle {}", status))
-                                            });
+                                            left_res = left_res
+                                                .and_then(|_| Err(format!("Left handle {status}")));
                                         }
                                     } else {
                                         left_res = left_res
-                                            .and_then(|_| Err(format!("Left handle {}", status)));
+                                            .and_then(|_| Err(format!("Left handle {status}")));
                                     }
                                 }
                                 Ok(Err(e)) => {
                                     left_res = left_res.and_then(|_| {
-                                        Err(format!("Left handle exited with error: {:?}", e))
+                                        Err(format!("Left handle exited with error: {e:?}"))
                                     });
                                 }
                                 Err(e) => {
                                     left_res = left_res.and_then(|_| {
-                                        Err(format!("Fail to join left handle: {:?}", e))
+                                        Err(format!("Fail to join left handle: {e:?}"))
                                     });
                                 }
                             }
@@ -607,8 +599,7 @@ fn main() -> ExitCode {
                     },
                     Err(e) => {
                         return Err(rattan_core::error::Error::ChannelError(format!(
-                            "Fail to receive from channel: {:?}",
-                            e
+                            "Fail to receive from channel: {e:?}"
                         )));
                     }
                 }
@@ -617,7 +608,7 @@ fn main() -> ExitCode {
                     (Err(e), Ok(())) => Err(rattan_core::error::Error::Custom(e)),
                     (Ok(()), Err(e)) => Err(rattan_core::error::Error::Custom(e)),
                     (Err(e1), Err(e2)) => {
-                        Err(rattan_core::error::Error::Custom(format!("{}. {}", e1, e2)))
+                        Err(rattan_core::error::Error::Custom(format!("{e1}. {e2}")))
                     }
                 }
             }
@@ -635,7 +626,7 @@ fn main() -> ExitCode {
     match main_cli() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            tracing::error!("{}", e);
+            tracing::error!("{e}");
             e.report()
         }
     }
