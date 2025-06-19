@@ -155,10 +155,7 @@ fn af_packet_test() -> anyhow::Result<()> {
 
         let left_sniffer = create_dev_socket(&stdenv.left_default_pair().right).unwrap();
         let right_sniffer = create_dev_socket(&stdenv.right_default_pair().left).unwrap();
-        println!(
-            "left sniffer: {}, right sniffer: {}",
-            left_sniffer, right_sniffer
-        );
+        println!("left sniffer: {left_sniffer}, right sniffer: {right_sniffer}");
         let send_sock = unsafe {
             libc::socket(
                 AddressFamily::Packet as libc::c_int,
@@ -248,7 +245,7 @@ fn af_packet_test() -> anyhow::Result<()> {
                         )?;
                         // println!("forward packet (length: {}) from right to left, from index {}, target index {}", size, addr.sll_ifindex, stdenv.left_default_pair().right.index);
                     }
-                    _ => panic!("unexpected fd: {}", fd),
+                    _ => panic!("unexpected fd: {fd}"),
                 }
             }
         }

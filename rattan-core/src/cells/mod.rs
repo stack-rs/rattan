@@ -193,7 +193,7 @@ impl Packet for StdPacket {
                             }
                         }
                         Err(e) => {
-                            desc.push_str(&format!("Error parsing: {}", e));
+                            desc.push_str(&format!("Error parsing: {e}"));
                         }
                     }
                 }

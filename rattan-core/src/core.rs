@@ -58,7 +58,7 @@ impl From<u8> for RattanState {
             1 => RattanState::Spawned,
             2 => RattanState::Running,
             3 => RattanState::Exited,
-            _ => panic!("Invalid RattanState value: {}", v),
+            _ => panic!("Invalid RattanState value: {v}"),
         }
     }
 }
@@ -170,8 +170,7 @@ where
         match self.sender.entry(id.clone()) {
             std::collections::hash_map::Entry::Occupied(_) => {
                 return Err(RattanCoreError::AddCellError(format!(
-                    "Cell with ID {} already exists in sender list",
-                    id
+                    "Cell with ID {id} already exists in sender list"
                 )));
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
@@ -181,8 +180,7 @@ where
         match self.receiver.entry(id.clone()) {
             std::collections::hash_map::Entry::Occupied(_) => {
                 return Err(RattanCoreError::AddCellError(format!(
-                    "Cell with ID {} already exists in receiver list",
-                    id
+                    "Cell with ID {id} already exists in receiver list"
                 )));
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
@@ -214,13 +212,13 @@ where
     }
 
     pub fn link_cell(&mut self, rx_id: String, tx_id: String) {
-        info!("Link cell \"{}\" --> \"{}\"", rx_id, tx_id);
+        info!("Link cell \"{rx_id}\" --> \"{tx_id}\"");
         // Check existence of cells
         if !self.receiver.contains_key(&rx_id) {
-            warn!("Cell with ID {} does not exist in cells map", rx_id);
+            warn!("Cell with ID {rx_id} does not exist in cells map");
         }
         if !self.receiver.contains_key(&tx_id) {
-            warn!("Cell with ID {} does not exist in cells map", tx_id);
+            warn!("Cell with ID {tx_id} does not exist in cells map");
         }
         self.router.insert(rx_id, tx_id);
     }
@@ -302,9 +300,7 @@ where
                                 if let Some(p) = packet {
                                     trace!(
                                         header = ?format!("{:X?}", &p.as_slice()[0..std::cmp::min(56, p.length())]),
-                                        "forward from {} to {}",
-                                        rx_id,
-                                        tx_id,
+                                        "forward from {rx_id} to {tx_id}",
                                     );
                                     #[cfg(feature = "packet-dump")]
                                     {
@@ -328,7 +324,7 @@ where
                                             debug!(rx_id, tx_id, "Drop packet since the system is busy");
                                         }
                                         Err(e) => {
-                                            panic!("Error forwarding packet between {} and {}: {:?}", rx_id, tx_id, e);
+                                            panic!("Error forwarding packet between {rx_id} and {tx_id}: {e:?}");
                                         }
                                     }
                                 }

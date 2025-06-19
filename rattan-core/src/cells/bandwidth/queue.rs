@@ -196,8 +196,8 @@ where
     fn enqueue(&mut self, packet: P) {
         if self
             .packet_limit
-            .map_or(true, |limit| self.queue.len() < limit)
-            && self.byte_limit.map_or(true, |limit| {
+            .is_none_or(|limit| self.queue.len() < limit)
+            && self.byte_limit.is_none_or(|limit| {
                 self.now_bytes + packet.l3_length() + self.bw_type.extra_length() <= limit
             })
         {
@@ -513,8 +513,8 @@ where
         if self
             .config
             .packet_limit
-            .map_or(true, |limit| self.queue.len() < limit)
-            && self.config.byte_limit.map_or(true, |limit| {
+            .is_none_or(|limit| self.queue.len() < limit)
+            && self.config.byte_limit.is_none_or(|limit| {
                 self.now_bytes + packet.l3_length() + self.config.bw_type.extra_length() <= limit
             })
         {

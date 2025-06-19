@@ -74,7 +74,7 @@ impl Drop for IpVethPair {
     fn drop(&mut self) {
         let ns_guard = NetNsGuard::new(self.left.lock().unwrap().namespace.clone());
         if let Err(e) = ns_guard {
-            error!("Failed to enter netns: {}", e);
+            error!("Failed to enter netns: {e}");
             return;
         }
 
@@ -85,7 +85,7 @@ impl Drop for IpVethPair {
             .output();
 
         if let Err(e) = output {
-            error!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, &self.left.lock().unwrap().name);
+            error!("Failed to delete veth pair: {e} (you may need to delete it manually with 'sudo ip link del {}')", &self.left.lock().unwrap().name);
         } else {
             let output = output.unwrap();
             if !output.status.success() {
@@ -207,7 +207,7 @@ impl IpVethCell {
         let output = Command::new("ip")
             .arg("address")
             .arg("add")
-            .arg(format!("{}/{}", ip_addr, prefix))
+            .arg(format!("{ip_addr}/{prefix}"))
             .arg("dev")
             .arg(&self.name)
             .output()

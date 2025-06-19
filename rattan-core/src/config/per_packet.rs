@@ -44,8 +44,8 @@ impl DelayPerPacketCellBuildConfig {
                     }
                 }
                 Err(Error::ConfigError(format!(
-                    "Unknown trace file format: {:?}",
-                    path
+                    "Unknown trace file format: {}",
+                    path.display()
                 )))
             }
         }

@@ -174,7 +174,7 @@ impl ChannelArgs {
                 }
             };
             uplink_count += 1;
-            cells_config.insert(format!("up_{}", uplink_count), cell_config);
+            cells_config.insert(format!("up_{uplink_count}"), cell_config);
         } else if let Some(ref trace_file) = self.uplink_trace {
             let cell_config = match self.uplink_queue {
                 Some(QueueType::Infinite) | None => {
@@ -201,7 +201,7 @@ impl ChannelArgs {
                 }
             };
             uplink_count += 1;
-            cells_config.insert(format!("up_{}", uplink_count), cell_config);
+            cells_config.insert(format!("up_{uplink_count}"), cell_config);
         }
 
         if let Some(bandwidth) = self.downlink_bandwidth {
@@ -224,7 +224,7 @@ impl ChannelArgs {
                 }
             };
             downlink_count += 1;
-            cells_config.insert(format!("down_{}", downlink_count), cell_config);
+            cells_config.insert(format!("down_{downlink_count}"), cell_config);
         } else if let Some(trace_file) = self.downlink_trace {
             let cell_config = match self.downlink_queue {
                 Some(QueueType::Infinite) | None => {
@@ -255,49 +255,49 @@ impl ChannelArgs {
                 }
             };
             downlink_count += 1;
-            cells_config.insert(format!("down_{}", downlink_count), cell_config);
+            cells_config.insert(format!("down_{downlink_count}"), cell_config);
         }
 
         if let Some(delay) = self.uplink_delay {
             let cell_config = CellBuildConfig::Delay(DelayCellBuildConfig::new(delay));
             uplink_count += 1;
-            cells_config.insert(format!("up_{}", uplink_count), cell_config);
+            cells_config.insert(format!("up_{uplink_count}"), cell_config);
         }
 
         if let Some(delay) = self.downlink_delay {
             let cell_config = CellBuildConfig::Delay(DelayCellBuildConfig::new(delay));
             downlink_count += 1;
-            cells_config.insert(format!("down_{}", downlink_count), cell_config);
+            cells_config.insert(format!("down_{downlink_count}"), cell_config);
         }
 
         if let Some(loss) = self.uplink_loss {
             let cell_config = CellBuildConfig::Loss(LossCellBuildConfig::new([loss]));
             uplink_count += 1;
-            cells_config.insert(format!("up_{}", uplink_count), cell_config);
+            cells_config.insert(format!("up_{uplink_count}"), cell_config);
         }
 
         if let Some(loss) = self.downlink_loss {
             let cell_config = CellBuildConfig::Loss(LossCellBuildConfig::new([loss]));
             downlink_count += 1;
-            cells_config.insert(format!("down_{}", downlink_count), cell_config);
+            cells_config.insert(format!("down_{downlink_count}"), cell_config);
         }
 
         for i in 1..uplink_count {
-            links_config.insert(format!("up_{}", i), format!("up_{}", i + 1));
+            links_config.insert(format!("up_{i}"), format!("up_{}", i + 1));
         }
         for i in 1..downlink_count {
-            links_config.insert(format!("down_{}", i), format!("down_{}", i + 1));
+            links_config.insert(format!("down_{i}"), format!("down_{}", i + 1));
         }
 
         if uplink_count > 0 {
             links_config.insert("left".to_string(), "up_1".to_string());
-            links_config.insert(format!("up_{}", uplink_count), "right".to_string());
+            links_config.insert(format!("up_{uplink_count}"), "right".to_string());
         } else {
             links_config.insert("left".to_string(), "right".to_string());
         }
         if downlink_count > 0 {
             links_config.insert("right".to_string(), "down_1".to_string());
-            links_config.insert(format!("down_{}", downlink_count), "left".to_string());
+            links_config.insert(format!("down_{downlink_count}"), "left".to_string());
         } else {
             links_config.insert("right".to_string(), "left".to_string());
         }
