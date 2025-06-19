@@ -42,12 +42,12 @@ pub enum RattanOp {
 impl Debug for RattanOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RattanOp::SendNotify(notify) => write!(f, "SendNotify({:?})", notify),
+            RattanOp::SendNotify(notify) => write!(f, "SendNotify({notify:?})"),
             RattanOp::QueryState => write!(f, "QueryState"),
             #[cfg(feature = "serde")]
-            RattanOp::AddControlInterface(id, _) => write!(f, "AddControlInterface({})", id),
+            RattanOp::AddControlInterface(id, _) => write!(f, "AddControlInterface({id})"),
             #[cfg(feature = "serde")]
-            RattanOp::ConfigCell(id, v) => write!(f, "ConfigCell({}, {:?})", id, v),
+            RattanOp::ConfigCell(id, v) => write!(f, "ConfigCell({id}, {v:?})"),
         }
     }
 }
@@ -66,7 +66,7 @@ impl Debug for RattanOpResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RattanOpResult::SendNotify => write!(f, "SendNotify"),
-            RattanOpResult::QueryState(state) => write!(f, "QueryState({:?})", state),
+            RattanOpResult::QueryState(state) => write!(f, "QueryState({state:?})"),
             #[cfg(feature = "serde")]
             RattanOpResult::AddControlInterface(_) => write!(f, "AddControlInterface"),
             #[cfg(feature = "serde")]
@@ -140,7 +140,7 @@ impl RattanController {
                         .send(notify.clone())
                         .map(|count| {
                             if count <= 1 {
-                                warn!("No receiver for rattan notify {:?}", notify.clone());
+                                warn!("No receiver for rattan notify {notify:?}");
                             }
                             self.state
                                 .store(RattanState::Running as u8, Ordering::Relaxed);
@@ -148,8 +148,7 @@ impl RattanController {
                         })
                         .map_err(|tokio::sync::broadcast::error::SendError(notify)| {
                             RattanCoreError::SendNotifyError(format!(
-                                "Failed to send notify, {:?}",
-                                notify
+                                "Failed to send notify, {notify:?}"
                             ))
                             .into()
                         })

@@ -271,33 +271,32 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     let mut buf = Vec::new();
     writeln!(
         buf,
-        "rattan instance id {} create ns with rand_string {}",
-        instance_id, rand_string
+        "rattan instance id {instance_id} create ns with rand_string {rand_string}"
     )?;
     kmesg_logger.write_all(&buf)?;
     kmesg_logger.flush()?;
 
-    let left_netns_name = format!("ns-left-{}", rand_string);
+    let left_netns_name = format!("ns-left-{rand_string}");
     let left_netns = NetNs::new(&left_netns_name)?;
-    trace!(?left_netns, "Left netns {} created", left_netns_name);
+    trace!(?left_netns, "Left netns {left_netns_name} created");
 
-    let rattan_netns_name = format!("ns-rattan-{}", rand_string);
+    let rattan_netns_name = format!("ns-rattan-{rand_string}");
     let rattan_netns = NetNs::new(&rattan_netns_name)?;
-    trace!(?rattan_netns, "Rattan netns {} created", rattan_netns_name);
+    trace!(?rattan_netns, "Rattan netns {rattan_netns_name} created");
 
-    let right_netns_name = format!("ns-right-{}", rand_string);
+    let right_netns_name = format!("ns-right-{rand_string}");
     let right_netns = match config.mode {
         StdNetEnvMode::Compatible => NetNs::current()?,
         StdNetEnvMode::Isolated => NetNs::new(&right_netns_name)?,
         StdNetEnvMode::Container => NetNs::new(&right_netns_name)?,
     };
-    trace!(?right_netns, "Right netns {} created", right_netns_name);
+    trace!(?right_netns, "Right netns {right_netns_name} created");
 
     // Build veth0 for left and right, which are reserved for external connection, but ignore it for now
     let left_veth0 = VethPairBuilder::new()
         .name(
-            format!("vL0-L-{}", rand_string),
-            format!("vL0-R-{}", rand_string),
+            format!("vL0-L-{rand_string}"),
+            format!("vL0-R-{rand_string}"),
         )
         .namespace(Some(left_netns.clone()), Some(rattan_netns.clone()))
         .mac_addr(
@@ -311,8 +310,8 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         .build()?;
     let right_veth0 = VethPairBuilder::new()
         .name(
-            format!("vR0-L-{}", rand_string),
-            format!("vR0-R-{}", rand_string),
+            format!("vR0-L-{rand_string}"),
+            format!("vR0-R-{rand_string}"),
         )
         .namespace(Some(rattan_netns.clone()), Some(right_netns.clone()))
         .mac_addr(
@@ -348,8 +347,8 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         right_veth_pairs.push(
             VethPairBuilder::new()
                 .name(
-                    format!("vR{}-L-{}", pair_id, rand_string),
-                    format!("vR{}-R-{}", pair_id, rand_string),
+                    format!("vR{pair_id}-L-{rand_string}"),
+                    format!("vR{pair_id}-R-{rand_string}"),
                 )
                 .namespace(Some(rattan_netns.clone()), Some(right_netns.clone()))
                 .mac_addr(
@@ -372,8 +371,8 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         left_veth_pairs.push(
             VethPairBuilder::new()
                 .name(
-                    format!("vL{}-L-{}", pair_id, rand_string),
-                    format!("vL{}-R-{}", pair_id, rand_string),
+                    format!("vL{pair_id}-L-{rand_string}"),
+                    format!("vL{pair_id}-R-{rand_string}"),
                 )
                 .namespace(Some(left_netns.clone()), Some(rattan_netns.clone()))
                 .mac_addr(

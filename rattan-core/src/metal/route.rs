@@ -66,8 +66,7 @@ pub fn add_route_with_netns<
                         Ipv4Net::new(dest_v4, prefix_length)
                             .map_err(|_| {
                                 Error::ConfigError(format!(
-                                    "IPv4 prefix length {} is invalid",
-                                    prefix_length
+                                    "IPv4 prefix length {prefix_length} is invalid"
                                 ))
                             })?
                             .trunc()
@@ -79,8 +78,7 @@ pub fn add_route_with_netns<
                         message = message.gateway(gateway_v4);
                     } else {
                         return Err(Error::ConfigError(format!(
-                            "dest {} and gateway {} are not the same type",
-                            dest_v4, gateway
+                            "dest {dest_v4} and gateway {gateway} are not the same type"
                         )));
                     }
                 }
@@ -96,8 +94,7 @@ pub fn add_route_with_netns<
                         Ipv6Net::new(dest_v6, prefix_length)
                             .map_err(|_| {
                                 Error::ConfigError(format!(
-                                    "IPv6 prefix length {} is invalid",
-                                    prefix_length
+                                    "IPv6 prefix length {prefix_length} is invalid"
                                 ))
                             })?
                             .trunc()
@@ -109,8 +106,7 @@ pub fn add_route_with_netns<
                         message = message.gateway(gateway_v6);
                     } else {
                         return Err(Error::ConfigError(format!(
-                            "dest {} and gateway {} are not the same type",
-                            dest_v6, gateway
+                            "dest {dest_v6} and gateway {gateway} are not the same type"
                         )));
                     }
                 }
@@ -160,10 +156,7 @@ pub fn add_route_with_netns<
             debug!(?dest, ?gateway, ?outif_id, "Add route successfully");
         })
         .map_err(|e| {
-            error!(
-                "Failed to add route (add {:?} via {:?} dev {:?}): {}",
-                dest, gateway, outif_id, e
-            );
+            error!("Failed to add route (add {dest:?} via {gateway:?} dev {outif_id:?}): {e}");
             // XXX: Debug command: ip route
             let output = std::process::Command::new("ip")
                 .arg("route")
@@ -173,7 +166,7 @@ pub fn add_route_with_netns<
                         + String::from_utf8_lossy(&output.stderr).as_ref()
                 })
                 .unwrap_or_else(|e| e.to_string());
-            println!("ip route: {}", output);
+            println!("ip route: {output}");
             Error::MetalError(e.into())
         })
     })
@@ -195,10 +188,10 @@ pub fn add_arp_entry_with_netns(
                 .execute(),
         )
         .map(|_| {
-            debug!("Add arp entry {} -> {} successfully", dest, mac);
+            debug!("Add arp entry {dest} -> {mac} successfully");
         })
         .map_err(|e| {
-            error!("Failed to add arp entry: {}", e);
+            error!("Failed to add arp entry: {e}");
             // XXX: Debug command: arp -n
             let output = std::process::Command::new("arp")
                 .arg("-n")
@@ -208,7 +201,7 @@ pub fn add_arp_entry_with_netns(
                         + String::from_utf8_lossy(&output.stderr).as_ref()
                 })
                 .unwrap_or_else(|e| e.to_string());
-            println!("arp -n: {}", output);
+            println!("arp -n: {output}");
             Error::MetalError(e.into())
         })
     })
@@ -245,7 +238,7 @@ pub fn set_loopback_up_with_netns(netns: Arc<NetNs>) -> Result<(), Error> {
                             debug!("Set loopback up successfully");
                         })
                         .map_err(|e| {
-                            error!("Failed to set loopback up: {}", e);
+                            error!("Failed to set loopback up: {e}");
                             Error::MetalError(e.into())
                         });
                 }

@@ -91,7 +91,7 @@ impl DefaultEnv {
                 Ok(_) => Ok(()),
                 Err(e) => Err(e),
             },
-            Err(e) => Err(NsError::JoinThreadError(format!("{:?}", e))),
+            Err(e) => Err(NsError::JoinThreadError(format!("{e:?}"))),
         }
     }
 

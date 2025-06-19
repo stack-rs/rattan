@@ -34,5 +34,5 @@ where
     S: Serializer,
 {
     let dur = jiff::Span::try_from(*value).map_err(ser::Error::custom)?;
-    serializer.serialize_str(&format!("{:#}", dur))
+    serializer.serialize_str(&format!("{dur:#}"))
 }

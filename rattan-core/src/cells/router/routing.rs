@@ -82,7 +82,7 @@ impl RoutingTable for SimpleRoutingTable {
         // ensure that prefix is unique
         entry.prefix = entry.prefix.trunc();
         if self.table.iter().any(|e| e.prefix == entry.prefix) {
-            Err(RoutingTableError::DuplicateEntry(format!("{:?}", entry)))
+            Err(RoutingTableError::DuplicateEntry(format!("{entry:?}")))
         } else {
             self.table.push(entry);
             Ok(self)
@@ -96,7 +96,7 @@ impl RoutingTable for SimpleRoutingTable {
                 self.table.remove(pos);
                 Ok(self)
             }
-            None => Err(RoutingTableError::EntryNotFound(format!("{:?}", prefix))),
+            None => Err(RoutingTableError::EntryNotFound(format!("{prefix:?}"))),
         }
     }
 
