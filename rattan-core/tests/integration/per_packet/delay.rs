@@ -1,12 +1,15 @@
 /// This test need to be run as root (CAP_NET_ADMIN, CAP_SYS_ADMIN and CAP_SYS_RAW)
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test delay --all-features -- --nocapture
 use netem_trace::{model::StaticDelayPerPacketConfig, Delay};
-use rattan_core::cells::{per_packet::delay::DelayPerPacketCellConfig, StdPacket};
-use rattan_core::config::{CellBuildConfig, DelayPerPacketCellBuildConfig, RattanConfig};
-use rattan_core::control::RattanOp;
-use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
-use rattan_core::metal::io::af_packet::AfPacketDriver;
-use rattan_core::radix::RattanRadix;
+#[cfg(feature = "serde")]
+use rattan_core::{cells::per_packet::delay::DelayPerPacketCellConfig, control::RattanOp};
+use rattan_core::{
+    cells::StdPacket,
+    config::{CellBuildConfig, DelayPerPacketCellBuildConfig, RattanConfig},
+    env::{StdNetEnvConfig, StdNetEnvMode},
+    metal::io::af_packet::AfPacketDriver,
+    radix::RattanRadix,
+};
 use regex::Regex;
 use std::collections::HashMap;
 use tracing::{info, instrument, span, Level};
@@ -81,6 +84,7 @@ fn test_delay() {
     }
 
     // After set the DelayCell, the average latency should be around 200ms
+    #[cfg(feature = "serde")]
     {
         let _span = span!(Level::INFO, "ping_with_delay").entered();
         info!(

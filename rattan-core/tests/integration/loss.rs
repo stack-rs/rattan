@@ -2,12 +2,15 @@
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test loss --all-features -- --nocapture
 use std::collections::HashMap;
 
-use rattan_core::cells::{loss::LossCellConfig, StdPacket};
-use rattan_core::config::{CellBuildConfig, LossCellBuildConfig, RattanConfig};
-use rattan_core::control::RattanOp;
-use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
-use rattan_core::metal::io::af_packet::AfPacketDriver;
-use rattan_core::radix::RattanRadix;
+#[cfg(feature = "serde")]
+use rattan_core::{cells::loss::LossCellConfig, control::RattanOp};
+use rattan_core::{
+    cells::StdPacket,
+    config::{CellBuildConfig, LossCellBuildConfig, RattanConfig},
+    env::{StdNetEnvConfig, StdNetEnvMode},
+    metal::io::af_packet::AfPacketDriver,
+    radix::RattanRadix,
+};
 use regex::Regex;
 use tracing::{info, instrument, span, Level};
 
@@ -73,6 +76,7 @@ fn test_loss() {
     }
 
     // After set the LossCell, the average loss rate should be between 40%-60%
+    #[cfg(feature = "serde")]
     {
         let _span = span!(Level::INFO, "ping_with_loss").entered();
         info!("try to ping with loss set to 0.5");

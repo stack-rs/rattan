@@ -1,26 +1,25 @@
 /// This test need to be run as root (CAP_NET_ADMIN, CAP_SYS_ADMIN and CAP_SYS_RAW)
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test compound --all-features -- --nocapture
-use std::collections::HashMap;
-use std::thread::sleep;
-use std::time::Duration;
+use std::{collections::HashMap, thread::sleep, time::Duration};
 
 use netem_trace::Bandwidth;
-use rattan_core::cells::{
-    bandwidth::{
-        queue::{InfiniteQueue, InfiniteQueueConfig},
-        BwCellConfig,
+#[cfg(feature = "serde")]
+use rattan_core::{
+    cells::{bandwidth::queue::InfiniteQueue, delay::DelayCellConfig, loss::LossCellConfig},
+    control::RattanOp,
+};
+use rattan_core::{
+    cells::{
+        bandwidth::{queue::InfiniteQueueConfig, BwCellConfig},
+        StdPacket,
     },
-    delay::DelayCellConfig,
-    loss::LossCellConfig,
-    StdPacket,
+    config::{
+        BwCellBuildConfig, CellBuildConfig, DelayCellBuildConfig, LossCellBuildConfig, RattanConfig,
+    },
+    env::{StdNetEnvConfig, StdNetEnvMode},
+    metal::io::af_packet::AfPacketDriver,
+    radix::RattanRadix,
 };
-use rattan_core::config::{
-    BwCellBuildConfig, CellBuildConfig, DelayCellBuildConfig, LossCellBuildConfig, RattanConfig,
-};
-use rattan_core::control::RattanOp;
-use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
-use rattan_core::metal::io::af_packet::AfPacketDriver;
-use rattan_core::radix::RattanRadix;
 use regex::Regex;
 use tracing::{info, instrument, span, warn, Level};
 
@@ -137,6 +136,7 @@ fn test_compound() {
 
     // After set the BwCell, the bandwidth should be between 80-100Mbps
     std::thread::sleep(std::time::Duration::from_millis(100));
+    #[cfg(feature = "serde")]
     {
         let _span = span!(Level::INFO, "iperf_with_limit").entered();
         info!("try to iperf with bandwidth limit set to 100Mbps");

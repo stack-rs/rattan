@@ -56,8 +56,8 @@ impl LossReplayCellBuildConfig {
             }
         }
         Err(Error::ConfigError(format!(
-            "Unknown trace file format: {:?}",
-            file_path
+            "Unknown trace file format: {}",
+            file_path.display()
         )))
     }
 
