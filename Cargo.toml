@@ -52,6 +52,7 @@ http = ["rattan-core/http"]
 packet-dump = ["rattan-core/packet-dump"]
 
 [dependencies]
+byteorder = "1.5.0"
 # anyhow = "1.0.75"
 # bollard = "0.15.0"
 clap = { version = "4.2.4", features = ["derive"] }

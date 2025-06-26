@@ -1,5 +1,7 @@
 use bitfield::{BitRange, BitRangeMut};
 use plain::Plain;
+use byteorder::{BigEndian, ByteOrder};
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -19,27 +21,6 @@ pub struct FlowEntry {
     pub flow_desc: FlowDesc,
 }
 
-// The detailed spec of this log entry:
-//
-// 0                   1                   2                   3
-// 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |       LH.length       | LH.ty.|   GPH.length  |GPH.ac.|GPH.ty.|
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |                          GP.timestamp                         |
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |           GP.length           |       PRH.length      |PRH.ty.|
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |                          tcp.flow_id                          |
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |                            tcp.seq                            |
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |                            tcp.ack                            |
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |             ip.id             |         ip.frag_offset        |
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |          ip.checksum          |   tcp.flags   |    padding    |
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed(2))]
 pub struct TCPLogEntry {
@@ -75,13 +56,12 @@ impl TCPLogEntry {
         entry
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(
-                self as *const Self as *const u8,
-                std::mem::size_of::<Self>(),
-            )
-        }
+    pub fn as_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(32);
+        buf.extend(self.header.as_bytes());
+        buf.extend(self.general_pkt_entry.as_bytes());
+        buf.extend(self.tcp_entry.as_bytes());
+        buf
     }
 
     pub fn from_bytes(buf: &[u8]) -> &Self {
@@ -122,13 +102,10 @@ impl LogEntryHeader {
         self.0.bit_range(15, 4)
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(
-                self as *const Self as *const u8,
-                std::mem::size_of::<Self>(),
-            )
-        }
+    pub fn as_bytes(&self) -> [u8; 2] {
+        let mut buf = [0u8; 2];
+        BigEndian::write_u16(&mut buf, self.0);
+        buf
     }
 }
 
@@ -144,9 +121,18 @@ impl Default for LogEntryHeader {
 #[repr(C, packed(2))]
 pub struct GeneralPktEntry {
     pub header: GeneralPktHeader,
-    /// Timestamp in us
     pub ts: u32,
     pub pkt_length: u16,
+}
+
+impl GeneralPktEntry {
+    pub fn as_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(8);
+        buf.extend(self.header.as_bytes());
+        buf.extend(&self.ts.to_be_bytes());
+        buf.extend(&self.pkt_length.to_be_bytes());
+        buf
+    }
 }
 
 unsafe impl Plain for GeneralPktEntry {}
@@ -193,13 +179,10 @@ impl GeneralPktHeader {
         self.0.bit_range(15, 8)
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(
-                self as *const Self as *const u8,
-                std::mem::size_of::<Self>(),
-            )
-        }
+    pub fn as_bytes(&self) -> [u8; 2] {
+        let mut buf = [0u8; 2];
+        BigEndian::write_u16(&mut buf, self.0);
+        buf
     }
 }
 
@@ -223,6 +206,22 @@ pub struct TCPProtocolEntry {
     pub checksum: u16,
     pub flags: u8,
     pub padding: u8,
+}
+
+impl TCPProtocolEntry {
+    pub fn as_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(22);
+        buf.extend(self.header.as_bytes());
+        buf.extend(&self.flow_id.to_be_bytes());
+        buf.extend(&self.seq.to_be_bytes());
+        buf.extend(&self.ack.to_be_bytes());
+        buf.extend(&self.ip_id.to_be_bytes());
+        buf.extend(&self.ip_frag_offset.to_be_bytes());
+        buf.extend(&self.checksum.to_be_bytes());
+        buf.push(self.flags);
+        buf.push(self.padding);
+        buf
+    }
 }
 
 unsafe impl Plain for TCPProtocolEntry {}
@@ -252,13 +251,10 @@ impl ProtocolHeader {
         self.0.bit_range(15, 4)
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(
-                self as *const ProtocolHeader as *const u8,
-                std::mem::size_of::<ProtocolHeader>(),
-            )
-        }
+    pub fn as_bytes(&self) -> [u8; 2] {
+        let mut buf = [0u8; 2];
+        BigEndian::write_u16(&mut buf, self.0);
+        buf
     }
 }
 
@@ -271,15 +267,141 @@ impl Default for ProtocolHeader {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
+    use byteorder::{BigEndian, ByteOrder};
 
     #[test]
-    fn test_ser() {
+    fn test_log_entry_header_serialization() {
+        let mut header = LogEntryHeader::new();
+        header.set_type(0x5);     // 0101
+        header.set_length(0xABC);  // 1010 1011 1100
+        
+        let bytes = header.as_bytes();
+        // 结构：高12位是length(0xABC)，低4位是type(0x5)
+        // 预期：0xABC5 (1010 1011 1100 0101)
+        assert_eq!(bytes, [0xAB, 0xC5]);
+        assert_eq!(bytes.len(), 2);
+        
+        // 验证反序列化
+        let reconstructed = LogEntryHeader(BigEndian::read_u16(&bytes));
+        assert_eq!(reconstructed.get_type(), 0x5);
+        assert_eq!(reconstructed.get_length(), 0xABC);
+    }
+
+    #[test]
+    fn test_general_pkt_entry_serialization() {
+        let entry = GeneralPktEntry {
+            header: GeneralPktHeader::new(),
+            ts: 0x12345678,
+            pkt_length: 0x9ABC,
+        };
+        
+        let bytes = entry.as_bytes();
+        assert_eq!(bytes.len(), 8); // header(2) + ts(4) + length(2)
+        
+        // 验证header部分（默认全0）
+        assert_eq!(&bytes[0..2], [0x00, 0x00]);
+        
+        // 验证时间戳（大端序）
+        assert_eq!(&bytes[2..6], [0x12, 0x34, 0x56, 0x78]);
+        
+        // 验证包长度
+        assert_eq!(&bytes[6..8], [0x9A, 0xBC]);
+    }
+
+    #[test]
+    fn test_tcp_protocol_entry_serialization() {
+        let entry = TCPProtocolEntry {
+            header: ProtocolHeader::new(),
+            flow_id: 0x11223344,
+            seq: 0x55667788,
+            ack: 0x99AABBCC,
+            ip_id: 0xDDEE,
+            ip_frag_offset: 0xFF11,
+            checksum: 0x2233,
+            flags: 0x44,
+            padding: 0x55,
+        };
+        
+        let bytes = entry.as_bytes();
+        assert_eq!(bytes.len(), 22);
+        
+        // 验证各字段大端序
+        let mut offset = 0;
+        assert_eq!(&bytes[offset..offset+2], [0x00, 0x00]); // header
+        offset += 2;
+        assert_eq!(&bytes[offset..offset+4], [0x11, 0x22, 0x33, 0x44]); // flow_id
+        offset += 4;
+        assert_eq!(&bytes[offset..offset+4], [0x55, 0x66, 0x77, 0x88]); // seq
+        offset += 4;
+        assert_eq!(&bytes[offset..offset+4], [0x99, 0xAA, 0xBB, 0xCC]); // ack
+        offset += 4;
+        assert_eq!(&bytes[offset..offset+2], [0xDD, 0xEE]); // ip_id
+        offset += 2;
+        assert_eq!(&bytes[offset..offset+2], [0xFF, 0x11]); // frag_offset
+        offset += 2;
+        assert_eq!(&bytes[offset..offset+2], [0x22, 0x33]); // checksum
+        offset += 2;
+        assert_eq!(bytes[offset], 0x44); // flags
+        offset += 1;
+        assert_eq!(bytes[offset], 0x55); // padding
+    }
+
+    #[test]
+    fn test_full_tcp_log_entry_serialization() {
         let mut entry = TCPLogEntry::new();
-        entry.header.set_type(1);
-        let bytes: &[u8] = entry.as_bytes();
-        assert_eq!(bytes.len(), std::mem::size_of::<TCPLogEntry>());
-        assert_eq!(bytes.len(), 32);
+        entry.header.set_type(0x1);
+        entry.general_pkt_entry.ts = 0x12345678;
+        entry.tcp_entry.flow_id = 0x11223344;
+        
+        let bytes = entry.as_bytes();
+        assert_eq!(bytes.len(), 32); // 总大小
+        
+        // 验证header部分
+        assert_eq!(&bytes[0..2], entry.header.as_bytes());
+        
+        // 验证general_pkt_entry部分
+        assert_eq!(&bytes[2..10], entry.general_pkt_entry.as_bytes());
+        
+        // 验证tcp_entry部分
+        assert_eq!(&bytes[10..32], entry.tcp_entry.as_bytes());
+        
+        // 验证完整反序列化
+        let deserialized = TCPLogEntry::from_bytes(&bytes);
+        assert_eq!(deserialized.header.get_type(), 0x1);
+        assert_eq!(deserialized.general_pkt_entry.ts, 0x12345678);
+        assert_eq!(deserialized.tcp_entry.flow_id, 0x11223344);
+    }
+
+    #[test]
+    fn test_cross_serialization() {
+        // 测试复合结构的交叉验证
+        let mut entry = TCPLogEntry {
+            header: LogEntryHeader(0),
+            general_pkt_entry: GeneralPktEntry {
+                header: GeneralPktHeader(0),
+                ts: 0xDEADBEEF,
+                pkt_length: 0xCAFE,
+            },
+            tcp_entry: TCPProtocolEntry {
+                header: ProtocolHeader(0),
+                flow_id: 0x12345678,
+                seq: 0,
+                ack: 0,
+                ip_id: 0,
+                ip_frag_offset: 0,
+                checksum: 0,
+                flags: 0,
+                padding: 0,
+            },
+        };
+        entry.header.set_length(32);
+        
+        let bytes = entry.as_bytes();
+        
+        // 手动验证关键字段位置
+        assert_eq!(&bytes[2..6], [0xDE, 0xAD, 0xBE, 0xEF]); // ts
+        assert_eq!(&bytes[10..14], [0x12, 0x34, 0x56, 0x78]); // flow_id
     }
 }
