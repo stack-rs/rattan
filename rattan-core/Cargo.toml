@@ -47,6 +47,7 @@ uuid = { version = "1.10.0", features = ["v4"] }
 byteorder = "1.5.0"
 
 [dev-dependencies]
+rand = "0.8"  # 用于生成测试数据
 anyhow = "1.0.69"
 clap = { version = "4.5.4", features = ["derive"] }
 criterion = { version = "0.6.0", features = ["async_tokio"] }
@@ -83,3 +84,7 @@ camellia = ["dep:camellia"]
 [[example]]
 name = "channel-xdp"
 required-features = ["camellia"]
+
+[[bench]]
+name = "log"
+harness = false  # 禁用默认测试框架
