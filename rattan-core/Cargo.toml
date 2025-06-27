@@ -83,3 +83,7 @@ camellia = ["dep:camellia"]
 [[example]]
 name = "channel-xdp"
 required-features = ["camellia"]
+
+[[bench]]
+name = "log_bench"
+harness = false
