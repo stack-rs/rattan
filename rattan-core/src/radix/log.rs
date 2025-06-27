@@ -20,6 +20,28 @@ pub struct FlowEntry {
     pub flow_desc: FlowDesc,
 }
 
+// The detailed spec of this log entry:
+//
+// 0                   1                   2                   3
+// 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |       LH.length       | LH.ty.|   GPH.length  |GPH.ac.|GPH.ty.|
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                          GP.timestamp                         |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |           GP.length           |       PRH.length      |PRH.ty.|
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                          tcp.flow_id                          |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                            tcp.seq                            |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                            tcp.ack                            |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |             ip.id             |         ip.frag_offset        |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |          ip.checksum          |   tcp.flags   |    padding    |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed(2))]
 pub struct TCPLogEntry {
@@ -118,6 +140,7 @@ impl Default for LogEntryHeader {
 #[repr(C, packed(2))]
 pub struct GeneralPktEntry {
     pub header: GeneralPktHeader,
+    /// Timestamp in us
     pub ts: u32,
     pub pkt_length: u16,
 }
