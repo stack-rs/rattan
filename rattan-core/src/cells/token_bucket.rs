@@ -101,6 +101,7 @@ where
     max_size: ByteSize,
     token_bucket: TokenBucket,
     peak_token_bucket: TokenBucket,
+    queue_limit: Option<usize>,
     packet_queue: DropTailQueue<P>,
     next_available: Instant,
     last_check: Instant,
@@ -168,6 +169,7 @@ where
         // set queue
         if let Some(limit) = config.limit {
             debug!(?limit, "Set inner queue byte_limit: ");
+            self.queue_limit = Some(limit);
             self.packet_queue.configure(DropTailQueueConfig::new(
                 None,
                 limit,
@@ -299,11 +301,36 @@ where
                 Some(packet_to_send)
             } else {
                 // set next_available
-                self.next_available = now
-                    + max(
-                        consumed_tokens.saturating_sub(self.token_bucket.tokens),
-                        consumed_ptokens.saturating_sub(self.peak_token_bucket.tokens),
-                    );
+                if let Some(limit) = self.queue_limit {
+                    if limit == 0 {
+                        // drop the packet
+                        let _ = self.packet_queue.dequeue().unwrap();
+                        if let Some(next_size) = self.packet_queue.get_front_size() {
+                            debug!("next_size: {}", next_size);
+                            self.next_available = now
+                                + max(
+                                    length_to_time(next_size as u64, self.token_bucket.rate)
+                                        .saturating_sub(self.token_bucket.tokens),
+                                    length_to_time(next_size as u64, self.peak_token_bucket.rate)
+                                        .saturating_sub(self.peak_token_bucket.tokens),
+                                );
+                        } else {
+                            self.next_available = now + LARGE_DURATION;
+                        }
+                    } else {
+                        self.next_available = now
+                            + max(
+                                consumed_tokens.saturating_sub(self.token_bucket.tokens),
+                                consumed_ptokens.saturating_sub(self.peak_token_bucket.tokens),
+                            );
+                    }
+                } else {
+                    self.next_available = now
+                        + max(
+                            consumed_tokens.saturating_sub(self.token_bucket.tokens),
+                            consumed_ptokens.saturating_sub(self.peak_token_bucket.tokens),
+                        );
+                }
                 None
             }
         } else {
@@ -482,7 +509,7 @@ where
     P: Packet,
 {
     pub fn new<
-        L: Into<Option<usize>>,
+        L: Into<Option<usize>> + Copy,
         R: Into<Option<Bandwidth>>,
         B: Into<Option<ByteSize>>,
         PR: Into<Option<Bandwidth>>,
@@ -510,11 +537,28 @@ where
         peak_token_bucket.tokens =
             length_to_time(peak_token_bucket.burst.as_u64(), peak_token_bucket.rate);
 
-        let packet_queue = DropTailQueue::new(DropTailQueueConfig::new(
-            None,
-            limit,
-            crate::cells::bandwidth::BwType::NetworkLayer,
-        ));
+        let packet_queue;
+        if let Some(_queue_limit) = limit.into() {
+            if _queue_limit == 0 {
+                packet_queue = DropTailQueue::new(DropTailQueueConfig::new(
+                    None,
+                    None,
+                    crate::cells::bandwidth::BwType::NetworkLayer,
+                ));
+            } else {
+                packet_queue = DropTailQueue::new(DropTailQueueConfig::new(
+                    None,
+                    limit,
+                    crate::cells::bandwidth::BwType::NetworkLayer,
+                ));
+            }
+        } else {
+            packet_queue = DropTailQueue::new(DropTailQueueConfig::new(
+                None,
+                limit,
+                crate::cells::bandwidth::BwType::NetworkLayer,
+            ));
+        }
 
         let now = Instant::now();
         Ok(TokenBucketCell {
@@ -524,6 +568,7 @@ where
                 max_size: min(token_bucket.burst, peak_token_bucket.burst),
                 token_bucket,
                 peak_token_bucket,
+                queue_limit: limit.into(),
                 packet_queue,
                 next_available: now + LARGE_DURATION,
                 last_check: now,
@@ -1012,7 +1057,7 @@ mod tests {
             .build()?;
         let _guard = rt.enter();
 
-        info!("Creating cell with 512 B burst, 4096 bps rate and a 1024 bytes limit queue.");
+        info!("Creating cell with 512 B burst, 4096 bps rate and an infinity queue.");
 
         let cell = TokenBucketCell::new(
             None,
@@ -1119,6 +1164,104 @@ mod tests {
         assert!(!received_packets[2]);
         assert!(!received_packets[3]);
         assert!(received_packets[4]);
+        Ok(())
+    }
+
+    #[test_log::test]
+    fn test_token_bucket_traffic_policing() -> Result<(), Error> {
+        // check dropped packet and packet sequence
+        let _span = span!(Level::INFO, "test_token_bucket_traffic_policing").entered();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let _guard = rt.enter();
+
+        info!("Creating cell with 512 B burst, 4096 bps rate and a 0 limit queue.");
+
+        let cell =
+            TokenBucketCell::new(0, Bandwidth::from_bps(4096), ByteSize::b(512), None, None)?;
+        let mut received_packets: Vec<bool> = vec![false, false, false, false, false, false];
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
+        egress.reset();
+        egress.change_state(2);
+
+        info!("Testing queue of token bucket cell");
+        let mut delays: Vec<f64> = Vec::new();
+
+        // Test queue
+        // enqueue 3 packets of 256B
+        for i in 0..3 {
+            let mut test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            test_packet.set_flow_id(i);
+            ingress.enqueue(test_packet)?;
+        }
+        for _ in 0..2 {
+            let start = Instant::now();
+            let mut received: Option<StdPacket> = None;
+            while received.is_none() {
+                received = rt.block_on(async { egress.dequeue().await });
+            }
+
+            // Use microsecond to get precision up to 0.001ms
+            let duration = start.elapsed().as_micros() as f64 / 1000.0;
+
+            delays.push(duration);
+
+            assert!(received.is_some());
+            let received = received.unwrap();
+
+            // The length should be correct
+            received_packets[received.get_flow_id() as usize] = true;
+            assert!(received.length() == 256);
+        }
+
+        // wait for 1000ms
+        std::thread::sleep(Duration::from_millis(1000));
+
+        // Test queue
+        // enqueue 3 packets of 256B
+        for i in 3..6 {
+            let mut test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            test_packet.set_flow_id(i);
+            ingress.enqueue(test_packet)?;
+        }
+        for _ in 0..2 {
+            let start = Instant::now();
+            let mut received: Option<StdPacket> = None;
+            while received.is_none() {
+                received = rt.block_on(async { egress.dequeue().await });
+            }
+
+            // Use microsecond to get precision up to 0.001ms
+            let duration = start.elapsed().as_micros() as f64 / 1000.0;
+
+            delays.push(duration);
+
+            assert!(received.is_some());
+            let received = received.unwrap();
+
+            // The length should be correct
+            received_packets[received.get_flow_id() as usize] = true;
+            assert!(received.length() == 256);
+        }
+
+        // receive the first two packets immediately
+        assert!(delays[0] <= DELAY_ACCURACY_TOLERANCE);
+        assert!(delays[1] <= DELAY_ACCURACY_TOLERANCE);
+
+        // receive left 2 packets immediately
+        assert!(delays[2] <= DELAY_ACCURACY_TOLERANCE);
+        assert!(delays[3] <= DELAY_ACCURACY_TOLERANCE);
+
+        assert!(received_packets[0]);
+        assert!(received_packets[1]);
+        assert!(received_packets[2]);
+
+        assert!(received_packets[3]);
+        assert!(!received_packets[4]);
+        // the last two packets is lost
+        assert!(!received_packets[5]);
         Ok(())
     }
 }
