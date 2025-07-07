@@ -11,6 +11,7 @@ use crate::{
     cells::{loss, Packet},
     core::CellFactory,
     error::Error,
+    utils::replace_env_var_in_string,
 };
 
 pub type LossCellBuildConfig = loss::LossCellConfig;
@@ -39,7 +40,8 @@ pub struct LossReplayCellBuildConfig {
 
 impl LossReplayCellBuildConfig {
     fn get_trace(&self) -> Result<Box<dyn LossTrace>, Error> {
-        let file_path = std::path::Path::new(&self.trace);
+        let parsed_trace_path = replace_env_var_in_string(&self.trace);
+        let file_path = std::path::Path::new(parsed_trace_path.as_ref());
         if let Some(ext) = file_path.extension() {
             if ext == "json" {
                 let trace: Box<dyn LossTraceConfig> = Figment::new()
