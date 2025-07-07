@@ -1,4 +1,7 @@
-use std::ops::Deref as _;
+use std::{
+    fs::{File, OpenOptions},
+    ops::Deref as _,
+};
 
 use dyn_clone::DynClone;
 #[cfg(feature = "serde")]
@@ -27,7 +30,11 @@ impl SpyCellBuildConfig {
             let _guard = handle.enter();
             match self {
                 Self::Path(path) => {
-                    let file = std::fs::File::create(path)?;
+                    let file = if path.exists() {
+                        OpenOptions::new().write(true).truncate(true).open(&path)?
+                    } else {
+                        File::create_new(&path)?
+                    };
                     let config: Box<dyn std::io::Write + Send> = Box::new(file);
                     // let config = spy::SpyCellConfig::<Box<dyn std::io::Write>>::new(config);
                     spy::SpyCell::new(config)
