@@ -1,9 +1,10 @@
 use bitfield::{BitRange, BitRangeMut};
 use plain::Plain;
+use std::io::Write;  // 
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-
+use byteorder::{BigEndian, WriteBytesExt};
 use crate::cells::FlowDesc;
 
 pub enum RattanLogOp {
@@ -41,7 +42,6 @@ pub struct FlowEntry {
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |          ip.checksum          |   tcp.flags   |    padding    |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed(2))]
 pub struct TCPLogEntry {
@@ -79,9 +79,16 @@ impl TCPLogEntry {
 
     pub fn as_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(32);
+        
+        // Write header bytes
         buf.extend_from_slice(&self.header.as_bytes());
+        
+        // Write general packet entry bytes
         buf.extend_from_slice(&self.general_pkt_entry.as_bytes());
+        
+        // Write TCP entry bytes
         buf.extend_from_slice(&self.tcp_entry.as_bytes());
+        
         buf
     }
 
@@ -148,9 +155,10 @@ pub struct GeneralPktEntry {
 impl GeneralPktEntry {
     pub fn as_bytes(&self) -> [u8; 8] {
         let mut buf = [0u8; 8];
-        buf[0..2].copy_from_slice(&self.header.as_bytes());
-        buf[2..6].copy_from_slice(&self.ts.to_be_bytes());
-        buf[6..8].copy_from_slice(&self.pkt_length.to_be_bytes());
+        let mut writer = &mut buf[..];
+        writer.write_all(&self.header.as_bytes()).unwrap();
+        writer.write_u32::<BigEndian>(self.ts).unwrap();
+        writer.write_u16::<BigEndian>(self.pkt_length).unwrap();
         buf
     }
 }
@@ -229,15 +237,16 @@ pub struct TCPProtocolEntry {
 impl TCPProtocolEntry {
     pub fn as_bytes(&self) -> [u8; 22] {
         let mut buf = [0u8; 22];
-        buf[0..2].copy_from_slice(&self.header.as_bytes());
-        buf[2..6].copy_from_slice(&self.flow_id.to_be_bytes());
-        buf[6..10].copy_from_slice(&self.seq.to_be_bytes());
-        buf[10..14].copy_from_slice(&self.ack.to_be_bytes());
-        buf[14..16].copy_from_slice(&self.ip_id.to_be_bytes());
-        buf[16..18].copy_from_slice(&self.ip_frag_offset.to_be_bytes());
-        buf[18..20].copy_from_slice(&self.checksum.to_be_bytes());
-        buf[20] = self.flags;
-        buf[21] = self.padding;
+        let mut writer = &mut buf[..];
+        writer.write_all(&self.header.as_bytes()).unwrap();
+        writer.write_u32::<BigEndian>(self.flow_id).unwrap();
+        writer.write_u32::<BigEndian>(self.seq).unwrap();
+        writer.write_u32::<BigEndian>(self.ack).unwrap();
+        writer.write_u16::<BigEndian>(self.ip_id).unwrap();
+        writer.write_u16::<BigEndian>(self.ip_frag_offset).unwrap();
+        writer.write_u16::<BigEndian>(self.checksum).unwrap();
+        writer.write_u8(self.flags).unwrap();
+        writer.write_u8(self.padding).unwrap();
         buf
     }
 }
@@ -270,7 +279,9 @@ impl ProtocolHeader {
     }
 
     pub fn as_bytes(&self) -> [u8; 2] {
-        self.0.to_be_bytes()
+        let mut buf = [0u8; 2];
+        buf.as_mut().write_u16::<BigEndian>(self.0).unwrap();
+        buf
     }
 }
 
@@ -282,7 +293,6 @@ impl Default for ProtocolHeader {
     }
 }
 
-More actions
 #[cfg(test)]
 mod tests {
     use super::*;
