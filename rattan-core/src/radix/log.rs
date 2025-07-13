@@ -106,20 +106,20 @@ impl LogEntryHeader {
         Self(0)
     }
 
-    pub fn set_type(&mut self, value: u8) {
-        self.0.set_bit_range(3, 0, value)
-    }
-
-    pub fn get_type(&self) -> u8 {
-        self.0.bit_range(3, 0)
-    }
-
     pub fn set_length(&mut self, value: u16) {
-        self.0.set_bit_range(15, 4, value)
+        self.0.set_bit_range(11, 0, value)
     }
 
     pub fn get_length(&self) -> u16 {
-        self.0.bit_range(15, 4)
+        self.0.bit_range(11, 0)
+    }
+
+    pub fn set_type(&mut self, value: u8) {
+        self.0.set_bit_range(15, 12, value)
+    }
+
+    pub fn get_type(&self) -> u8 {
+        self.0.bit_range(15, 12)
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -169,28 +169,28 @@ impl GeneralPktHeader {
         Self(0)
     }
 
-    pub fn set_type(&mut self, value: u8) {
-        self.0.set_bit_range(3, 0, value)
-    }
-
-    pub fn get_type(&self) -> u8 {
-        self.0.bit_range(3, 0)
-    }
-
-    pub fn set_pkt_action(&mut self, value: u8) {
-        self.0.set_bit_range(7, 4, value)
-    }
-
-    pub fn get_pkt_action(&self) -> u8 {
-        self.0.bit_range(7, 4)
-    }
-
     pub fn set_length(&mut self, value: u16) {
-        self.0.set_bit_range(15, 8, value)
+        self.0.set_bit_range(7, 0, value)
     }
 
     pub fn get_length(&self) -> u16 {
-        self.0.bit_range(15, 8)
+        self.0.bit_range(7, 0)
+    }
+
+    pub fn set_pkt_action(&mut self, value: u8) {
+        self.0.set_bit_range(11, 8, value)
+    }
+
+    pub fn get_pkt_action(&self) -> u8 {
+        self.0.bit_range(11, 8)
+    }
+
+    pub fn set_type(&mut self, value: u8) {
+        self.0.set_bit_range(15, 12, value)
+    }
+
+    pub fn get_type(&self) -> u8 {
+        self.0.bit_range(15, 12)
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -236,20 +236,20 @@ impl ProtocolHeader {
         Self(0)
     }
 
-    pub fn set_type(&mut self, value: u8) {
-        self.0.set_bit_range(3, 0, value)
-    }
-
-    pub fn get_type(&self) -> u8 {
-        self.0.bit_range(3, 0)
-    }
-
     pub fn set_length(&mut self, value: u16) {
-        self.0.set_bit_range(15, 4, value)
+        self.0.set_bit_range(11, 0, value)
     }
 
     pub fn get_length(&self) -> u16 {
-        self.0.bit_range(15, 4)
+        self.0.bit_range(11, 0)
+    }
+
+    pub fn set_type(&mut self, value: u8) {
+        self.0.set_bit_range(15, 12, value)
+    }
+
+    pub fn get_type(&self) -> u8 {
+        self.0.bit_range(15, 12)
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -277,9 +277,31 @@ mod test {
     #[test]
     fn test_ser() {
         let mut entry = TCPLogEntry::new();
-        entry.header.set_type(1);
+        entry.header.set_length(0x321);
+        entry.header.set_type(0x4);
+        entry.general_pkt_entry.header.set_length(0x65);
+        entry.general_pkt_entry.header.set_pkt_action(0x7);
+        entry.general_pkt_entry.header.set_type(0x8);
+        entry.general_pkt_entry.ts = 0x8765_4321;
+        entry.general_pkt_entry.pkt_length = 0x4321;
+        entry.tcp_entry.header.set_length(0x765);
+        entry.tcp_entry.header.set_type(0x8);
+        entry.tcp_entry.flow_id = 0x8765_4321;
+        entry.tcp_entry.seq = 0x8765_4321;
+        entry.tcp_entry.ack = 0x8765_4321;
+        entry.tcp_entry.ip_id = 0x4321;
+        entry.tcp_entry.ip_frag_offset = 0x8765;
+        entry.tcp_entry.checksum = 0x4321;
+        entry.tcp_entry.flags = 0x65;
+        entry.tcp_entry.padding = 0x87;
         let bytes: &[u8] = entry.as_bytes();
         assert_eq!(bytes.len(), std::mem::size_of::<TCPLogEntry>());
         assert_eq!(bytes.len(), 32);
+        for i in 0..8 {
+            assert_eq!(bytes[4 * i], 0x21);
+            assert_eq!(bytes[4 * i + 1], 0x43);
+            assert_eq!(bytes[4 * i + 2], 0x65);
+            assert_eq!(bytes[4 * i + 3], 0x87);
+        }
     }
 }
