@@ -307,7 +307,15 @@ fn log_packet<T: Packet>(
                     ) {
                         Ok(ip_hdr) => {
                             entry.tcp_entry.ip_id = ip_hdr.identification();
-                            entry.tcp_entry.ip_frag_offset = ip_hdr.fragments_offset().value();
+                            entry.tcp_entry.ip_frag = unsafe {
+                                // SAFETY:
+                                // Safe as the slice length is checked to be at least
+                                // Ipv4Header::MIN_LEN (20) in the constructor.
+                                u16::from_be_bytes([
+                                    *ip_hdr.slice().get_unchecked(6),
+                                    *ip_hdr.slice().get_unchecked(7),
+                                ])
+                            };
                             entry.tcp_entry.checksum = ip_hdr.header_checksum();
                             #[allow(clippy::single_match)]
                             match ip_hdr.protocol() {
@@ -320,6 +328,7 @@ fn log_packet<T: Packet>(
                                         entry.tcp_entry.seq = tcp_hdr.sequence_number();
                                         entry.tcp_entry.ack = tcp_hdr.acknowledgment_number();
                                         entry.tcp_entry.flags = *tcp_hdr.slice().get(13).unwrap();
+                                        entry.tcp_entry.dataofs = tcp_hdr.data_offset();
                                         let entry_bytes = entry.as_bytes().to_owned();
                                         let _ =
                                             tx.send(crate::radix::RattanLogOp::Entry(entry_bytes));

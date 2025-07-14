@@ -36,9 +36,9 @@ pub struct FlowEntry {
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |                            tcp.ack                            |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |             ip.id             |         ip.frag_offset        |
+// |             ip.id             |            ip.frag            |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |          ip.checksum          |   tcp.flags   |    padding    |
+// |          ip.checksum          |   tcp.flags   |  tcp.dataofs  |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed(2))]
@@ -63,10 +63,10 @@ impl TCPLogEntry {
                 seq: 0,
                 ack: 0,
                 ip_id: 0,
-                ip_frag_offset: 0,
+                ip_frag: 0,
                 checksum: 0,
                 flags: 0,
-                padding: 0,
+                dataofs: 0,
             },
         };
         entry.header.set_length(32);
@@ -219,10 +219,10 @@ pub struct TCPProtocolEntry {
     pub seq: u32,
     pub ack: u32,
     pub ip_id: u16,
-    pub ip_frag_offset: u16,
+    pub ip_frag: u16,
     pub checksum: u16,
     pub flags: u8,
-    pub padding: u8,
+    pub dataofs: u8,
 }
 
 unsafe impl Plain for TCPProtocolEntry {}
@@ -290,10 +290,10 @@ mod test {
         entry.tcp_entry.seq = 0x8765_4321;
         entry.tcp_entry.ack = 0x8765_4321;
         entry.tcp_entry.ip_id = 0x4321;
-        entry.tcp_entry.ip_frag_offset = 0x8765;
+        entry.tcp_entry.ip_frag = 0x8765;
         entry.tcp_entry.checksum = 0x4321;
         entry.tcp_entry.flags = 0x65;
-        entry.tcp_entry.padding = 0x87;
+        entry.tcp_entry.dataofs = 0x87;
         let bytes: &[u8] = entry.as_bytes();
         assert_eq!(bytes.len(), std::mem::size_of::<TCPLogEntry>());
         assert_eq!(bytes.len(), 32);
