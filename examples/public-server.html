@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Write Your Tailored Tool (TODO) - Rattan Documentation</title>
+        <title>How to Run Server inside Rattan to Serve Public Traffic - Rattan Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -129,7 +129,7 @@
                         <a href="https://github.com/stack-rs/rattan/tree/master/guide" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/stack-rs/rattan/edit/master/guide/src/guide/tailored-tool.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/stack-rs/rattan/edit/master/guide/src/examples/public-server.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -225,17 +225,43 @@
 }
 
 </style>
-<h1 id="write-your-tailored-tool-todo"><a class="header" href="#write-your-tailored-tool-todo">Write Your Tailored Tool (TODO)</a></h1>
+<h1 id="run-server-inside-rattan-to-serve-public-traffic"><a class="header" href="#run-server-inside-rattan-to-serve-public-traffic">Run Server inside Rattan to Serve Public Traffic</a></h1>
+<p>You can find the complete code to run this example in the <a href="https://github.com/stack-rs/rattan/tree/main/examples/public-server">examples/public-server</a> folder.</p>
+<h2 id="configure-the-network-conditions-of-the-emulated-internet-path"><a class="header" href="#configure-the-network-conditions-of-the-emulated-internet-path">Configure the Network Conditions of the Emulated Internet Path</a></h2>
+<p>So first, we need to create a TOML file to describe the Internet path we want to emulate.
+In our current example, as we need to run a public server, we will use the <code>Compatible</code> mode of Rattan and set a typical Internet path configuration: one uplink and one downlink, each with 20 ms delay, and no packet loss. The difference is in bandwidth: the uplink is 100 Mbps with infinite queue, and the downlink is a token bucket with rate limited to 2Mbps.</p>
+<p>For the full configuration file, we refer the readers to <a href="https://github.com/stack-rs/rattan/tree/main/examples/public-server/rattan.toml">examples/public-server/rattan.toml</a></p>
+<h2 id="write-scripts-to-exchange-information-for-ip-forwarding"><a class="header" href="#write-scripts-to-exchange-information-for-ip-forwarding">Write Scripts to Exchange Information for IP Forwarding</a></h2>
+<p>To present more clearly how to run a server inside Rattan and allow it to serve public traffic,
+we have placed different functionalities in three separate scripts: <a href="https://github.com/stack-rs/rattan/tree/main/examples/public-server/main.sh">main.sh</a>, <a href="https://github.com/stack-rs/rattan/tree/main/examples/public-server/inner.sh">inner.sh</a>, and <a href="https://github.com/stack-rs/rattan/tree/main/examples/public-server/run.sh">run.sh</a>.
+Users only need to write the command to start the server in <a href="https://github.com/stack-rs/rattan/tree/main/examples/public-server/run.sh">run.sh</a> and then directly execute the <a href="https://github.com/stack-rs/rattan/tree/main/examples/public-server/main.sh">main.sh</a> script.</p>
+<p>To specify the outer port on the host and the inner port of the server inside Rattan, we can run the script with arguments:</p>
+<pre><code class="language-bash">bash main.sh --inner-port 5201 --outer-port 35201
+</code></pre>
+<p>For the rest of this section, we will explain how these scripts work and how they set up the IP forwarding rules on the host machine.</p>
+<p>As an example, we serve <code>iperf3</code> server inside Rattan, which is in the <a href="https://github.com/stack-rs/rattan/tree/main/examples/public-server/run.sh">run.sh</a> script.
+You can also modify this script to run your own server.</p>
+<p>What inside the script is very simple: <code>iperf3 -s -1</code></p>
+<p>Now we have to setup the IP forwarding rules to forward traffic from a public port on the host machine to the inner port inside Rattan's network namespace.</p>
+<p>We have created a pair of scripts, <a href="https://github.com/stack-rs/rattan/tree/main/examples/public-server/main.sh">main.sh</a> and <a href="https://github.com/stack-rs/rattan/tree/main/examples/public-server/inner.sh">inner.sh</a>,
+to get the internal IP of Rattan so to set forwarding rules on the host machine.</p>
+<p>We use temporary files named with random UUIDs as a way to pass messages, created by the <a href="https://github.com/stack-rs/rattan/tree/main/examples/public-server/main.sh">main.sh</a>, which polls the content to obtain the IP reported from <a href="https://github.com/stack-rs/rattan/tree/main/examples/public-server/inner.sh">inner.sh</a>. Then we use the following command to create forwarding rules:</p>
+<pre><code class="language-bash">sudo iptables -t nat -A PREROUTING -p tcp --dport $OUTER_PORT -j DNAT --to-destination "$INNER_IP:$INNER_PORT"
+</code></pre>
+<p>This will forward the traffic from 0.0.0.0:$OUTER_PORT to $INNER_IP:$INNER_PORT</p>
+<p>Our scripts will clean the forwarding rules on exit and you can also delete the rule manually with the following command:</p>
+<pre><code class="language-bash">sudo iptables -t nat -D PREROUTING -p tcp --dport $OUTER_PORT -j DNAT --to-destination "$INNER_IP:$INNER_PORT"
+</code></pre>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../guide/new-cell.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../guide/tailored-tool.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../examples/public-server.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../ref/packet.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -245,11 +271,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../guide/new-cell.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../guide/tailored-tool.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../examples/public-server.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../ref/packet.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav>
