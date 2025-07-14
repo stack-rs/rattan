@@ -16,7 +16,7 @@ For more complex configurations or reproduction purpose, you can use the flexibl
 There are also global options that you can use to customize the behavior of the tool:
 
 - `--generate` and `--generate-path` are used to generate a configuration file from your settings instead of running an instance.
-- `--packet-log` is used to enable compressed packet log and specify the file to store the records.
+- `--packet-log` is used to enable compressed packet log and specify the file to store the records. See [Packet Log](../ref/packet-log.md) for more details.
 - `--file-log` and `--file-log-path` are used to enable logging to a file and specify the path to store the log.
 
 For more detailed usage, you can run `rattan --help` to see the available commands and options:
