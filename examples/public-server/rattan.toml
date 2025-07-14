@@ -1,0 +1,43 @@
+[env]
+mode = "Compatible"
+left_veth_count = 1
+right_veth_count = 1
+client_cores = []
+server_cores = []
+
+[cells.up_loss]
+type = "Loss"
+pattern = []
+
+[cells.up_bandwidth]
+type = "Bw"
+queue = "Infinite"
+bandwidth = "100Mbps"
+
+[cells.up_delay]
+type = "Delay"
+delay = "20ms"
+
+[cells.down_loss]
+type = "Loss"
+pattern = []
+
+[cells.down_bandwidth]
+type = "TokenBucket"
+limit = 0
+rate = "2Mbps"
+burst = "683.6 KiB"
+
+[cells.down_delay]
+type = "Delay"
+delay = "20ms"
+
+[links]
+left = "up_loss"
+up_loss = "up_bandwidth"
+up_bandwidth = "up_delay"
+up_delay = "right"
+right = "down_loss"
+down_loss = "down_bandwidth"
+down_bandwidth = "down_delay"
+down_delay = "left"

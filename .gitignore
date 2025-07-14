@@ -34,3 +34,5 @@ guide/book
 
 # Ignore pre-commit files
 .pre-commit-config.yaml
+
+**/.DS_Store
