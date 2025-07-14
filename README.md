@@ -36,3 +36,19 @@ the [GitHub issue tracker](https://github.com/stack-rs/rattan/issues). Rattan re
 add features: if you'd like to contribute, please read
 the [CONTRIBUTING](https://github.com/stack-rs/rattan/blob/master/CONTRIBUTING.md) guide and consider opening
 a [pull request](https://github.com/stack-rs/rattan/pulls).
+
+## Citation
+
+If you want to cite our paper, please use the doi: [2507.08134](https://arxiv.org/abs/2507.08134) or the BibTeX entry below:
+
+```bibtex
+@misc{wang2025rattanextensiblescalablemodular,
+      title={Rattan: An Extensible and Scalable Modular Internet Path Emulator},
+      author={Minhu Wang and Yixin Shen and Bo Wang and Haixuan Tong and Yutong Xie and Yixuan Gao and Yan Liu and Li Chen and Mingwei Xu and Jianping Wu},
+      year={2025},
+      eprint={2507.08134},
+      archivePrefix={arXiv},
+      primaryClass={cs.NI},
+      url={https://arxiv.org/abs/2507.08134},
+}
+```
