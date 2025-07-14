@@ -19,4 +19,4 @@
 
 - [Packet IO](ref/packet.md)
 - [Flamegraph](ref/flamegraph.md)
-- [Packet Log Spec](ref/packet-log-spec.md)
+- [Packet Log](ref/packet-log.md)
