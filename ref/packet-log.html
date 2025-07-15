@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Packet Log Spec - Rattan Documentation</title>
+        <title>Packet Log - Rattan Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -129,7 +129,7 @@
                         <a href="https://github.com/stack-rs/rattan/tree/master/guide" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/stack-rs/rattan/edit/master/guide/src/ref/packet-log-spec.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/stack-rs/rattan/edit/master/guide/src/ref/packet-log.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -225,7 +225,27 @@
 }
 
 </style>
-<h1 id="packet-log-spec"><a class="header" href="#packet-log-spec">Packet Log Spec</a></h1>
+<h1 id="packet-log"><a class="header" href="#packet-log">Packet Log</a></h1>
+<p>The packet log contains a binary file that contains a compressed record of all packets processed by Rattan and a flow description file. It is designed to store what happened during the experiment with low overhead, enabling post-analysis and debugging.</p>
+<h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
+<p>Using the <code>--packet-log</code> option in the CLI will enable the packet log feature and specify the file to store the records. The flow description file will be stored in the same directory with the name <code>&lt;packet_log&gt;.flows</code>, where <code>&lt;packet_log&gt;</code> is the name of the packet log file.</p>
+<p>For example, you can run the following command to enable packet logging:</p>
+<pre><code class="language-bash">rattan link --packet-log packet.log
+</code></pre>
+<p>This will create a file named <code>packet.log</code> in the current directory, which will contain the compressed packet log. The flow description file will be named <code>packet.log.flows</code>.</p>
+<p>We also provide a python script <a href="https://github.com/stack-rs/rattan/blob/main/scripts/log_converter.py">scripts/log_converter.py</a> to convert the packet log file (along with the flow description file) to some pcapng files, which can be viewed with Wireshark or other tools. You can run the script like this:</p>
+<pre><code class="language-bash">python3 scripts/log_converter.py packet.log converted.pcapng
+</code></pre>
+<p>This will read <code>packet.log</code> and <code>packet.log.flows</code>, and generate a pcapng file for each end of Rattan (identified by IP address), with the name <code>converted_&lt;ip&gt;.pcapng</code> (e.g. <code>converted_10_1_1_1.pcapng</code>).</p>
+<p>Note that some fields are artificially constructed in the pcapng file, as the compressed packet log only stores partial information. Artificial fields include:</p>
+<ul>
+<li><code>Window</code>: The TCP window size is set to <code>65535</code> for all packets.</li>
+<li><code>Checksum</code>: The TCP checksum is set to <code>0</code> for all packets.</li>
+<li><code>Urgent Pointer</code>: The TCP urgent pointer is set to <code>0</code> for all packets.</li>
+<li><code>Options</code>: The TCP header length is real, but option content is set to <code>0</code> for all packets.</li>
+</ul>
+<h2 id="specification"><a class="header" href="#specification">Specification</a></h2>
+<p>The packet log is stored in system endianness (little-endian in most cases and in our tests), entry by entry. The specification for each log entry is as follows:</p>
 <pre><code class="language-text"> 0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -250,6 +270,26 @@
 </ul>
 <pre><code class="language-bash">protocol "LH.length:12,LH.ty.:4,GPH.length:8,GPH.ac.:4,GPH.ty.:4,GP.timestamp:32,GP.length:16,PRH.length:12,PRH.ty.:4,PRT (custom):32"
 </code></pre>
+<p>The meaning of each field is as follows:</p>
+<ul>
+<li><code>LH.length</code>: Length of the whole log entry in bytes. For TCP log entries, it is 32 bytes.</li>
+<li><code>LH.ty.</code>: Type of the log entry, currently only <code>0</code> is supported (indicating a general packet log entry).</li>
+<li><code>GPH.length</code>: Length of the general packet entry in bytes, including the header and body (<code>GPH</code> + <code>GP</code>). It is 8 bytes in most cases.</li>
+<li><code>GPH.ac.</code>: Action of the general packet entry. It can be one of the following values:
+<ul>
+<li><code>0</code>: Send (packet leaves Rattan)</li>
+<li><code>1</code>: Receive (packet enters Rattan)</li>
+<li><code>2</code>: Drop (packet is dropped by Rattan)</li>
+<li><code>3</code>: Passthrough (packet passes through Rattan without any effect applied)</li>
+</ul>
+</li>
+<li><code>GPH.ty.</code>: Type of the general packet entry, currently only <code>0</code>.</li>
+<li><code>GP.timestamp</code>: Timestamp of the packet entry in microseconds since <code>base_ts</code> (in flow description file).</li>
+<li><code>GP.length</code>: Length of the whole packet in bytes.</li>
+<li><code>PRH.length</code>: Length of the protocol entry in bytes, including the header and body (<code>PRH</code> + <code>PRT</code>). For TCP log entries, it is 22 bytes.</li>
+<li><code>PRH.ty.</code>: Type of the protocol entry, currently only <code>0</code> is supported (indicating a TCP log entry).</li>
+<li><code>PRT</code>: The body part of the protocol entry, which contains the protocol-specific information.</li>
+</ul>
 <p>We currently provide TCP log spec (a variant of the protocol entry body part, i.e. <code>PRT (custom)</code>):</p>
 <pre><code class="language-text"> 0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -260,14 +300,31 @@
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                            tcp.ack                            |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|             ip.id             |         ip.frag_offset        |
+|             ip.id             |            ip.frag            |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|          ip.checksum          |   tcp.flags   |    padding    |
+|          ip.checksum          |   tcp.flags   |  tcp.dataofs  |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 </code></pre>
-<pre><code class="language-bash">protocol "tcp.flow_id:32,tcp.seq:32,tcp.ack:32,ip.id:16,ip.frag_offset:16,ip.checksum:16,tcp.flags:8,padding:8"
+<pre><code class="language-bash">protocol "tcp.flow_id:32,tcp.seq:32,tcp.ack:32,ip.id:16,ip.frag:16,ip.checksum:16,tcp.flags:8,tcp.dataofs:8"
 </code></pre>
+<p>Note that the <code>ip.frag</code> includes the fragment offset and the flags. Other fields are self-explanatory.</p>
+<p>For TCP log, each line of the flow description file will contain a JSON object with the following fields:</p>
+<pre><code class="language-json">{"flow_id":&lt;flow_id&gt;,"base_ts":&lt;base_ts&gt;,"flow_desc":{"TCP":["&lt;src_ip&gt;","&lt;dst_ip&gt;",&lt;src_port&gt;,&lt;dst_port&gt;]}}
+</code></pre>
+<p>Where:</p>
+<ul>
+<li><code>flow_id</code>(<code>u32</code>): The identifier of the flow. The high 16 bits are the interface ID where the packet enters Rattan, and the low 16 bits are the incremental flow counter.</li>
+<li><code>base_ts</code>(<code>i64</code>): The base timestamp in nanoseconds (this unit is different from the <code>GP.timestamp</code> field) for this flow.</li>
+<li><code>flow_desc</code>: The description map of the flow, which contains the protocol-specific information. For TCP, it contains a key <code>TCP</code> with a list of four elements:
+<ul>
+<li>The source IP address (<code>Ipv4Addr</code>)</li>
+<li>The destination IP address (<code>Ipv4Addr</code>)</li>
+<li>The source port (<code>u16</code>)</li>
+<li>The destination port (<code>u16</code>)</li>
+</ul>
+</li>
+</ul>
 
                     </main>
 
