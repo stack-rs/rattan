@@ -8,8 +8,8 @@
         <bootmenu enable='yes' timeout='3000'/>
     </os>
     <vcpu>4</vcpu>
-    <memory unit='GiB'>16</memory>
-    <currentMemory unit='GiB'>16</currentMemory>
+    <memory unit='GiB'>8</memory>
+    <currentMemory unit='GiB'>8</currentMemory>
     <cpu mode="host-passthrough" migratable="off">
     </cpu>
     <on_reboot>restart</on_reboot>
