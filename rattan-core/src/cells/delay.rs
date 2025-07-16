@@ -38,8 +38,7 @@ impl<P> Ingress<P> for DelayCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.set_timestamp(Instant::now());
+    fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -83,7 +82,7 @@ where
         // Wait for Start notify if not started yet
         crate::wait_until_started!(self, Start);
 
-        let packet = match self.egress.recv().await {
+        let mut packet = match self.egress.recv().await {
             Some(packet) => packet,
             None => return None,
         };
@@ -107,6 +106,7 @@ where
                 }
             }
         }
+        packet.delay_by(self.delay);
         Some(packet)
     }
 
@@ -461,7 +461,8 @@ where
 #[cfg(test)]
 mod tests {
     use netem_trace::model::{RepeatedDelayPatternConfig, StaticDelayConfig};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+    use tokio::time::Instant;
     use tracing::{span, Level};
 
     use crate::cells::StdPacket;
@@ -494,7 +495,7 @@ mod tests {
             let mut delays: Vec<f64> = Vec::new();
 
             for _ in 0..10 {
-                let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+                let test_packet = StdPacket::from_raw_buffer(&[0; 256], Instant::now());
                 let start = Instant::now();
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
@@ -550,9 +551,9 @@ mod tests {
         egress.change_state(2);
 
         //Test whether the packet will wait longer if the config is updated
-        let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
-
         let start = Instant::now();
+        let test_packet = StdPacket::from_raw_buffer(&[0; 256], start);
+
         ingress.enqueue(test_packet)?;
 
         // Wait for 5ms, then change the config to let the delay be longer
@@ -568,13 +569,14 @@ mod tests {
         assert!(received.is_some());
         let received = received.unwrap();
         assert!(received.length() == 256);
+        assert_eq!(received.get_timestamp() - start, Duration::from_millis(20));
 
         assert!((duration - 20.0).abs() <= DELAY_ACCURACY_TOLERANCE);
 
         // Test whether the packet will be returned immediately when the new delay is less than the already passed time
-        let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
-
         let start = Instant::now();
+        let test_packet = StdPacket::from_raw_buffer(&[0; 256], start);
+
         ingress.enqueue(test_packet)?;
 
         // Wait for 15ms, then change the config back to 10ms
@@ -590,6 +592,7 @@ mod tests {
         assert!(received.is_some());
         let received = received.unwrap();
         assert!(received.length() == 256);
+        assert_eq!(received.get_timestamp() - start, Duration::from_millis(15));
 
         assert!((duration - 15.0).abs() <= DELAY_ACCURACY_TOLERANCE);
 
@@ -628,10 +631,11 @@ mod tests {
         egress.change_state(2);
         let start_time = tokio::time::Instant::now();
         let mut delays: Vec<f64> = Vec::new();
+        let mut real_delays: Vec<Duration> = Vec::new();
         for interval in [1100, 2100, 3100, 0] {
             for _ in 0..10 {
-                let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
                 let start = Instant::now();
+                let test_packet = StdPacket::from_raw_buffer(&[0; 256], start);
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
 
@@ -647,6 +651,8 @@ mod tests {
 
                 // The length should be correct
                 assert!(received.length() == 256);
+
+                real_delays.push(received.get_timestamp() - start);
             }
             rt.block_on(async {
                 tokio::time::sleep_until(start_time + Duration::from_millis(interval)).await;
@@ -663,6 +669,10 @@ mod tests {
             );
             // Check the delay time
             assert!((average_delay - calibrated_delay as f64) <= DELAY_ACCURACY_TOLERANCE);
+
+            for delay in real_delays[(idx * 10)..(10 + idx * 10)].iter() {
+                assert_eq!(delay, &Duration::from_millis(calibrated_delay));
+            }
         }
         Ok(())
     }
@@ -698,7 +708,7 @@ mod tests {
         egress.reset();
         let start_time = tokio::time::Instant::now();
         for _ in 0..10 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let test_packet = StdPacket::from_raw_buffer(&[0; 256], Instant::now());
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
             // Should drop all packets
@@ -706,12 +716,13 @@ mod tests {
         }
         egress.change_state(1);
         let mut delays: Vec<f64> = Vec::new();
+        let mut real_delays: Vec<_> = Vec::new();
         rt.block_on(async {
             tokio::time::sleep_until(start_time + Duration::from_millis(1100)).await;
         });
         for _ in 0..10 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
             let start = Instant::now();
+            let test_packet = StdPacket::from_raw_buffer(&[0; 256], start);
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
 
@@ -727,14 +738,16 @@ mod tests {
 
             // The length should be correct
             assert!(received.length() == 256);
+
+            real_delays.push(received.get_timestamp() - start);
         }
         for interval in [2100, 3100] {
             rt.block_on(async {
                 tokio::time::sleep_until(start_time + Duration::from_millis(interval)).await;
             });
             for _ in 0..10 {
-                let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
                 let start = Instant::now();
+                let test_packet = StdPacket::from_raw_buffer(&[0; 256], start);
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
 
@@ -750,6 +763,8 @@ mod tests {
 
                 // The length should be correct
                 assert!(received.length() == 256);
+
+                real_delays.push(received.get_timestamp() - start);
             }
         }
         assert_eq!(delays.len(), 30);
@@ -763,6 +778,10 @@ mod tests {
             );
             // Check the delay time
             assert!((average_delay - calibrated_delay as f64) <= DELAY_ACCURACY_TOLERANCE);
+
+            for delay in real_delays[(idx * 10)..(10 + idx * 10)].iter() {
+                assert_eq!(delay, &Duration::from_millis(calibrated_delay));
+            }
         }
         Ok(())
     }
