@@ -7,7 +7,7 @@
         <bios useserial='yes' rebootTimeout='0'/>
         <bootmenu enable='yes' timeout='3000'/>
     </os>
-    <vcpu>4</vcpu>
+    <vcpu>8</vcpu>
     <memory unit='GiB'>8</memory>
     <currentMemory unit='GiB'>8</currentMemory>
     <cpu mode="host-passthrough" migratable="off">
