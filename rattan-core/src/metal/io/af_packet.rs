@@ -137,7 +137,10 @@ impl InterfaceReceiver<StdPacket> for AfPacketReceiver {
                 addr_ll.sll_pkttype, addr_ll.sll_ifindex,
                 addr_ll.sll_addr[0], addr_ll.sll_addr[1], addr_ll.sll_addr[2], addr_ll.sll_addr[3], addr_ll.sll_addr[4], addr_ll.sll_addr[5]
             );
-            Ok(Some(StdPacket::from_raw_buffer(&buf[0..ret])))
+            Ok(Some(StdPacket::from_raw_buffer(
+                &buf[0..ret],
+                tokio::time::Instant::now(),
+            )))
         }
     }
 

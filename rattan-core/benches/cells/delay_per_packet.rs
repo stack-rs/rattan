@@ -13,7 +13,10 @@ use rattan_core::{
     },
     config::DelayPerPacketCellBuildConfig,
 };
-use tokio::{runtime::Handle, time::Interval};
+use tokio::{
+    runtime::Handle,
+    time::{Instant, Interval},
+};
 
 use crate::{utils::clock, MTU};
 
@@ -29,7 +32,7 @@ async fn test<P: Packet + Sync>(cell: &mut DelayPerPacketCell<P>, clock: &mut In
     let packet = rand::random_iter()
         .take(random_range(0..=MTU))
         .collect::<Vec<_>>();
-    let packet = P::from_raw_buffer(&packet);
+    let packet = P::from_raw_buffer(&packet, Instant::now());
     // println!("Packet length: {} bytes", packet.length());
     cell.sender()
         .enqueue(packet)

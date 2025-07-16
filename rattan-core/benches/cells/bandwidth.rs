@@ -11,7 +11,10 @@ use rattan_core::cells::{
     },
     Cell as _, Egress as _, Ingress as _, Packet, StdPacket,
 };
-use tokio::{runtime::Handle, time::Interval};
+use tokio::{
+    runtime::Handle,
+    time::{Instant, Interval},
+};
 
 use crate::{utils::clock, MTU};
 
@@ -41,7 +44,7 @@ async fn test<P: Packet + Sync>(cell: &mut Cell<P>, clock: &mut Interval, total:
                 size
             };
             let packet = rand::random_iter().take(size).collect::<Vec<_>>();
-            let packet = P::from_raw_buffer(&packet);
+            let packet = P::from_raw_buffer(&packet, Instant::now());
             // println!("Sent: {sent} bytes");
             sent += packet.l2_length();
             sender.enqueue(packet).expect("Failed to send the packet");

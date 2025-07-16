@@ -36,8 +36,7 @@ impl<P> Ingress<P> for DelayPerPacketCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.set_timestamp(Instant::now());
+    fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -142,8 +141,10 @@ where
         }
 
         // send the packet
-        let (instant, packet) = packet.expect("We cannot exit the previous loop if packet is None");
+        let (instant, mut packet) =
+            packet.expect("We cannot exit the previous loop if packet is None");
         if instant <= Instant::now() {
+            packet.delay_until(instant);
             Some(packet)
         } else {
             // We shouldn't have dequeue the packet, it is not ready to be sent yet.
@@ -266,10 +267,10 @@ impl<Config: DelayPerPacketTraceConfig + 'static> From<Config> for DelayPerPacke
 #[cfg(test)]
 mod tests {
     use netem_trace::{model::StaticDelayPerPacketConfig, Delay};
-    use std::time::{Duration, Instant};
+    use tokio::time::{Duration, Instant};
     use tracing::{info, span, Level};
 
-    use crate::cells::StdPacket;
+    use crate::cells::{StdPacket, TestPacket};
 
     use super::*;
 
@@ -301,9 +302,11 @@ mod tests {
 
             info!("Testing delay time for {}ms delay cell", testing_delay);
             let mut delays: Vec<f64> = Vec::new();
+            let mut real_delays = Vec::new();
 
             for _ in 0..10 {
-                let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+                let test_packet =
+                    TestPacket::<StdPacket>::from_raw_buffer(&[0; 256], Instant::now());
                 let start = Instant::now();
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
@@ -320,6 +323,8 @@ mod tests {
 
                 // The length should be correct
                 assert!(received.length() == 256);
+
+                real_delays.push(received.delay().as_micros() as f64 / 1000.0);
             }
 
             info!(
@@ -334,6 +339,17 @@ mod tests {
                 average_delay,
                 (average_delay - testing_delay as f64).abs()
             );
+            // Check the delay time
+            assert!((average_delay - testing_delay as f64) <= DELAY_ACCURACY_TOLERANCE);
+
+            let average_delay = delays.iter().sum::<f64>() / 10.0;
+            debug!("Real Delays: {:?}", real_delays);
+            info!(
+                "Average delay: {:.3}ms, error {:.1}ms",
+                average_delay,
+                (average_delay - testing_delay as f64).abs()
+            );
+
             // Check the delay time
             assert!((average_delay - testing_delay as f64) <= DELAY_ACCURACY_TOLERANCE);
         }
@@ -363,7 +379,7 @@ mod tests {
         egress.change_state(2);
 
         //Test whether the packet will wait longer if the config is updated
-        let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+        let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256], Instant::now());
 
         let start = Instant::now();
         ingress.enqueue(test_packet)?;
@@ -385,9 +401,10 @@ mod tests {
         assert!(received.length() == 256);
 
         assert!((duration - 20.0).abs() <= DELAY_ACCURACY_TOLERANCE);
+        assert_eq!(received.delay(), Duration::from_millis(20));
 
         // Test whether the packet will be returned immediately when the new delay is less than the already passed time
-        let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+        let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256], Instant::now());
 
         let start = Instant::now();
         ingress.enqueue(test_packet)?;
@@ -409,6 +426,7 @@ mod tests {
         assert!(received.length() == 256);
 
         assert!((duration - 15.0).abs() <= DELAY_ACCURACY_TOLERANCE);
+        assert_eq!(received.delay(), Duration::from_millis(15));
 
         Ok(())
     }

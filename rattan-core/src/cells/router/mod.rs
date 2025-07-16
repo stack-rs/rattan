@@ -201,16 +201,17 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::cells::{shadow::ShadowCell, StdPacket};
+    use crate::cells::{shadow::ShadowCell, StdPacket, TestPacket};
     use etherparse::{PacketBuilder, SlicedPacket, TransportSlice};
     use ipnet::IpNet;
     use rand::{rng, Rng};
+    use tokio::time::Instant;
     use tracing::{span, Level};
 
     use super::*;
 
     // generate a UDP packet to `dest`, with `payload`
-    fn generate_packet(dest: Ipv4Addr, payload: &[u8]) -> StdPacket {
+    fn generate_packet(dest: Ipv4Addr, payload: &[u8]) -> TestPacket<StdPacket> {
         let builder = PacketBuilder::ethernet2(
             [0x38, 0x7e, 0x58, 0xe7, 1, 1],
             [0x38, 0x7e, 0x58, 0xe7, 1, 2],
@@ -220,11 +221,11 @@ mod tests {
         let mut buffer = Vec::<u8>::with_capacity(builder.size(payload.len()));
         builder.write(&mut buffer, payload).unwrap();
 
-        StdPacket::from_raw_buffer(buffer.as_slice())
+        TestPacket::<StdPacket>::from_raw_buffer(buffer.as_slice(), Instant::now())
     }
 
     // check the payload of a UDP packet
-    fn test_packet(received: Option<StdPacket>, payload: &[u8]) -> bool {
+    fn test_packet(received: Option<TestPacket<StdPacket>>, payload: &[u8]) -> bool {
         match SlicedPacket::from_ethernet(received.unwrap().as_slice())
             .unwrap()
             .transport
@@ -270,7 +271,7 @@ mod tests {
         egresses[1].reset();
         egresses[1].change_state(2);
 
-        let cell: RouterCell<StdPacket, SimpleRoutingTable> = RouterCell::new(
+        let cell: RouterCell<TestPacket<StdPacket>, SimpleRoutingTable> = RouterCell::new(
             ingresses,
             vec![
                 RoutingEntry::new(ips[0], Some(0)),
@@ -316,7 +317,7 @@ mod tests {
         egresses[1].reset();
         egresses[1].change_state(2);
 
-        let cell: RouterCell<StdPacket, SimpleRoutingTable> =
+        let cell: RouterCell<TestPacket<StdPacket>, SimpleRoutingTable> =
             RouterCell::new(ingresses, vec![RoutingEntry::new(ips[0], Some(0))])?;
         let ingress = cell.sender();
         let control = cell.control_interface();

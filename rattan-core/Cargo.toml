@@ -50,6 +50,7 @@ anyhow = "1.0.69"
 clap = { version = "4.5.4", features = ["derive"] }
 criterion = { version = "0.6.0", features = ["async_tokio"] }
 ctrlc = { workspace = true }
+derive_more = { version = "2.0", features = ["deref", "deref_mut"] }
 insta = { version = "1.39.0", features = ["json"] }
 itertools = "0.14.0"
 netns-rs = "0.1.0"
@@ -76,7 +77,13 @@ harness = false
 default = []
 http = ["serde", "dep:axum"]
 packet-dump = []
-serde = ["dep:serde", "dep:serde_json", "bandwidth/serde", "bytesize/serde", "rand_distr/serde"]
+serde = [
+  "dep:serde",
+  "dep:serde_json",
+  "bandwidth/serde",
+  "bytesize/serde",
+  "rand_distr/serde",
+]
 camellia = ["dep:camellia"]
 
 [[example]]

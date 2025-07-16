@@ -84,8 +84,7 @@ impl<P> Ingress<P> for TokenBucketCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.set_timestamp(Instant::now());
+    fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -275,7 +274,7 @@ where
             if self.token_bucket.tokens >= consumed_tokens
                 && self.peak_token_bucket.tokens >= consumed_ptokens
             {
-                let packet_to_send = self.packet_queue.dequeue().unwrap();
+                let mut packet_to_send = self.packet_queue.dequeue().unwrap();
                 self.token_bucket.tokens -= consumed_tokens;
                 self.peak_token_bucket.tokens -= consumed_ptokens;
                 debug!(
@@ -283,6 +282,9 @@ where
                     self.token_bucket.tokens.as_nanos(),
                     self.peak_token_bucket.tokens.as_nanos()
                 );
+                if packet_to_send.get_timestamp() < self.next_available {
+                    packet_to_send.delay_until(self.next_available)
+                }
                 // set next_available
                 if let Some(next_size) = self.packet_queue.get_front_size() {
                     debug!("next_size: {}", next_size);
@@ -538,10 +540,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use tokio::time::Instant;
     use tracing::{info, span, Level};
 
-    use crate::cells::StdPacket;
+    use crate::cells::{StdPacket, TestPacket};
 
     use super::*;
 
@@ -552,7 +554,7 @@ mod tests {
         number: usize,
         packet_size: usize,
         config: TokenBucketCellConfig,
-    ) -> Result<Vec<f64>, Error> {
+    ) -> Result<(Vec<f64>, Vec<Duration>), Error> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -572,13 +574,14 @@ mod tests {
 
         info!("Testing delay time for token bucket cell");
         let mut delays: Vec<f64> = Vec::new();
+        let mut real_delays = Vec::new();
 
         for _ in 0..number {
             let buf: &[u8] = &vec![0; packet_size];
-            let test_packet = StdPacket::from_raw_buffer(buf);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(buf, Instant::now());
             let start = Instant::now();
             ingress.enqueue(test_packet)?;
-            let mut received: Option<StdPacket> = None;
+            let mut received: Option<TestPacket<StdPacket>> = None;
             while received.is_none() {
                 received = rt.block_on(async { egress.dequeue().await });
             }
@@ -595,10 +598,12 @@ mod tests {
 
             // The length should be correct
             assert!(received.length() == packet_size);
+
+            real_delays.push(received.delay());
         }
         info!("Tested delays for token bucket cell: {:?}", delays);
 
-        Ok(delays)
+        Ok((delays, real_delays))
     }
 
     fn get_delays_with_update(
@@ -606,7 +611,7 @@ mod tests {
         packet_size: usize,
         config: TokenBucketCellConfig,
         updated_config: TokenBucketCellConfig,
-    ) -> Result<Vec<f64>, Error> {
+    ) -> Result<(Vec<f64>, Vec<Duration>), Error> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -626,15 +631,16 @@ mod tests {
         egress.change_state(2);
 
         let mut delays: Vec<f64> = Vec::new();
+        let mut real_delays = Vec::new();
 
         for _ in 0..number {
             let buf: &[u8] = &vec![0; packet_size];
-            let test_packet = StdPacket::from_raw_buffer(buf);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(buf, Instant::now());
             ingress.enqueue(test_packet)?;
         }
         for _ in 0..number {
             let start = Instant::now();
-            let mut received: Option<StdPacket> = None;
+            let mut received: Option<TestPacket<StdPacket>> = None;
             while received.is_none() {
                 received = rt.block_on(async { egress.dequeue().await });
             }
@@ -651,6 +657,8 @@ mod tests {
 
             // The length should be correct
             assert!(received.length() == packet_size);
+
+            real_delays.push(received.delay());
         }
 
         info!("Delays before update: {:?}", delays);
@@ -663,12 +671,12 @@ mod tests {
 
         for _ in 0..number {
             let buf: &[u8] = &vec![0; packet_size];
-            let test_packet = StdPacket::from_raw_buffer(buf);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(buf, Instant::now());
             ingress.enqueue(test_packet)?;
         }
         for _ in 0..number {
             let start = Instant::now();
-            let mut received: Option<StdPacket> = None;
+            let mut received: Option<TestPacket<StdPacket>> = None;
             while received.is_none() {
                 received = rt.block_on(async { egress.dequeue().await });
             }
@@ -685,10 +693,12 @@ mod tests {
 
             // The length should be correct
             assert!(received.length() == packet_size);
+
+            real_delays.push(received.delay());
         }
 
         info!("Delays after update: {:?}", &delays[number..]);
-        Ok(delays)
+        Ok((delays, real_delays))
     }
 
     #[test_log::test]
@@ -704,7 +714,7 @@ mod tests {
             None,
         );
 
-        let delays = get_delays(8, 256, config)?;
+        let (delays, real_delays) = get_delays(8, 256, config)?;
 
         assert!(delays[0] <= DELAY_ACCURACY_TOLERANCE);
         assert!(delays[1] <= DELAY_ACCURACY_TOLERANCE);
@@ -714,6 +724,15 @@ mod tests {
         assert!((delays[5] - 472.5625).abs() <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[6] - 472.5625).abs() <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[7] - 472.5625).abs() <= DELAY_ACCURACY_TOLERANCE);
+
+        assert_eq!(real_delays[0], Duration::ZERO);
+        assert_eq!(real_delays[1], Duration::ZERO);
+        assert_eq!(real_delays[2], Duration::from_micros(417_875));
+        assert_eq!(real_delays[3], Duration::from_nanos(472_562_500));
+        assert_eq!(real_delays[4], Duration::from_nanos(472_562_500));
+        assert_eq!(real_delays[5], Duration::from_nanos(472_562_500));
+        assert_eq!(real_delays[6], Duration::from_nanos(472_562_500));
+        assert_eq!(real_delays[7], Duration::from_nanos(472_562_500));
 
         Ok(())
     }
@@ -731,13 +750,19 @@ mod tests {
             ByteSize::b(128),
         );
 
-        let delays = get_delays(5, 128, config)?;
+        let (delays, real_delays) = get_delays(5, 128, config)?;
 
         assert!(delays[0] <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[1] - 195.3125).abs() <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[2] - 222.65625).abs() <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[3] - 222.65625).abs() <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[4] - 222.65625).abs() <= DELAY_ACCURACY_TOLERANCE);
+
+        assert_eq!(real_delays[0], Duration::ZERO);
+        assert_eq!(real_delays[1], Duration::from_nanos(195_312_500));
+        assert_eq!(real_delays[2], Duration::from_nanos(222_656_250));
+        assert_eq!(real_delays[3], Duration::from_nanos(222_656_250));
+        assert_eq!(real_delays[4], Duration::from_nanos(222_656_250));
 
         Ok(())
     }
@@ -755,13 +780,20 @@ mod tests {
             ByteSize::b(256),
         );
 
-        let delays = get_delays(5, 128, config)?;
+        let (delays, real_delays) = get_delays(5, 128, config)?;
 
         assert!(delays[0] <= DELAY_ACCURACY_TOLERANCE);
         assert!(delays[1] <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[2] - 83.984375).abs() <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[3] - 111.328125).abs() <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[4] - 111.328125).abs() <= DELAY_ACCURACY_TOLERANCE);
+
+        assert_eq!(real_delays[0], Duration::ZERO);
+        assert_eq!(real_delays[1], Duration::ZERO);
+        assert_eq!(real_delays[2], Duration::from_nanos(83_984_375));
+        assert_eq!(real_delays[3], Duration::from_nanos(111_328_125));
+        assert_eq!(real_delays[4], Duration::from_nanos(111_328_125));
+
         Ok(())
     }
 
@@ -786,7 +818,7 @@ mod tests {
             None,
         );
 
-        let delays = get_delays_with_update(4, 256, config, updated_config)?;
+        let (delays, real_delays) = get_delays_with_update(4, 256, config, updated_config)?;
 
         assert!(delays[0] <= DELAY_ACCURACY_TOLERANCE);
         assert!(delays[1] <= DELAY_ACCURACY_TOLERANCE);
@@ -797,6 +829,17 @@ mod tests {
         assert!(delays[5] <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[6] - 835.9375).abs() <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[7] - 945.3125).abs() <= DELAY_ACCURACY_TOLERANCE);
+
+        assert_eq!(real_delays[0], Duration::ZERO);
+        assert_eq!(real_delays[1], Duration::ZERO);
+        assert_eq!(real_delays[2], Duration::from_nanos(417_875_000));
+        assert_eq!(real_delays[3], Duration::from_nanos(472_562_500));
+
+        assert_eq!(real_delays[4], Duration::ZERO);
+        assert_eq!(real_delays[5], Duration::ZERO);
+        assert_eq!(real_delays[6], Duration::from_nanos(835_937_500));
+        assert_eq!(real_delays[7], Duration::from_nanos(945_312_500));
+
         Ok(())
     }
 
@@ -821,7 +864,7 @@ mod tests {
             None,
         );
 
-        let delays = get_delays_with_update(4, 256, config, updated_config)?;
+        let (delays, real_delays) = get_delays_with_update(4, 256, config, updated_config)?;
 
         assert!(delays[0] <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[1] - 890.625).abs() <= DELAY_ACCURACY_TOLERANCE);
@@ -832,6 +875,16 @@ mod tests {
         assert!((delays[5] - 445.3125).abs() <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[6] - 472.65625).abs() <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[7] - 472.65625).abs() <= DELAY_ACCURACY_TOLERANCE);
+
+        assert_eq!(real_delays[0], Duration::ZERO);
+        assert_eq!(real_delays[1], Duration::from_nanos(890_625_000));
+        assert_eq!(real_delays[2], Duration::from_nanos(945_312_500));
+        assert_eq!(real_delays[3], Duration::from_nanos(945_312_500));
+
+        assert_eq!(real_delays[4], Duration::ZERO);
+        assert_eq!(real_delays[5], Duration::from_nanos(445_312_500));
+        assert_eq!(real_delays[6], Duration::from_nanos(472_656_250));
+        assert_eq!(real_delays[7], Duration::from_nanos(472_656_250));
         Ok(())
     }
 
@@ -861,17 +914,19 @@ mod tests {
 
         info!("Testing queue of token bucket cell");
         let mut delays: Vec<f64> = Vec::new();
+        let mut real_delays = Vec::new();
 
         // Test queue
         // enqueue 5 packets of 256B
         for i in 0..5 {
-            let mut test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let mut test_packet =
+                TestPacket::<StdPacket>::from_raw_buffer(&[0; 256], Instant::now());
             test_packet.set_flow_id(i);
             ingress.enqueue(test_packet)?;
         }
         for _ in 0..4 {
             let start = Instant::now();
-            let mut received: Option<StdPacket> = None;
+            let mut received: Option<TestPacket<StdPacket>> = None;
             while received.is_none() {
                 received = rt.block_on(async { egress.dequeue().await });
             }
@@ -887,6 +942,8 @@ mod tests {
             // The length should be correct
             received_packets[received.get_flow_id() as usize] = true;
             assert!(received.length() == 256);
+
+            real_delays.push(received.delay());
         }
 
         // receive the first two packets immediately
@@ -895,6 +952,13 @@ mod tests {
         // receive left 2 packets
         assert!((delays[2] - 417.875).abs() <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[3] - 472.65625).abs() <= DELAY_ACCURACY_TOLERANCE);
+
+        // receive the first two packets immediately
+        assert_eq!(real_delays[0], Duration::ZERO);
+        assert_eq!(real_delays[1], Duration::ZERO);
+        // receive left 2 packets
+        assert_eq!(real_delays[2], Duration::from_nanos(417_875_000));
+        assert_eq!(real_delays[3], Duration::from_nanos(472_656_250));
 
         assert!(received_packets[0]);
         assert!(received_packets[1]);
@@ -930,16 +994,17 @@ mod tests {
 
         info!("Testing burst of token bucket cell");
         let mut delays: Vec<f64> = Vec::new();
+        let mut real_delays = Vec::new();
 
         // Test burst
         // enqueue 5 packets of 128B
         for _ in 0..5 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 128]);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 128], Instant::now());
             ingress.enqueue(test_packet)?;
         }
         for _ in 0..5 {
             let start = Instant::now();
-            let mut received: Option<StdPacket> = None;
+            let mut received: Option<TestPacket<StdPacket>> = None;
             while received.is_none() {
                 received = rt.block_on(async { egress.dequeue().await });
             }
@@ -956,6 +1021,8 @@ mod tests {
 
             // The length should be correct
             assert!(received.length() == 128);
+
+            real_delays.push(received.delay());
         }
 
         // wait for 1000ms
@@ -963,12 +1030,12 @@ mod tests {
 
         // enqueue 5 packets of 128B
         for _ in 0..5 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 128]);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 128], Instant::now());
             ingress.enqueue(test_packet)?;
         }
         for _ in 0..5 {
             let start = Instant::now();
-            let mut received: Option<StdPacket> = None;
+            let mut received: Option<TestPacket<StdPacket>> = None;
             while received.is_none() {
                 received = rt.block_on(async { egress.dequeue().await });
             }
@@ -985,6 +1052,8 @@ mod tests {
 
             // The length should be correct
             assert!(received.length() == 128);
+
+            real_delays.push(received.delay());
         }
 
         info!("Tested delays for token bucket cell: {:?}", delays);
@@ -1000,6 +1069,19 @@ mod tests {
         assert!(delays[7] <= DELAY_ACCURACY_TOLERANCE);
         assert!(delays[8] <= DELAY_ACCURACY_TOLERANCE);
         assert!((delays[9] - 113.28125).abs() <= DELAY_ACCURACY_TOLERANCE);
+
+        assert_eq!(real_delays[0], Duration::ZERO);
+        assert_eq!(real_delays[1], Duration::ZERO);
+        assert_eq!(real_delays[2], Duration::ZERO);
+        assert_eq!(real_delays[3], Duration::ZERO);
+        assert_eq!(real_delays[4], Duration::from_nanos(113_281_250));
+
+        assert_eq!(real_delays[5], Duration::ZERO);
+        assert_eq!(real_delays[6], Duration::ZERO);
+        assert_eq!(real_delays[7], Duration::ZERO);
+        assert_eq!(real_delays[8], Duration::ZERO);
+        assert_eq!(real_delays[9], Duration::from_nanos(113_281_250));
+
         Ok(())
     }
 
@@ -1031,14 +1113,14 @@ mod tests {
         info!("Testing max_size of token bucket cell");
 
         // Test max_size
-        let mut test_packet = StdPacket::from_raw_buffer(&[0; 1024]);
+        let mut test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 1024], Instant::now());
         test_packet.set_flow_id(0);
         ingress.enqueue(test_packet)?;
-        let mut test_packet = StdPacket::from_raw_buffer(&[0; 512]);
+        let mut test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 512], Instant::now());
         test_packet.set_flow_id(1);
         ingress.enqueue(test_packet)?;
 
-        let mut received: Option<StdPacket> = None;
+        let mut received: Option<TestPacket<StdPacket>> = None;
         while received.is_none() {
             received = rt.block_on(async { egress.dequeue().await });
         }
@@ -1055,10 +1137,10 @@ mod tests {
             None,
             None,
         ))?;
-        let test_packet = StdPacket::from_raw_buffer(&[0; 1024]);
+        let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 1024], Instant::now());
         ingress.enqueue(test_packet)?;
 
-        let mut received: Option<StdPacket> = None;
+        let mut received: Option<TestPacket<StdPacket>> = None;
         while received.is_none() {
             received = rt.block_on(async { egress.dequeue().await });
         }
@@ -1072,17 +1154,17 @@ mod tests {
         for i in 0..5 {
             let mut test_packet;
             if i == 4 {
-                test_packet = StdPacket::from_raw_buffer(&[0; 128]);
+                test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 128], Instant::now());
                 test_packet.set_flow_id(i);
             } else {
-                test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+                test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256], Instant::now());
                 test_packet.set_flow_id(i);
             }
             ingress.enqueue(test_packet)?;
         }
 
         // call dequeue to make these 5 packets to enter the queue
-        let mut received: Option<StdPacket> = None;
+        let mut received: Option<TestPacket<StdPacket>> = None;
         while received.is_none() {
             received = rt.block_on(async { egress.dequeue().await });
         }
@@ -1103,7 +1185,7 @@ mod tests {
             None,
         ))?;
         // the 5th packet which is 128B can be received, but the left are lost
-        let mut received: Option<StdPacket> = None;
+        let mut received: Option<TestPacket<StdPacket>> = None;
         while received.is_none() {
             received = rt.block_on(async { egress.dequeue().await });
         }
