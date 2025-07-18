@@ -4,7 +4,7 @@ use nix::sys::{
     time::TimeSpec,
     timerfd::{ClockId, Expiration, TimerFd, TimerFlags, TimerSetTimeFlags},
 };
-use tokio::io::unix::AsyncFd;
+use tokio::{io::unix::AsyncFd, time::Instant};
 
 use crate::metal::error::MetalError;
 
@@ -54,5 +54,9 @@ impl Timer {
                 Err(_would_block) => continue,
             }
         }
+    }
+
+    pub async fn sleep_until(&mut self, instant: Instant) -> Result<(), MetalError> {
+        self.sleep(instant - Instant::now()).await
     }
 }
