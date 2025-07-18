@@ -148,8 +148,9 @@ where
             Some(packet)
         } else {
             // We shouldn't have dequeue the packet, it is not ready to be sent yet.
-            self.packet_queue.renqueue(packet, instant);
-            None
+            // self.packet_queue.renqueue(packet, instant);
+            // None
+            todo!()
         }
     }
 

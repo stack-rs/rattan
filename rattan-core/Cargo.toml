@@ -16,6 +16,7 @@ bandwidth = "0.3.0"
 bitfield = "0.19.0"
 bytesize = "2.0.1"
 camellia = { git = "https://github.com/minhuw/camellia.git", optional = true }
+derive_more = { version = "2.0", features = ["deref", "deref_mut"] }
 dyn-clone = "1.0"
 etherparse = "0.18.0"
 figment = { workspace = true }
@@ -50,7 +51,6 @@ anyhow = "1.0.69"
 clap = { version = "4.5.4", features = ["derive"] }
 criterion = { version = "0.6.0", features = ["async_tokio"] }
 ctrlc = { workspace = true }
-derive_more = { version = "2.0", features = ["deref", "deref_mut"] }
 insta = { version = "1.39.0", features = ["json"] }
 itertools = "0.14.0"
 netns-rs = "0.1.0"
@@ -85,6 +85,7 @@ serde = [
   "rand_distr/serde",
 ]
 camellia = ["dep:camellia"]
+test = []
 
 [[example]]
 name = "channel-xdp"

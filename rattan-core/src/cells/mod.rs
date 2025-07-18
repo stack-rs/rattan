@@ -2,7 +2,15 @@ use async_trait::async_trait;
 use etherparse::{Ethernet2Header, Ipv4Header};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, net::Ipv4Addr, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    fmt::Debug,
+    net::Ipv4Addr,
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc,
+    },
+};
 use tokio::time::{Duration, Instant};
 
 use crate::error::Error;
@@ -17,12 +25,15 @@ pub mod shadow;
 pub mod spy;
 pub mod token_bucket;
 
+/// Description of a packet
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub enum FlowDesc {
+    /// Description of a TCP packet
     TCP(Ipv4Addr, Ipv4Addr, u16, u16),
 }
 
+/// Trait characterizing a packet that can be sent through a cell
 pub trait Packet: Debug + 'static + Send {
     type PacketGenerator;
     fn empty(maximum: usize, generator: &Self::PacketGenerator) -> Self;
@@ -88,6 +99,9 @@ pub trait Packet: Debug + 'static + Send {
     }
 }
 
+/// The default packet struct used by rattan
+///
+/// This packet is an ethernet frame
 #[derive(Clone, Debug)]
 pub struct StdPacket {
     buf: Vec<u8>,
@@ -288,7 +302,8 @@ impl Packet for StdPacket {
     }
 }
 
-#[cfg(test)]
+/// A wrapper around a packet structure to analyse a cell behaviour
+#[cfg(any(test, doc))]
 #[derive(Clone, Debug, derive_more::Deref, derive_more::DerefMut)]
 pub struct TestPacket<P> {
     init_timestamp: Instant,
@@ -297,7 +312,7 @@ pub struct TestPacket<P> {
     packet: P,
 }
 
-#[cfg(test)]
+#[cfg(any(test, doc))]
 impl<P: Packet> Packet for TestPacket<P> {
     type PacketGenerator = P::PacketGenerator;
 
@@ -373,7 +388,7 @@ impl<P: Packet> Packet for TestPacket<P> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, doc))]
 impl<P: Packet> TestPacket<P> {
     pub fn delay(&self) -> Duration {
         self.get_timestamp() - self.init_timestamp
@@ -441,4 +456,96 @@ where
     fn receiver(&mut self) -> &mut Self::EgressType;
     fn into_receiver(self) -> Self::EgressType;
     fn control_interface(&self) -> Arc<Self::ControlInterfaceType>;
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum State {
+    // Drops all packets
+    Drop,
+    // Passes through all packets
+    PassThrough,
+    // Normal operation
+    Normal,
+}
+
+pub struct AtomicState(AtomicU8);
+
+impl AtomicState {
+    pub fn new(state: State) -> Self {
+        AtomicState(AtomicU8::new(state.into()))
+    }
+
+    pub fn load(&self, ordering: Ordering) -> State {
+        self.0
+            .load(ordering)
+            .try_into()
+            .expect("It should always be valid")
+    }
+
+    pub fn store(&self, state: State, ordering: Ordering) {
+        self.0.store(state.into(), ordering);
+    }
+}
+
+impl From<u8> for State {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => State::Drop,
+            1 => State::PassThrough,
+            _ => State::Normal,
+        }
+    }
+}
+
+impl From<i32> for State {
+    fn from(value: i32) -> Self {
+        match value {
+            0 => State::Drop,
+            1 => State::PassThrough,
+            _ => State::Normal,
+        }
+    }
+}
+
+impl From<State> for u8 {
+    fn from(state: State) -> Self {
+        match state {
+            State::Drop => 0,
+            State::PassThrough => 1,
+            State::Normal => 2,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, derive_more::Deref, derive_more::DerefMut)]
+pub struct Configs<C> {
+    configs: BTreeMap<Instant, C>,
+}
+
+impl<C> Configs<C> {
+    pub fn new() -> Self {
+        Self {
+            configs: BTreeMap::new(),
+        }
+    }
+
+    pub fn next_change(&self) -> Option<(&Instant, &C)> {
+        self.configs.first_key_value()
+    }
+
+    pub fn next_config(&mut self, instant: Instant) -> Option<(Instant, C)> {
+        if let Some((key, _)) = self.configs.first_key_value() {
+            if *key <= instant {
+                return self.configs.pop_first();
+            }
+        }
+        None
+    }
+}
+
+impl<C, const N: usize> From<[(Instant, C); N]> for Configs<C> {
+    fn from(configs: [(Instant, C); N]) -> Self {
+        Self {
+            configs: BTreeMap::from(configs),
+        }
+    }
 }

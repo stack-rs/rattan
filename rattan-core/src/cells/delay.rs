@@ -1,20 +1,20 @@
-use crate::cells::{Cell, Packet};
+use std::{fmt::Debug, sync::Arc};
+
+use async_trait::async_trait;
+use netem_trace::{model::DelayTraceConfig, Delay, DelayTrace};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+use tokio::{sync::mpsc, time::Instant};
+use tracing::{debug, info};
+
+use crate::cells::bandwidth::LARGE_DURATION;
+use crate::cells::{
+    per_packet::DelayedQueue, AtomicState, Cell, Configs, ControlInterface, Egress, Ingress,
+    Packet, State,
+};
 use crate::core::CALIBRATED_START_INSTANT;
 use crate::error::Error;
 use crate::metal::timer::Timer;
-use async_trait::async_trait;
-use netem_trace::model::DelayTraceConfig;
-use netem_trace::{Delay, DelayTrace};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
-use std::sync::atomic::AtomicI32;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use tokio::time::Instant;
-use tracing::{debug, info};
-
-use super::{ControlInterface, Egress, Ingress};
 
 pub struct DelayCellIngress<P>
 where
@@ -51,10 +51,11 @@ where
     P: Packet,
 {
     egress: mpsc::UnboundedReceiver<P>,
-    delay: Delay,
+    delays: Configs<Delay>,
+    queue: DelayedQueue<P>,
     config_rx: mpsc::UnboundedReceiver<DelayCellConfig>,
     timer: Timer,
-    state: AtomicI32,
+    state: AtomicState,
 }
 
 impl<P> DelayCellEgress<P>
@@ -63,11 +64,36 @@ where
 {
     fn set_config(&mut self, config: DelayCellConfig) {
         debug!(
-            before = ?self.delay,
+            before = ?self.delays.last_key_value(),
             after = ?config.delay,
             "Set inner delay:"
         );
-        self.delay = config.delay;
+        self.delays.insert(Instant::now(), config.delay);
+    }
+}
+
+impl Configs<Delay> {
+    fn delay(&self, packet_timestamp: Instant) -> Delay {
+        let mut packet_delay = Delay::ZERO;
+
+        for (timestamp, delay) in self.iter() {
+            if *timestamp <= packet_timestamp {
+                packet_delay = *delay;
+            } else if packet_timestamp + packet_delay < *timestamp {
+                // If the delay applies after the packet exited the queue
+                // then this new delay does not apply and all after neither
+                break;
+            } else if packet_timestamp + *delay <= *timestamp {
+                // If the delay applies before the packet exited the queue
+                // but with the new delay it should have left before the new delay
+                // then the packet leaves immediately and no further new delay apply
+                packet_delay = *timestamp - packet_timestamp;
+                break;
+            } else {
+                packet_delay = *delay
+            }
+        }
+        packet_delay
     }
 }
 
@@ -77,37 +103,50 @@ where
     P: Packet + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
-        let mut packet = match self.egress.recv().await {
-            Some(packet) => packet,
-            None => return None,
-        };
-        match self.state.load(std::sync::atomic::Ordering::Acquire) {
-            0 => {
-                return None;
-            }
-            1 => {
-                return Some(packet);
-            }
-            _ => {}
-        }
+        // Wait for the next packet to arrive
         loop {
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                _ = self.timer.sleep(packet.get_timestamp() + self.delay - Instant::now()) => {
-                    break;
+                packet = self.egress.recv() => {
+                    match packet {
+                        Some(packet) => match self.state.load(std::sync::atomic::Ordering::Acquire) {
+                            State::Drop => {
+                                return None;
+                            }
+                            State::PassThrough => {
+                                return Some(packet);
+                            }
+                            State::Normal => {
+                                self.queue.enqueue(packet, Delay::ZERO)
+                            }
+                        }
+                        // Channel closed
+                        None => return None,
+                    }
+                }
+                _ = self.timer.sleep_until({
+                    let timestamp = self.queue.next_packet().map(|packet| packet.get_timestamp()).unwrap_or_else(|| Instant::now());
+                    timestamp + self.delays.delay(timestamp)
+                }) => {
+                    if !self.queue.is_empty() {
+                        break
+                    }
                 }
             }
         }
-        packet.delay_by(self.delay);
+        debug_assert!(self.queue.next_instant() <= Instant::now());
+        debug_assert!(!self.queue.is_empty());
+        let (timestamp, mut packet) = self.queue.dequeue().expect("There should be something");
+        packet.delay_by(self.delays.delay(timestamp));
         Some(packet)
     }
 
     fn change_state(&self, state: i32) {
         self.state
-            .store(state, std::sync::atomic::Ordering::Release);
+            .store(state.into(), std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -186,10 +225,11 @@ where
             ingress: Arc::new(DelayCellIngress { ingress: rx }),
             egress: DelayCellEgress {
                 egress: tx,
-                delay,
+                delays: Configs::from([(Instant::now(), delay)]),
+                queue: DelayedQueue::new(),
                 config_rx,
                 timer: Timer::new()?,
-                state: AtomicI32::new(0),
+                state: AtomicState::new(State::Drop),
             },
             control_interface: Arc::new(DelayCellControlInterface { config_tx }),
         })
@@ -203,68 +243,83 @@ where
     P: Packet,
 {
     egress: mpsc::UnboundedReceiver<P>,
-    trace: Box<dyn DelayTrace>,
-    current_delay: Delay,
-    next_available: Instant,
+    current_trace: Box<dyn DelayTrace>,
+    next_traces: Configs<Box<dyn DelayTrace>>,
+    delays: Configs<Option<Delay>>,
+    queue: DelayedQueue<P>,
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<DelayReplayCellConfig>,
     send_timer: Timer,
     change_timer: Timer,
-    state: AtomicI32,
+    state: AtomicState,
 }
 
 impl<P> DelayReplayCellEgress<P>
 where
     P: Packet + Send + Sync,
 {
-    fn change_delay(&mut self, delay: Delay, change_time: Instant) {
-        tracing::trace!(
-            "Changing delay to {:?} (should at {:?} ago)",
-            delay,
-            change_time.elapsed()
-        );
-        tracing::trace!(
-            "Previous next_available distance: {:?}",
-            self.next_available - change_time
-        );
-        self.next_available += delay;
-        self.next_available -= self.current_delay;
-        tracing::trace!(
-            before = ?self.current_delay,
-            after = ?delay,
-            "Set inner delay:"
-        );
-        tracing::trace!(
-            "Now next_available distance: {:?}",
-            self.next_available - change_time,
-        );
-        self.current_delay = delay;
-    }
-
     fn set_config(&mut self, config: DelayReplayCellConfig) {
         tracing::debug!("Set inner trace config");
-        self.trace = config.trace_config.into_model();
-        let now = Instant::now();
-        if self.next_change(now).is_none() {
-            // handle null trace outside this function
-            tracing::warn!("Setting null trace");
-            self.next_change = now;
-            // set state to 0 to indicate the trace goes to end and the cell will drop all packets
-            self.change_state(0);
+        let trace = config.trace_config.into_model();
+        self.next_traces.insert(Instant::now(), trace);
+
+        // if self.next_change(now).is_none() {
+        //     // handle null trace outside this function
+        //     tracing::warn!("Setting null trace");
+        //     self.next_change = now;
+        //     // set state to 0 to indicate the trace goes to end and the cell will drop all packets
+        //     self.change_state(0);
+        // }
+    }
+
+    fn update_trace(&mut self) {
+        if let Some((timestamp, trace)) = self.next_traces.next_config(self.next_change) {
+            self.current_trace = trace;
+            self.next_delay(timestamp);
         }
     }
 
-    // Return the next change time or **None** if the trace goes to end
-    fn next_change(&mut self, change_time: Instant) -> Option<()> {
-        self.trace.next_delay().map(|(delay, duration)| {
-            self.change_delay(delay, change_time);
-            self.next_change = change_time + duration;
-            tracing::trace!(
-                "Delay changed to {:?}, next change after {:?}",
-                delay,
-                self.next_change - Instant::now()
-            );
-        })
+    fn next_delay(&mut self, timestamp: Instant) {
+        if let Some((delay, duration)) = self.current_trace.next_delay() {
+            self.delays.insert(timestamp, Some(delay));
+            self.next_change = timestamp + duration;
+        } else {
+            debug!("Trace goes to end");
+            self.delays.insert(timestamp, None);
+            self.next_change = timestamp + LARGE_DURATION
+        }
+    }
+}
+
+impl Configs<Option<Delay>> {
+    fn delay(&self, packet_timestamp: Instant) -> Option<Delay> {
+        let mut packet_delay = None;
+        for (timestamp, delay) in self.iter() {
+            if *timestamp <= packet_timestamp {
+                packet_delay = *delay;
+            } else if let Some(ref mut packet_delay) = packet_delay {
+                if packet_timestamp + *packet_delay < *timestamp {
+                    // If the delay applies after the packet exited the queue
+                    // then this new delay does not apply and all after neither
+                    break;
+                } else if let Some(delay) = delay {
+                    if packet_timestamp + *delay <= *timestamp {
+                        // If the delay applies before the packet exited the queue
+                        // but with the new delay it should have left before the new delay
+                        // then the packet leaves immediately and no further new delay apply
+                        *packet_delay = *timestamp - packet_timestamp;
+                        break;
+                    } else {
+                        *packet_delay = *delay
+                    }
+                } else {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        }
+        packet_delay
     }
 }
 
@@ -274,62 +329,69 @@ where
     P: Packet + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
-        let packet = loop {
-            tokio::select! {
-                biased;
-                Some(config) = self.config_rx.recv() => {
-                    self.set_config(config);
-                }
-                _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
-                    if self.next_change(self.next_change).is_none() {
-                        debug!("Trace goes to end");
-                        self.egress.close();
-                        return None;
-                    }
-                }
-                packet = self.egress.recv() => if let Some(packet) = packet { break packet }
-            }
-        };
-        match self.state.load(std::sync::atomic::Ordering::Acquire) {
-            0 => {
-                return None;
-            }
-            1 => {
-                return Some(packet);
-            }
-            _ => {}
-        }
-        self.next_available = packet.get_timestamp() + self.current_delay;
         loop {
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
-                    if self.next_change(self.next_change).is_none() {
-                        debug!("Trace goes to end");
-                        self.egress.close();
-                        return None;
+                packet = self.egress.recv() => {
+                    match packet {
+                        Some(packet) => match self.state.load(std::sync::atomic::Ordering::Acquire) {
+                            State::Drop => {
+                                return None;
+                            }
+                            State::PassThrough => {
+                                return Some(packet);
+                            }
+                            State::Normal => {
+                                self.queue.enqueue(packet, Delay::ZERO)
+                            }
+                        }
+                        // Channel closed
+                        None => return None,
                     }
                 }
-                _ = self.send_timer.sleep(self.next_available - Instant::now()) => {
-                    break;
+                _ = self.send_timer.sleep_until({
+                    let timestamp = self.queue.next_packet().map(|packet| packet.get_timestamp()).unwrap_or_else(|| Instant::now());
+                    if let Some(delay) = self.delays.delay(timestamp) {
+                        timestamp + delay
+                    } else {
+                        timestamp
+                    }
+                }) => {
+                    if !self.queue.is_empty() {
+                        break
+                    }
                 }
+                _ = self.change_timer.sleep_until(self.next_change) => {
+                    self.next_delay(self.next_change);
+                }
+
             }
         }
-        Some(packet)
+
+        debug_assert!(self.queue.next_instant() <= Instant::now());
+        debug_assert!(!self.queue.is_empty());
+        let (timestamp, mut packet) = self.queue.dequeue().expect("There should be something");
+        if let Some(delay) = self.delays.delay(timestamp) {
+            packet.delay_by(delay);
+            Some(packet)
+        } else {
+            None
+        }
     }
 
     // This must be called before any dequeue
     fn reset(&mut self) {
-        self.next_available = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
-        self.next_change = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
+        // self.next_available = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
+        // self.next_change = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
+        todo!()
     }
 
     fn change_state(&self, state: i32) {
         self.state
-            .store(state, std::sync::atomic::Ordering::Release);
+            .store(state.into(), std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -413,14 +475,15 @@ where
             ingress: Arc::new(DelayReplayCellIngress { ingress: rx }),
             egress: DelayReplayCellEgress {
                 egress: tx,
-                trace,
-                current_delay: Delay::ZERO,
-                next_available: Instant::now(),
+                current_trace: trace,
+                next_traces: Configs::new(),
+                delays: Configs::new(),
                 next_change: Instant::now(),
+                queue: DelayedQueue::new(),
                 config_rx,
                 send_timer: Timer::new()?,
                 change_timer: Timer::new()?,
-                state: AtomicI32::new(0),
+                state: AtomicState::new(State::Drop),
             },
             control_interface: Arc::new(DelayReplayCellControlInterface { config_tx }),
         })
@@ -434,7 +497,7 @@ mod tests {
     use tokio::time::Instant;
     use tracing::{span, Level};
 
-    use crate::cells::StdPacket;
+    use crate::cells::{StdPacket, TestPacket};
 
     use super::*;
 
@@ -464,7 +527,8 @@ mod tests {
             let mut delays: Vec<f64> = Vec::new();
 
             for _ in 0..10 {
-                let test_packet = StdPacket::from_raw_buffer(&[0; 256], Instant::now());
+                let test_packet =
+                    TestPacket::<StdPacket>::from_raw_buffer(&[0; 256], Instant::now());
                 let start = Instant::now();
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
@@ -481,6 +545,8 @@ mod tests {
 
                 // The length should be correct
                 assert!(received.length() == 256);
+
+                assert_eq!(received.delay(), Duration::from_millis(testing_delay));
             }
 
             info!(
@@ -520,9 +586,9 @@ mod tests {
         egress.change_state(2);
 
         //Test whether the packet will wait longer if the config is updated
-        let start = Instant::now();
-        let test_packet = StdPacket::from_raw_buffer(&[0; 256], start);
+        let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256], Instant::now());
 
+        let start = Instant::now();
         ingress.enqueue(test_packet)?;
 
         // Wait for 5ms, then change the config to let the delay be longer
@@ -538,14 +604,14 @@ mod tests {
         assert!(received.is_some());
         let received = received.unwrap();
         assert!(received.length() == 256);
-        assert_eq!(received.get_timestamp() - start, Duration::from_millis(20));
+        assert_eq!(received.delay(), Duration::from_millis(20));
 
         assert!((duration - 20.0).abs() <= DELAY_ACCURACY_TOLERANCE);
 
         // Test whether the packet will be returned immediately when the new delay is less than the already passed time
-        let start = Instant::now();
-        let test_packet = StdPacket::from_raw_buffer(&[0; 256], start);
+        let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256], Instant::now());
 
+        let start = Instant::now();
         ingress.enqueue(test_packet)?;
 
         // Wait for 15ms, then change the config back to 10ms
@@ -561,7 +627,7 @@ mod tests {
         assert!(received.is_some());
         let received = received.unwrap();
         assert!(received.length() == 256);
-        assert_eq!(received.get_timestamp() - start, Duration::from_millis(15));
+        assert_eq!(received.delay(), Duration::from_millis(15));
 
         assert!((duration - 15.0).abs() <= DELAY_ACCURACY_TOLERANCE);
 
@@ -603,8 +669,10 @@ mod tests {
         let mut real_delays: Vec<Duration> = Vec::new();
         for interval in [1100, 2100, 3100, 0] {
             for _ in 0..10 {
+                let test_packet =
+                    TestPacket::<StdPacket>::from_raw_buffer(&[0; 256], Instant::now());
                 let start = Instant::now();
-                let test_packet = StdPacket::from_raw_buffer(&[0; 256], start);
+
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
 
@@ -621,7 +689,7 @@ mod tests {
                 // The length should be correct
                 assert!(received.length() == 256);
 
-                real_delays.push(received.get_timestamp() - start);
+                real_delays.push(received.delay());
             }
             rt.block_on(async {
                 tokio::time::sleep_until(start_time + Duration::from_millis(interval)).await;
@@ -677,7 +745,7 @@ mod tests {
         egress.reset();
         let start_time = tokio::time::Instant::now();
         for _ in 0..10 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256], Instant::now());
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256], Instant::now());
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
             // Should drop all packets
@@ -690,8 +758,8 @@ mod tests {
             tokio::time::sleep_until(start_time + Duration::from_millis(1100)).await;
         });
         for _ in 0..10 {
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256], Instant::now());
             let start = Instant::now();
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256], start);
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
 
@@ -708,15 +776,16 @@ mod tests {
             // The length should be correct
             assert!(received.length() == 256);
 
-            real_delays.push(received.get_timestamp() - start);
+            real_delays.push(received.delay());
         }
         for interval in [2100, 3100] {
             rt.block_on(async {
                 tokio::time::sleep_until(start_time + Duration::from_millis(interval)).await;
             });
             for _ in 0..10 {
+                let test_packet =
+                    TestPacket::<StdPacket>::from_raw_buffer(&[0; 256], Instant::now());
                 let start = Instant::now();
-                let test_packet = StdPacket::from_raw_buffer(&[0; 256], start);
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
 
@@ -733,7 +802,7 @@ mod tests {
                 // The length should be correct
                 assert!(received.length() == 256);
 
-                real_delays.push(received.get_timestamp() - start);
+                real_delays.push(received.delay());
             }
         }
         assert_eq!(delays.len(), 30);
