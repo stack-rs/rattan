@@ -91,7 +91,11 @@ impl InterfaceReceiver<StdPacket> for AfPacketReceiver {
         let mut sockaddr = mem::MaybeUninit::<libc::sockaddr_ll>::uninit();
         let mut len = mem::size_of_val(&sockaddr) as socklen_t;
 
-        let buf = [0u8; 65537];
+        let buf: mem::MaybeUninit<[u8; 65537]> = mem::MaybeUninit::uninit();
+
+        // Safety: return value (`ret`) of libc::recvfrom is used to mark the initialized part of buffer, which is
+        // exposed out of this function.
+        let buf = unsafe { buf.assume_init() };
 
         let (ret, addr_ll) = unsafe {
             let ret = Errno::result(libc::recvfrom(
