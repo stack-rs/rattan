@@ -21,11 +21,12 @@ jobs:
   test-all-features:
     name: cargo test with all features
     strategy:
+      max-parallel: 1
       fail-fast: false
       matrix:
         kernel: ["5.4", "5.15", "6.8", "6.12"]
     runs-on: ${{ matrix.kernel }}
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@v4
         with:

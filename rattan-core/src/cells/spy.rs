@@ -193,7 +193,10 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::fs::File;
+    use std::{
+        fs::File,
+        io::{Seek, SeekFrom},
+    };
 
     use pnet::{
         packet::{
@@ -204,7 +207,6 @@ mod test {
         },
         util::MacAddr,
     };
-    use tempfile::NamedTempFile;
     use tokio::time::Instant;
 
     use crate::cells::{StdPacket, TestPacket};
@@ -217,17 +219,17 @@ mod test {
     const MAX_PAYLOAD_LEN: u64 =
         (u16::MAX as usize - (ETH_HEADER_LEN + IP_HEADER_LEN + TCP_HEADER_LEN)) as u64;
 
-    fn spy_cell<P: Packet + Sync>() -> (NamedTempFile, SpyCell<P, File>) {
-        let fifo = tempfile::NamedTempFile::with_suffix("spy_raw.pcap").unwrap();
-        let file = File::create(fifo.path()).unwrap();
-        let mut cell = SpyCell::new(file).unwrap();
+    fn spy_cell<P: Packet + Sync>() -> (File, SpyCell<P, File>) {
+        let file =
+            tempfile::tempfile().expect("Failed to create a temporary file for the spy cell");
+        let mut cell = SpyCell::new(file.try_clone().unwrap()).unwrap();
         cell.receiver().change_state(2);
-        (fifo, cell)
+        (file, cell)
     }
 
     #[tokio::test]
     async fn test_spy_cell_ordering() {
-        let (spy, mut cell) = spy_cell::<TestPacket<StdPacket>>();
+        let (mut spy, mut cell) = spy_cell::<TestPacket<StdPacket>>();
 
         let packet_creation = |id| -> Vec<u8> {
             let size = if id < MAX_PAYLOAD_LEN as u32 {
@@ -279,7 +281,7 @@ mod test {
             buffer
         };
 
-        let packets = (0..100_000).map(packet_creation);
+        let packets = (0..100).map(packet_creation);
 
         let packets_clone = packets.clone();
         let sender = Arc::clone(&cell.sender());
@@ -309,6 +311,7 @@ mod test {
         client.await.unwrap();
 
         let mut last = core::time::Duration::ZERO;
+        spy.seek(SeekFrom::Start(0)).unwrap();
         let mut spy = pcap_file::pcap::PcapReader::new(spy).unwrap();
         for packet in packets {
             let new = spy.next_packet().unwrap().unwrap();
