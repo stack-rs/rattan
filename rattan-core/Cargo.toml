@@ -48,7 +48,7 @@ uuid = { version = "1.10.0", features = ["v4"] }
 [dev-dependencies]
 anyhow = "1.0.69"
 clap = { version = "4.5.4", features = ["derive"] }
-criterion = { version = "0.6.0", features = ["async_tokio"] }
+criterion = { version = "0.7.0", features = ["async_tokio"] }
 ctrlc = { workspace = true }
 insta = { version = "1.39.0", features = ["json"] }
 itertools = "0.14.0"
