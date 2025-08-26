@@ -20,6 +20,7 @@ use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -49,6 +50,22 @@ pub struct Arguments {
     /// If this flag is set, the program will only generate the config to stdout and exit.
     #[arg(long, global = true)]
     generate: bool,
+
+    /// Used in isolated mode only. If set, stdout of left is passed to output of this program.
+    #[arg(long, global = true)]
+    left_stdout: bool,
+
+    /// Used in isolated mode only. If set, stdout of rihgt is passed to output of this program.
+    #[arg(long, global = true)]
+    right_stdout: bool,
+
+    /// Used in isolated mode only. If set, stderr of left is passed to output of this program.
+    #[arg(long, global = true)]
+    left_stderr: bool,
+
+    /// Used in isolated mode only. If set, stderr of right is passed to output of this program.
+    #[arg(long, global = true)]
+    right_stderr: bool,
 
     /// Generate config file to the specified path instead of stdout
     #[arg(long, requires = "generate", global = true, value_name = "File")]
@@ -345,6 +362,13 @@ fn main() -> ExitCode {
 
         match radix.get_mode() {
             StdNetEnvMode::Compatible => {
+                if opts.left_stdout | opts.left_stderr | opts.right_stdout | opts.right_stderr {
+                    warn!(
+                        "--left-stdout, --left-stderr, --right-stdout, --right-stderr \
+                        are for isolated mode only and thus ignored."
+                    );
+                }
+
                 let ip_list = radix.right_ip_list();
                 let left_handle = radix.left_spawn(None, move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
@@ -416,8 +440,16 @@ fn main() -> ExitCode {
                     tracing::info!("Running in right NS {server_handle:?}");
                     let mut server_handle = server_handle
                         .stdin(Stdio::null())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
+                        .stdout(if opts.right_stdout {
+                            Stdio::inherit()
+                        } else {
+                            Stdio::null()
+                        })
+                        .stderr(if opts.right_stderr {
+                            Stdio::inherit()
+                        } else {
+                            Stdio::null()
+                        })
                         .spawn()?;
                     let pid = server_handle.id() as i32;
                     tracing::debug!("Right pid: {pid}");
@@ -440,8 +472,16 @@ fn main() -> ExitCode {
                     tracing::info!("Running in left NS {client_handle:?}");
                     let mut client_handle = client_handle
                         .stdin(Stdio::null())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
+                        .stdout(if opts.left_stdout {
+                            Stdio::inherit()
+                        } else {
+                            Stdio::null()
+                        })
+                        .stderr(if opts.left_stderr {
+                            Stdio::inherit()
+                        } else {
+                            Stdio::null()
+                        })
                         .spawn()?;
                     let pid = client_handle.id() as i32;
                     tracing::debug!("Left pid: {pid}");
