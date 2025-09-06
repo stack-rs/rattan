@@ -36,6 +36,7 @@ use pcap_file::pcapng::{
 use std::{fs::File, io::Write, sync::Mutex};
 
 pub static CALIBRATED_START_INSTANT: OnceCell<tokio::time::Instant> = OnceCell::new();
+pub static FIRST_PACKET_INSTANT: OnceCell<tokio::time::Instant> = OnceCell::new();
 
 pub trait CellFactory<D>: FnOnce(&Handle) -> Result<D, Error> {}
 
@@ -249,7 +250,8 @@ where
         let rattan_cancel_token = self.cancel_token.child_token();
         for (rx_id, tx_id) in self.router.iter() {
             let rattan_cancel_token = rattan_cancel_token.clone();
-            let mut notify_rx = self.rattan_notify_rx.resubscribe();
+            let notify_rx = self.rattan_notify_rx.resubscribe();
+            let notify_tx = self.op_endpoint.clone(); // For sending FirstPacket notify
             let rx_id = rx_id.clone();
             let tx_id = tx_id.clone();
             let mut rx = self
@@ -261,6 +263,9 @@ where
                 .get(&tx_id)
                 .ok_or_else(|| RattanCoreError::UnknownIdError(tx_id.clone()))?
                 .clone();
+
+            // Set the notify receiver for the cell to handle Start signals internally
+            rx.set_notify_receiver(notify_rx);
             #[cfg(feature = "packet-dump")]
             let pcap_writer = self.pcap_writer.clone();
             #[cfg(feature = "packet-dump")]
@@ -273,31 +278,19 @@ where
                 async move {
                     loop {
                         tokio::select! {
-                            biased;
-                            notify = notify_rx.recv() => {
-                                match notify {
-                                    Ok(RattanNotify::Start) => {
-                                        rx.reset(); // Reset the cell
-                                        rx.change_state(2);
-                                        break;
-                                    }
-                                    Err(_) => {
-                                        warn!(rx_id, tx_id, "Core router exited since notify channel is closed before rattan start");
-                                        return
-                                    }
-                                }
-                            }
-                            // HACK: Should list all rattan entries here
-                            _ = rx.dequeue(), if rx_id.starts_with("left") || rx_id.starts_with("right") => {
-                                debug!(rx_id, tx_id, "Drop packet since the rattan is not started yet");
-                            }
-                        }
-                        tokio::task::yield_now().await;
-                    }
-                    loop {
-                        tokio::select! {
                             packet = rx.dequeue() => {
                                 if let Some(p) = packet {
+                                    // Check if this is the first packet from VirtualEthernet and send FirstPacket notify
+                                    if (rx_id.starts_with("left") || rx_id.starts_with("right")) && 
+                                       FIRST_PACKET_INSTANT.get().is_none() &&
+                                       FIRST_PACKET_INSTANT.set(tokio::time::Instant::now()).is_ok() {
+                                        if let Err(e) = notify_tx.exec(RattanOp::SendNotify(RattanNotify::FirstPacket)).await {
+                                            warn!(rx_id, tx_id, "Failed to send FirstPacket notify: {e:?}");
+                                        } else {
+                                            debug!(rx_id, tx_id, "Sent FirstPacket notify");
+                                        }
+                                    }
+
                                     trace!(
                                         header = ?format!("{:X?}", &p.as_slice()[0..std::cmp::min(56, p.length())]),
                                         "forward from {rx_id} to {tx_id}",

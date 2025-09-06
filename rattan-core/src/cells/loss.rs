@@ -61,6 +61,8 @@ where
     prev_loss: usize,
     rng: R,
     state: AtomicI32,
+    notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
+    started: bool,
 }
 
 #[async_trait]
@@ -70,6 +72,25 @@ where
     R: Rng + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
+        // Wait for Start notify if not started yet
+        if !self.started {
+            if let Some(notify_rx) = &mut self.notify_rx {
+                match notify_rx.recv().await {
+                    Ok(crate::control::RattanNotify::Start) => {
+                        self.change_state(2);
+                        self.started = true;
+                    }
+                    Ok(crate::control::RattanNotify::FirstPacket) => {
+                        // Continue waiting for Start notify
+                    }
+                    Err(_) => {
+                        // Notify channel closed, exit
+                        return None;
+                    }
+                }
+            }
+        }
+
         let packet = match self.egress.recv().await {
             Some(packet) => packet,
             None => return None,
@@ -104,6 +125,13 @@ where
     fn change_state(&self, state: i32) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
+    }
+
+    fn set_notify_receiver(
+        &mut self,
+        notify_rx: tokio::sync::broadcast::Receiver<crate::control::RattanNotify>,
+    ) {
+        self.notify_rx = Some(notify_rx);
     }
 }
 
@@ -191,6 +219,8 @@ where
                 prev_loss: 0,
                 rng,
                 state: AtomicI32::new(0),
+                notify_rx: None,
+                started: false,
             },
             control_interface: Arc::new(LossCellControlInterface { pattern }),
         })
@@ -214,6 +244,8 @@ where
     prev_loss: usize,
     rng: R,
     state: AtomicI32,
+    notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
+    started: bool,
 }
 
 impl<P, R> LossReplayCellEgress<P, R>
@@ -267,6 +299,26 @@ where
     R: Rng + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
+        // Wait for Start notify if not started yet
+        if !self.started {
+            if let Some(notify_rx) = &mut self.notify_rx {
+                match notify_rx.recv().await {
+                    Ok(crate::control::RattanNotify::Start) => {
+                        self.reset();
+                        self.change_state(2);
+                        self.started = true;
+                    }
+                    Ok(crate::control::RattanNotify::FirstPacket) => {
+                        // Continue waiting for Start notify
+                    }
+                    Err(_) => {
+                        // Notify channel closed, exit
+                        return None;
+                    }
+                }
+            }
+        }
+
         let packet = loop {
             tokio::select! {
                 biased;
@@ -314,6 +366,13 @@ where
     fn change_state(&self, state: i32) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
+    }
+
+    fn set_notify_receiver(
+        &mut self,
+        notify_rx: tokio::sync::broadcast::Receiver<crate::control::RattanNotify>,
+    ) {
+        self.notify_rx = Some(notify_rx);
     }
 }
 
@@ -407,6 +466,8 @@ where
                 prev_loss: 0,
                 rng,
                 state: AtomicI32::new(0),
+                notify_rx: None,
+                started: false,
             },
             control_interface: Arc::new(LossReplayCellControlInterface { config_tx }),
         })
