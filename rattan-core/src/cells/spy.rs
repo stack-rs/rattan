@@ -36,6 +36,8 @@ where
     last: tokio::time::Instant,
     state: AtomicI32,
     spy: Option<PcapWriter<W>>,
+    notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
+    started: bool,
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -87,6 +89,8 @@ where
                 last: tokio::time::Instant::now(),
                 state: AtomicI32::new(0),
                 spy: Some(PcapWriter::new(spy.into())?),
+                notify_rx: None,
+                started: false,
             },
             control_interface: Arc::new(SpyCellControlInterface { config_tx }),
         })
@@ -118,6 +122,25 @@ where
     W: Write + Send,
 {
     async fn dequeue(&mut self) -> Option<P> {
+        // Wait for Start notify if not started yet
+        if !self.started {
+            if let Some(notify_rx) = &mut self.notify_rx {
+                match notify_rx.recv().await {
+                    Ok(crate::control::RattanNotify::Start) => {
+                        self.change_state(2);
+                        self.started = true;
+                    }
+                    Ok(crate::control::RattanNotify::FirstPacket) => {
+                        // Continue waiting for Start notify
+                    }
+                    Err(_) => {
+                        // Notify channel closed, exit
+                        return None;
+                    }
+                }
+            }
+        }
+
         loop {
             tokio::select! {
             biased;
@@ -151,6 +174,13 @@ where
     fn change_state(&self, state: i32) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
+    }
+
+    fn set_notify_receiver(
+        &mut self,
+        notify_rx: tokio::sync::broadcast::Receiver<crate::control::RattanNotify>,
+    ) {
+        self.notify_rx = Some(notify_rx);
     }
 }
 

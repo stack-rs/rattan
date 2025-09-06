@@ -276,6 +276,13 @@ where
 
     /// 0 means drop, 1 means pass-through, 2 means normal operation
     fn change_state(&self, _state: i32) {}
+
+    /// Set the notify receiver for the cell to handle Start signals internally
+    fn set_notify_receiver(
+        &mut self,
+        _notify_rx: tokio::sync::broadcast::Receiver<crate::control::RattanNotify>,
+    ) {
+    }
 }
 
 pub trait ControlInterface: Send + Sync + 'static {
