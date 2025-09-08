@@ -325,3 +325,40 @@ where
     fn into_receiver(self) -> Self::EgressType;
     fn control_interface(&self) -> Arc<Self::ControlInterfaceType>;
 }
+
+/// Called at the start of the cell's dequeue() method. Make sure that no packets shall be dequeued
+/// until an expected Notification has been received ONCE.
+#[macro_export]
+macro_rules! wait_until_started {
+    ($self:ident, $variant:ident) => {
+        while !$self.started {
+            if let Some(notify_rx) = &mut $self.notify_rx {
+                match notify_rx.recv().await {
+                    Ok($crate::control::RattanNotify::$variant) => {
+                        $self.reset();
+                        $self.change_state(2);
+                        $self.started = true;
+                    }
+                    Ok(_) => {
+                        // Ignore unexpected notifications.
+                        continue;
+                    }
+                    Err(_) => {
+                        // This happens when the notifier is dropped.
+                        return None;
+                    }
+                }
+            } else {
+                // The notifier is not set unless the normal startup of Rattan has taken place. In some
+                // non-integrated environments, the notifier may not be set, like unit tests for cells.
+                break;
+            }
+        }
+    };
+}
+
+/// Cells that replay a trace should refer to TRACE_START_INSTANT as the logical start instant of the trace.
+#[cfg(not(feature = "first-packet"))]
+pub use crate::core::CALIBRATED_START_INSTANT as TRACE_START_INSTANT;
+#[cfg(feature = "first-packet")]
+pub use crate::core::FIRST_PACKET_INSTANT as TRACE_START_INSTANT;

@@ -123,23 +123,7 @@ where
 {
     async fn dequeue(&mut self) -> Option<P> {
         // Wait for Start notify if not started yet
-        if !self.started {
-            if let Some(notify_rx) = &mut self.notify_rx {
-                match notify_rx.recv().await {
-                    Ok(crate::control::RattanNotify::Start) => {
-                        self.change_state(2);
-                        self.started = true;
-                    }
-                    Ok(crate::control::RattanNotify::FirstPacket) => {
-                        // Continue waiting for Start notify
-                    }
-                    Err(_) => {
-                        // Notify channel closed, exit
-                        return None;
-                    }
-                }
-            }
-        }
+        crate::wait_until_started!(self, Start);
 
         loop {
             tokio::select! {
