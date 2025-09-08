@@ -1,5 +1,5 @@
+use super::TRACE_START_INSTANT;
 use crate::cells::{Cell, Packet};
-use crate::core::CALIBRATED_START_INSTANT;
 use crate::error::Error;
 use crate::metal::timer::Timer;
 use async_trait::async_trait;
@@ -81,24 +81,7 @@ where
 {
     async fn dequeue(&mut self) -> Option<P> {
         // Wait for Start notify if not started yet
-        if !self.started {
-            if let Some(notify_rx) = &mut self.notify_rx {
-                match notify_rx.recv().await {
-                    Ok(crate::control::RattanNotify::Start) => {
-                        self.reset();
-                        self.change_state(2);
-                        self.started = true;
-                    }
-                    Ok(crate::control::RattanNotify::FirstPacket) => {
-                        // Continue waiting for Start notify
-                    }
-                    Err(_) => {
-                        // Notify channel closed, exit
-                        return None;
-                    }
-                }
-            }
-        }
+        crate::wait_until_started!(self, Start);
 
         let packet = match self.egress.recv().await {
             Some(packet) => packet,
@@ -307,25 +290,11 @@ where
     P: Packet + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
-        // Wait for Start notify if not started yet
-        if !self.started {
-            if let Some(notify_rx) = &mut self.notify_rx {
-                match notify_rx.recv().await {
-                    Ok(crate::control::RattanNotify::Start) => {
-                        self.reset();
-                        self.change_state(2);
-                        self.started = true;
-                    }
-                    Ok(crate::control::RattanNotify::FirstPacket) => {
-                        // Continue waiting for Start notify
-                    }
-                    Err(_) => {
-                        // Notify channel closed, exit
-                        return None;
-                    }
-                }
-            }
-        }
+        // Wait for FirstPacket notify if not started yet
+        #[cfg(feature = "first-packet")]
+        crate::wait_until_started!(self, FirstPacket);
+        #[cfg(not(feature = "first-packet"))]
+        crate::wait_until_started!(self, Start);
 
         let packet = loop {
             tokio::select! {
@@ -376,8 +345,8 @@ where
 
     // This must be called before any dequeue
     fn reset(&mut self) {
-        self.next_available = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
-        self.next_change = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
+        self.next_available = *TRACE_START_INSTANT.get_or_init(Instant::now);
+        self.next_change = *TRACE_START_INSTANT.get_or_init(Instant::now);
     }
 
     fn change_state(&self, state: i32) {

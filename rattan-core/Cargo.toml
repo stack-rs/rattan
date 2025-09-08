@@ -74,6 +74,7 @@ harness = false
 
 [features]
 default = []
+first-packet = []
 http = ["serde", "dep:axum"]
 packet-dump = []
 serde = ["dep:serde", "dep:serde_json", "bandwidth/serde", "bytesize/serde", "rand_distr/serde"]
