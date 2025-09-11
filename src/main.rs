@@ -24,17 +24,22 @@ use tracing::warn;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::build::CLAP_LONG_VERSION;
+use shadow_rs::shadow;
+
 mod channel;
 // mod docker;
 
 // const CONFIG_PORT_BASE: u16 = 8086;
+
+shadow!(build);
 
 static LEFT_PID: OnceCell<i32> = OnceCell::new();
 static RIGHT_PID: OnceCell<i32> = OnceCell::new();
 
 #[derive(Debug, Parser, Clone)]
 #[command(rename_all = "kebab-case")]
-#[command(version, propagate_version = true)]
+#[command(version, propagate_version = true, long_version = CLAP_LONG_VERSION)]
 pub struct Arguments {
     // Verbose debug output
     // #[arg(short, long)]
