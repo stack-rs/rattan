@@ -31,9 +31,10 @@ impl Timer {
         })
     }
 
+    #[inline(always)]
     pub async fn sleep(&mut self, duration: std::time::Duration) -> Result<(), MetalError> {
         // Set TimerFd to 0 will disable it. We need to handle this case.
-        if duration.as_nanos() == 0 {
+        if duration.is_zero() {
             return Ok(());
         }
         self.timer.get_mut().0.set(
@@ -56,7 +57,9 @@ impl Timer {
         }
     }
 
-    pub async fn sleep_until(&mut self, instant: Instant) -> Result<(), MetalError> {
-        self.sleep(instant - Instant::now()).await
+    pub async fn sleep_until(&mut self, instant: Instant) -> Result<Instant, MetalError> {
+        self.sleep(instant.duration_since(Instant::now()))
+            .await
+            .map(|_| instant)
     }
 }

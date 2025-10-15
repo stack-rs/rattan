@@ -519,10 +519,8 @@ impl AtomicState {
     }
 
     pub fn load(&self, ordering: Ordering) -> State {
-        self.0
-            .load(ordering)
-            .try_into()
-            .expect("It should always be valid")
+        let state: u8 = self.0.load(ordering);
+        state.into()
     }
 
     pub fn store(&self, state: State, ordering: Ordering) {
@@ -560,29 +558,27 @@ impl From<State> for u8 {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, derive_more::Deref, derive_more::DerefMut)]
+#[derive(Debug, Default, Clone, PartialEq, derive_more::Deref)]
 pub struct Configs<C> {
+    #[deref]
     configs: BTreeMap<Instant, C>,
+    expire: Option<Instant>,
 }
 
 impl<C> Configs<C> {
     pub fn new() -> Self {
         Self {
             configs: BTreeMap::new(),
+            expire: None,
         }
     }
-
-    pub fn next_change(&self) -> Option<(&Instant, &C)> {
-        self.configs.first_key_value()
-    }
-
-    pub fn next_config(&mut self, instant: Instant) -> Option<(Instant, C)> {
-        if let Some((key, _)) = self.configs.first_key_value() {
-            if *key <= instant {
-                return self.configs.pop_first();
-            }
+    fn insert(&mut self, time: Instant, data: Option<C>) {
+        if let Some(data) = data {
+            self.configs.insert(time, data);
+            self.expire = None;
+        } else {
+            self.expire = Some(time);
         }
-        None
     }
 }
 
@@ -590,6 +586,7 @@ impl<C, const N: usize> From<[(Instant, C); N]> for Configs<C> {
     fn from(configs: [(Instant, C); N]) -> Self {
         Self {
             configs: BTreeMap::from(configs),
+            expire: None,
         }
     }
 }

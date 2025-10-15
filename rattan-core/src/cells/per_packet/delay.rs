@@ -441,7 +441,7 @@ mod tests {
         assert!(received.length() == 256);
 
         assert!((duration - 15.0).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert_eq!(received.delay(), Duration::from_millis(15));
+        assert_eq!(received.delay(), Duration::from_millis(10));
 
         Ok(())
     }

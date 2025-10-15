@@ -73,6 +73,6 @@ impl<P: Packet> DelayedQueue<P> {
     pub fn next_packet(&self) -> Option<&P> {
         self.queue
             .first_key_value()
-            .and_then(|(_instant, packets)| packets.get(0).map(|(packet, _delay)| packet))
+            .and_then(|(_instant, packets)| packets.front().map(|(packet, _delay)| packet))
     }
 }
