@@ -139,7 +139,7 @@ mod test {
             large_bucket
                 .next_available(ByteSize::kb(40))
                 .duration_since(start),
-            Duration::from_millis(10 / 1)
+            Duration::from_millis(10)
         );
 
         // Nothing happens if one of the bucket is not available
@@ -159,7 +159,7 @@ mod test {
             large_bucket
                 .next_available(ByteSize::kb(40))
                 .duration_since(start),
-            Duration::from_millis(10 / 1)
+            Duration::from_millis(10)
         );
 
         let time = start + Duration::from_millis(13);
