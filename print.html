@@ -399,7 +399,7 @@ sudo systemctl restart systemd-networkd.service
 <h2 id="build-from-source-using-rust"><a class="header" href="#build-from-source-using-rust">Build from source using Rust</a></h2>
 <h3 id="dependencies"><a class="header" href="#dependencies">Dependencies</a></h3>
 <p>We recommend developers to install the following dependencies for better testing and development experience. And you have to install some of the dependencies to build rattan with specific features:</p>
-<pre><code class="language-bash">sudo apt install ethtool, iputils-ping, iperf3, pkg-config, m4, clang, llvm, libelf-dev, libpcap-dev, gcc-multilib
+<pre><code class="language-bash">sudo apt install ethtool iputils-ping iperf3 pkg-config m4 clang llvm libelf-dev libpcap-dev gcc-multilib
 </code></pre>
 <h3 id="installing-with-cargo"><a class="header" href="#installing-with-cargo">Installing with Cargo</a></h3>
 <p>To build the <code>rattan</code> executable from source, you will first need to install Rust and Cargo.
@@ -414,7 +414,7 @@ That command will check if there is a newer version, and re-install rattan if a 
 <h3 id="installing-the-latest-git-version-with-cargo"><a class="header" href="#installing-the-latest-git-version-with-cargo">Installing the latest git version with Cargo</a></h3>
 <p>The version published to crates.io will ever so slightly be behind the version hosted on GitHub.
 If you need the latest version you can build the git version of rattan yourself.
-Cargo makes this <em><strong>super easy</strong></em>!</p>
+Cargo makes this <strong><em>super easy</em></strong>!</p>
 <pre><code class="language-bash">cargo install --git https://github.com/stack-rs/rattan.git rattan
 </code></pre>
 <p>Again, make sure to add the Cargo bin directory to your <code>PATH</code>.</p>
