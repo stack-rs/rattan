@@ -27,7 +27,7 @@ Follow the official [naming convention](https://rust-lang.github.io/api-guidelin
 We recommend developers to install the following dependencies for better testing and development experience:
 
 ```bash
-sudo apt install ethtool, iputils-ping, iperf3, pkg-config, m4, clang, llvm, libelf-dev, libpcap-dev, gcc-multilib
+sudo apt install ethtool iputils-ping iperf3 pkg-config m4 clang llvm libelf-dev libpcap-dev gcc-multilib
 ```
 
 ### Building

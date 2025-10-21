@@ -60,7 +60,7 @@ We also contain a install script [scripts/install.sh](https://github.com/stack-r
 We recommend developers to install the following dependencies for better testing and development experience. And you have to install some of the dependencies to build rattan with specific features:
 
 ```bash
-sudo apt install ethtool, iputils-ping, iperf3, pkg-config, m4, clang, llvm, libelf-dev, libpcap-dev, gcc-multilib
+sudo apt install ethtool iputils-ping iperf3 pkg-config m4 clang llvm libelf-dev libpcap-dev gcc-multilib
 ```
 
 ### Installing with Cargo
@@ -88,7 +88,7 @@ To uninstall, run the command `cargo uninstall rattan`.
 
 The version published to crates.io will ever so slightly be behind the version hosted on GitHub.
 If you need the latest version you can build the git version of rattan yourself.
-Cargo makes this ***super easy***!
+Cargo makes this **_super easy_**!
 
 ```bash
 cargo install --git https://github.com/stack-rs/rattan.git rattan
