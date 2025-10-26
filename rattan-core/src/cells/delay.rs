@@ -5,7 +5,10 @@ use async_trait::async_trait;
 use netem_trace::{model::DelayTraceConfig, Delay, DelayTrace};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use tokio::{sync::mpsc, time::Instant};
+use tokio::{
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 use tracing::{debug, error, info};
 
 use crate::cells::bandwidth::LARGE_DURATION;
@@ -54,6 +57,7 @@ where
     state: AtomicState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
+    last_timestamp: Instant,
 }
 
 impl<P> DelayCellEgress<P>
@@ -133,23 +137,26 @@ where
             State::Normal => {}
         }
 
+        // Logical timestamps are considered non-decreasing.
         let timestamp = packet.get_timestamp();
+        self.last_timestamp = self.last_timestamp.max(timestamp);
+        let timestamp = self.last_timestamp;
 
         let send_time = loop {
+            let now = Instant::now();
+            let logical_send_time = timestamp + self.delays.delay(timestamp);
+            if now >= logical_send_time {
+                tokio::task::yield_now().await;
+                break now.max(logical_send_time);
+            }
+
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                send_time = self.timer.sleep_until(timestamp + self.delays.delay(timestamp)) => {
-                    match send_time {
-                        Ok(logical_send_time) => {break logical_send_time},
-                        Err(e) => {
-                            error!("Error on timer: {:?}", e);
-                            // Report error and drop packet, since the timer is unsound now!
-                            return None;
-                        }
-                    }
+                _ = self.timer.sleep(logical_send_time - now) => {
+                    break logical_send_time;
                 }
             }
         };
@@ -252,6 +259,7 @@ where
                 state: AtomicState::new(State::Drop),
                 notify_rx: None,
                 started: false,
+                last_timestamp: Instant::now() - Duration::from_secs(1000),
             },
             control_interface: Arc::new(DelayCellControlInterface { config_tx }),
         })
