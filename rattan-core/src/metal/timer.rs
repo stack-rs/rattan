@@ -1,4 +1,7 @@
-use std::os::fd::{AsFd, AsRawFd};
+use std::{
+    os::fd::{AsFd, AsRawFd},
+    time::Duration,
+};
 
 use nix::sys::{
     time::TimeSpec,
@@ -58,8 +61,10 @@ impl Timer {
     }
 
     pub async fn sleep_until(&mut self, instant: Instant) -> Result<Instant, MetalError> {
-        self.sleep(instant.duration_since(Instant::now()))
-            .await
-            .map(|_| instant)
+        match instant.duration_since(Instant::now()) {
+            Duration::ZERO => tokio::task::yield_now().await,
+            sleep_time => self.sleep(sleep_time).await?,
+        }
+        Ok(instant)
     }
 }

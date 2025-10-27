@@ -5,10 +5,7 @@ use async_trait::async_trait;
 use netem_trace::{model::DelayTraceConfig, Delay, DelayTrace};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use tokio::{
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, error, info};
 
 use crate::cells::bandwidth::LARGE_DURATION;
@@ -57,7 +54,7 @@ where
     state: AtomicState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
-    last_timestamp: Instant,
+    // last_timestamp: Instant,
 }
 
 impl<P> DelayCellEgress<P>
@@ -67,7 +64,7 @@ where
     fn set_config(&mut self, config: DelayCellConfig) {
         let timestamp = Instant::now();
         debug!(
-            before = ?self.delays.last_key_value(),
+            before = ?self.delays.configs.last_key_value(),
             after = ?(timestamp, config.delay),
             "Set inner delay:"
         );
@@ -99,17 +96,27 @@ impl Configs<Delay> {
     //     packet_delay
     // }
     // ************ Which behavior here is right is under discussion. ***********
-    fn delay(&self, packet_timestamp: Instant) -> Delay {
-        // Todo: eliminate out-dated items from the Configs<Delay>
-        if let Some((_, &delay)) = self.range(..=packet_timestamp).next_back() {
-            return delay;
+    fn delay(&mut self, packet_timestamp: Instant) -> Delay {
+        // Eliminate out-dated items from the Configs<Delay>
+        // The correctness of this function relies on that the `pakcet_timestamp` never decreases.
+
+        let (result, kill_before) =
+            if let Some((&time, &delay)) = self.configs.range(..=packet_timestamp).next_back() {
+                (delay, time.into())
+            } else if let Some((&last, &delay)) = self.configs.range(..).next() {
+                tracing::warn!("Failed to find delay for packet");
+                // Try to apply the oldest delay?
+                (delay, last.into())
+            } else {
+                tracing::warn!("Failed to find delay for packet, using 0ms as default");
+                (Delay::ZERO, None)
+            };
+
+        if let Some(kill_before) = kill_before {
+            self.configs.retain(|&k, _| k >= kill_before);
         }
-        tracing::warn!("Failed to find delay for packet");
-        if let Some((_, &delay)) = self.range(..).next() {
-            // Try to apply the oldest delay?
-            return delay;
-        }
-        Delay::ZERO
+
+        result
     }
 }
 
@@ -139,23 +146,15 @@ where
 
         // Logical timestamps are considered non-decreasing.
         let timestamp = packet.get_timestamp();
-        self.last_timestamp = self.last_timestamp.max(timestamp);
-        let timestamp = self.last_timestamp;
+        let logical_send_time = timestamp + self.delays.delay(timestamp);
 
         let send_time = loop {
-            let now = Instant::now();
-            let logical_send_time = timestamp + self.delays.delay(timestamp);
-            if now >= logical_send_time {
-                tokio::task::yield_now().await;
-                break now.max(logical_send_time);
-            }
-
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                _ = self.timer.sleep(logical_send_time - now) => {
+                _ = self.timer.sleep_until(logical_send_time) => {
                     break logical_send_time;
                 }
             }
@@ -259,7 +258,7 @@ where
                 state: AtomicState::new(State::Drop),
                 notify_rx: None,
                 started: false,
-                last_timestamp: Instant::now() - Duration::from_secs(1000),
+                // last_timestamp: Instant::now() - Duration::from_secs(1000),
             },
             control_interface: Arc::new(DelayCellControlInterface { config_tx }),
         })

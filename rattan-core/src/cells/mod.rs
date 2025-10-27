@@ -558,10 +558,9 @@ impl From<State> for u8 {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, derive_more::Deref)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Configs<C> {
-    #[deref]
-    configs: BTreeMap<Instant, C>,
+    pub configs: BTreeMap<Instant, C>,
     expire: Option<Instant>,
 }
 
