@@ -263,7 +263,7 @@ impl Packet for XDPPacket {
         todo!()
     }
 
-    fn from_raw_buffer(_buf: &[u8]) -> Self {
+    fn from_raw_buffer(_buf: &[u8], _timestamp: Instant) -> Self {
         todo!()
     }
 
@@ -305,7 +305,11 @@ impl Packet for XDPPacket {
         self.timestamp
     }
 
-    fn set_timestamp(&mut self, timestamp: Instant) {
+    fn delay_until(&mut self, timestamp: Instant) {
         self.timestamp = timestamp;
+    }
+
+    fn delay_by(&mut self, delay: Duration) {
+        self.timestamp += delay;
     }
 }

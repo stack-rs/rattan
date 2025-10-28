@@ -16,6 +16,7 @@ bandwidth = "0.3.0"
 bitfield = "0.19.0"
 bytesize = "2.0.1"
 camellia = { git = "https://github.com/minhuw/camellia.git", optional = true }
+derive_more = { version = "2.0", features = ["deref", "deref_mut"] }
 dyn-clone = "1.0"
 etherparse = "0.18.0"
 figment = { workspace = true }
@@ -77,8 +78,15 @@ default = []
 first-packet = []
 http = ["serde", "dep:axum"]
 packet-dump = []
-serde = ["dep:serde", "dep:serde_json", "bandwidth/serde", "bytesize/serde", "rand_distr/serde"]
+serde = [
+  "dep:serde",
+  "dep:serde_json",
+  "bandwidth/serde",
+  "bytesize/serde",
+  "rand_distr/serde",
+]
 camellia = ["dep:camellia"]
+test = []
 
 [[example]]
 name = "channel-xdp"
