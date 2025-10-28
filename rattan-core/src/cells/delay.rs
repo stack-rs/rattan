@@ -1,4 +1,5 @@
 use super::TRACE_START_INSTANT;
+use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
@@ -54,7 +55,7 @@ where
     state: AtomicState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
-    // last_timestamp: Instant,
+    latest_egress_timestamp: Instant,
 }
 
 impl<P> DelayCellEgress<P>
@@ -146,15 +147,18 @@ where
 
         // Logical timestamps are considered non-decreasing.
         let timestamp = packet.get_timestamp();
-        let logical_send_time = timestamp + self.delays.delay(timestamp);
 
         let send_time = loop {
+            let logical_send_time =
+                (timestamp + self.delays.delay(timestamp)).max(self.latest_egress_timestamp);
+
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
                 _ = self.timer.sleep_until(logical_send_time) => {
+                    self.latest_egress_timestamp = logical_send_time;
                     break logical_send_time;
                 }
             }
@@ -258,7 +262,7 @@ where
                 state: AtomicState::new(State::Drop),
                 notify_rx: None,
                 started: false,
-                // last_timestamp: Instant::now() - Duration::from_secs(1000),
+                latest_egress_timestamp: Instant::now() - Duration::from_secs(10),
             },
             control_interface: Arc::new(DelayCellControlInterface { config_tx }),
         })
@@ -283,6 +287,7 @@ where
     state: AtomicState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
+    latest_egress_timestamp: Instant,
 }
 
 impl<P> DelayReplayCellEgress<P>
@@ -340,6 +345,7 @@ where
                         }
                     }
                 }
+
                 packet = self.egress.recv() => if let Some(packet) = packet { break packet }
             }
         };
@@ -357,6 +363,9 @@ where
         let timestamp = packet.get_timestamp();
 
         let send_time = loop {
+            let logical_send_time =
+                (timestamp + self.delays.delay(timestamp)).max(self.latest_egress_timestamp);
+
             tokio::select! {
             biased;
             Some(config) = self.config_rx.recv() => {
@@ -372,17 +381,10 @@ where
                     }
                 }
             }
-            send_time = self.send_timer.sleep_until(timestamp + self.delays.delay(timestamp)) => {
-                    match send_time {
-                        Ok(logical_send_time) => {break logical_send_time},
-                        Err(e) => {
-                            error!("Error on timer: {:?}", e);
-                            // Report error and drop packet, since the timer is unsound now!
-                            return None;
-                        }
-                    }
-                }
-            }
+            send_time = self.send_timer.sleep_until(logical_send_time) => {
+                self.latest_egress_timestamp = logical_send_time;
+                break send_time.ok()?;
+            }}
         };
 
         packet.delay_until(send_time);
@@ -397,6 +399,7 @@ where
             self.next_change
         );
         self.update_delay(self.next_change);
+        self.latest_egress_timestamp = self.next_change - Duration::from_secs(10);
     }
 
     fn change_state(&self, state: i32) {
@@ -499,6 +502,7 @@ where
                 send_timer: Timer::new()?,
                 change_timer: Timer::new()?,
                 state: AtomicState::new(State::Drop),
+                latest_egress_timestamp: Instant::now() - Duration::from_secs(10),
                 notify_rx: None,
                 started: false,
             },
