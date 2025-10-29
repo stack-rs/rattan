@@ -1,0 +1,33 @@
+[env]
+mode = "Compatible"
+left_veth_count = 1
+right_veth_count = 1
+client_cores = []
+server_cores = []
+
+[cells.up_1]
+type = "BwReplay"
+queue = "DropTail"
+trace = "./assets/1_to_2Gbps.trace.toml"
+
+[cells.up_1.queue_config]
+byte_limit = 8000000
+bw_type = "LinkLayer"
+
+[cells.up_2]
+type = "Delay"
+delay = "10ms"
+
+[links]
+up_2 = "right"
+left = "up_1"
+right = "left"
+up_1 = "up_2"
+
+[resource]
+cpu = [2]
+
+[general]
+
+[commands]
+shell = "Default"

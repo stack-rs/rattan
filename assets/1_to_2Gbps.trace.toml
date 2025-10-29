@@ -1,0 +1,21 @@
+[RepeatedBwPatternConfig]
+count = 0
+
+[[RepeatedBwPatternConfig.pattern]]
+[RepeatedBwPatternConfig.pattern.TraceBwConfig]
+pattern = [
+  [
+    "1000ms",
+    [
+      "1088Mbps",
+      "2000Mbps",
+      "1930Mbps",
+      "1280Mbps",
+      "1520Mbps",
+      "2200Mbps",
+      "1040Mbps",
+      "1660Mbps",
+      "2200Mbps",
+    ]
+  ]
+]
