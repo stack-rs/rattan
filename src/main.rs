@@ -13,10 +13,18 @@ use figment::{
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
-
-use rattan_core::cells::StdPacket;
 use rattan_core::env::StdNetEnvMode;
-use rattan_core::metal::io::af_packet::AfPacketDriver;
+
+#[cfg(feature = "camellia")]
+use rattan_core::{
+    metal::io::af_xdp::XDPDriver as PacketDriver, metal::io::af_xdp::XDPPacket as RattanPacket,
+};
+
+#[cfg(not(feature = "camellia"))]
+use rattan_core::{
+    cells::StdPacket as RattanPacket, metal::io::af_packet::AfPacketDriver as PacketDriver,
+};
+
 use rattan_core::radix::RattanRadix;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
 use serde::{Deserialize, Serialize};
@@ -265,7 +273,7 @@ fn main() -> ExitCode {
                         args.config.display()
                     )));
                 }
-                let config: RattanConfig<StdPacket> = Figment::new()
+                let config: RattanConfig<RattanPacket> = Figment::new()
                     .merge(Toml::file(&args.config))
                     .merge(Env::prefixed("RATTAN_"))
                     .extract()
@@ -358,7 +366,7 @@ fn main() -> ExitCode {
         }
 
         // Start Rattan
-        let mut radix = RattanRadix::<AfPacketDriver>::new(config)?;
+        let mut radix = RattanRadix::<PacketDriver>::new(config)?;
         radix.spawn_rattan()?;
         radix.start_rattan()?;
 

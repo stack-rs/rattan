@@ -1,17 +1,19 @@
 use std::collections::HashMap;
 
+use crate::TaskShell;
 use clap::{Args, ValueEnum};
 use netem_trace::{Bandwidth, Delay};
 use paste::paste;
+
+#[cfg(not(feature = "camellia"))]
+use rattan_core::cells::StdPacket as RattanPacket;
+#[cfg(feature = "camellia")]
+use rattan_core::metal::io::af_xdp::XDPPacket as RattanPacket;
+
 use rattan_core::{
-    cells::{
-        bandwidth::{
-            queue::{
-                CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
-            },
-            BwCellConfig,
-        },
-        StdPacket,
+    cells::bandwidth::{
+        queue::{CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig},
+        BwCellConfig,
     },
     config::{
         BwCellBuildConfig, BwReplayCellBuildConfig, BwReplayQueueConfig, CellBuildConfig,
@@ -19,8 +21,6 @@ use rattan_core::{
     },
     env::{StdNetEnvConfig, StdNetEnvMode},
 };
-
-use crate::TaskShell;
 
 #[derive(Debug, Args, Clone)]
 #[command(rename_all = "kebab-case")]
@@ -148,8 +148,8 @@ macro_rules! bwreplay_q_args_into_config {
 }
 
 impl ChannelArgs {
-    pub fn build_rattan_config(self) -> rattan_core::error::Result<RattanConfig<StdPacket>> {
-        let mut cells_config = HashMap::<String, CellBuildConfig<StdPacket>>::new();
+    pub fn build_rattan_config(self) -> rattan_core::error::Result<RattanConfig<RattanPacket>> {
+        let mut cells_config = HashMap::<String, CellBuildConfig<RattanPacket>>::new();
         let mut links_config = HashMap::<String, String>::new();
         let mut uplink_count = 0;
         let mut downlink_count = 0;
@@ -302,7 +302,7 @@ impl ChannelArgs {
             links_config.insert("right".to_string(), "left".to_string());
         }
 
-        Ok(RattanConfig::<StdPacket> {
+        Ok(RattanConfig::<RattanPacket> {
             env: StdNetEnvConfig {
                 mode: StdNetEnvMode::Compatible,
                 client_cores: vec![1],

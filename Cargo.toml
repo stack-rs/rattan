@@ -52,6 +52,7 @@ default = ["first-packet"]
 first-packet = ["rattan-core/first-packet"]
 http = ["rattan-core/http"]
 packet-dump = ["rattan-core/packet-dump"]
+camellia = ["rattan-core/camellia"]
 
 [dependencies]
 # anyhow = "1.0.75"
