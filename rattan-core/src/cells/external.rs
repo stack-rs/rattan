@@ -262,6 +262,8 @@ where
     ) {
         loop {
             let mut _guard = notify.readable().await.unwrap();
+
+            #[cfg(not(feature = "camellia"))]
             match _guard.try_io(|_fd| receiver.receive()) {
                 Ok(packet) => match packet {
                     Ok(Some(mut p)) => {
@@ -274,6 +276,24 @@ where
                     }
                     Err(e) => error!("recv error: {}", e),
                     _ => {}
+                },
+                Err(_would_block) => continue,
+            }
+
+            #[cfg(feature = "camellia")]
+            match _guard.try_io(|_fd| receiver.receive_bulk()) {
+                Ok(packets) => match packets {
+                    Ok(packets) => {
+                        for mut p in packets {
+                            if let Some(desc) = p.flow_desc() {
+                                let id = flow_map.get_id(desc, log_tx.as_ref(), base_ts);
+                                p.set_flow_id(id);
+                            }
+                            log_packet(&log_tx, &p, PktAction::Recv, base_ts);
+                            let _ = sender.send(p).await;
+                        }
+                    }
+                    Err(e) => error!("recv error: {}", e),
                 },
                 Err(_would_block) => continue,
             }
