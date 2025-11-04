@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "http")]
 use crate::control::http::HttpConfig;
 
+use crate::radix::PacketLogMode;
+
 mod bandwidth;
 mod delay;
 mod loss;
@@ -89,6 +91,7 @@ impl RattanResourceConfig {
 pub struct RattanGeneralConfig {
     #[cfg_attr(feature = "serde", serde(default))]
     pub packet_log: Option<PathBuf>,
+    pub packet_log_mode: Option<PacketLogMode>,
 }
 
 impl RattanGeneralConfig {

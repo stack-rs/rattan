@@ -281,7 +281,7 @@ where
                             packet = rx.dequeue() => {
                                 if let Some(p) = packet {
                                     // Check if this is the first packet from VirtualEthernet and send FirstPacket notify
-                                    if (rx_id.starts_with("left") || rx_id.starts_with("right")) && 
+                                    if (rx_id.starts_with("left") || rx_id.starts_with("right")) &&
                                        FIRST_PACKET_INSTANT.get().is_none() &&
                                        FIRST_PACKET_INSTANT.set(tokio::time::Instant::now()).is_ok() {
                                         if let Err(e) = notify_tx.exec(RattanOp::SendNotify(RattanNotify::FirstPacket)).await {

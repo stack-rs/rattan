@@ -1,8 +1,10 @@
 use std::{
     borrow::Cow,
+    fs::File,
     path::PathBuf,
     process::{ExitCode, Stdio, Termination},
     sync::{atomic::AtomicBool, Arc},
+    time::Duration,
 };
 
 use clap::{command, Args, Parser, Subcommand, ValueEnum};
@@ -18,16 +20,20 @@ use rattan_core::cells::StdPacket;
 use rattan_core::env::StdNetEnvMode;
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
+
+use crate::{build::CLAP_LONG_VERSION, combined_trace::write_combined_trace};
+use rattan_core::radix::PacketLogMode;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
+use rattan_log::{convert_log_to_pcapng, LogConverterArgs};
 use serde::{Deserialize, Serialize};
+use shadow_rs::shadow;
 use tracing::warn;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::build::CLAP_LONG_VERSION;
-use shadow_rs::shadow;
-
 mod channel;
+mod combined_trace;
+// mod log_converter;
 // mod docker;
 
 // const CONFIG_PORT_BASE: u16 = 8086;
@@ -36,6 +42,11 @@ shadow!(build);
 
 static LEFT_PID: OnceCell<i32> = OnceCell::new();
 static RIGHT_PID: OnceCell<i32> = OnceCell::new();
+
+fn parse_duration(delay: &str) -> Result<Duration, jiff::Error> {
+    let span: jiff::Span = delay.parse()?;
+    Duration::try_from(span)
+}
 
 #[derive(Debug, Parser, Clone)]
 #[command(rename_all = "kebab-case")]
@@ -55,6 +66,20 @@ pub struct Arguments {
     /// If this flag is set, the program will only generate the config to stdout and exit.
     #[arg(long, global = true)]
     generate: bool,
+
+    /// Generate combined trace until `combined_trace` since the trace starts
+    ///
+    /// If this is set, the program will only generate the csv to stdout and exit.
+    #[arg(
+        long,
+        global = true,
+        value_parser = parse_duration
+    )]
+    combined_trace: Option<Duration>,
+
+    /// Generate combined trace csv file to the specified path instead of stdout
+    #[arg(long, requires = "combined_trace", global = true, value_name = "File")]
+    combined_trace_path: Option<PathBuf>,
 
     /// Used in isolated mode only. If set, stdout of left is passed to output of this program.
     #[arg(long, global = true)]
@@ -89,6 +114,10 @@ pub struct Arguments {
     #[arg(long, value_name = "File", global = true)]
     packet_log: Option<PathBuf>,
 
+    /// If this flag is set, raw packet header would be recorded for packet_log.
+    #[arg(long, value_name = "Mode", global = true)]
+    packet_log_mode: Option<PacketLogMode>,
+
     /// Enable logging to file
     #[arg(long, global = true)]
     file_log: bool,
@@ -120,6 +149,8 @@ enum CliCommand {
     Link(channel::ChannelArgs),
     /// Run the instance according to the config.
     Run(RunArgs),
+    /// Convert Rattan packet log into .pcapng file.
+    Convert(LogConverterArgs),
 }
 
 #[derive(Args, Debug, Default, Clone)]
@@ -303,6 +334,10 @@ fn main() -> ExitCode {
                 let config = args.build_rattan_config::<StdPacket>()?;
                 (config, commands)
             }
+            CliCommand::Convert(args) => {
+                convert_log_to_pcapng(args.input, args.output)?;
+                return Ok(());
+            }
         };
 
         // Overwrite config with CLI options
@@ -316,6 +351,9 @@ fn main() -> ExitCode {
         }
         if let Some(packet_log) = opts.packet_log {
             config.general.packet_log = Some(packet_log);
+        }
+        if let Some(packet_log_mode) = opts.packet_log_mode {
+            config.general.packet_log_mode = Some(packet_log_mode)
         }
         tracing::debug!(?config);
 
@@ -335,6 +373,22 @@ fn main() -> ExitCode {
                 println!("{toml_string}");
             }
             return Ok(());
+        }
+
+        if let Some(combined_trace_length) = opts.combined_trace {
+            if let Some(output_path) = opts.combined_trace_path {
+                return write_combined_trace(
+                    File::create(output_path)?,
+                    config.cells,
+                    combined_trace_length,
+                );
+            } else {
+                return write_combined_trace(
+                    std::io::stdout(),
+                    config.cells,
+                    combined_trace_length,
+                );
+            }
         }
 
         // Check if the config can correctly spawn
