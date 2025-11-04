@@ -1,9 +1,10 @@
+use crate::cells::FlowDesc;
+use binread::BinRead;
 use bitfield::{BitRange, BitRangeMut};
+use num_enum::TryFromPrimitive;
 use plain::Plain;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-
-use crate::cells::FlowDesc;
 
 pub enum RattanLogOp {
     Entry(Vec<u8>),
@@ -97,7 +98,7 @@ impl Default for TCPLogEntry {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, BinRead)]
 #[repr(transparent)]
 pub struct LogEntryHeader(u16);
 
@@ -140,7 +141,7 @@ impl Default for LogEntryHeader {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, BinRead)]
 #[repr(C, packed(2))]
 pub struct GeneralPktEntry {
     pub header: GeneralPktHeader,
@@ -151,7 +152,7 @@ pub struct GeneralPktEntry {
 
 unsafe impl Plain for GeneralPktEntry {}
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, TryFromPrimitive)]
 #[repr(u8)]
 pub enum PktAction {
     Send = 0,
@@ -160,7 +161,7 @@ pub enum PktAction {
     Passthrough = 3,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, BinRead)]
 #[repr(transparent)]
 pub struct GeneralPktHeader(u16);
 
@@ -211,7 +212,7 @@ impl Default for GeneralPktHeader {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, BinRead)]
 #[repr(C, packed(2))]
 pub struct TCPProtocolEntry {
     pub header: ProtocolHeader,
@@ -227,7 +228,7 @@ pub struct TCPProtocolEntry {
 
 unsafe impl Plain for TCPProtocolEntry {}
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, BinRead)]
 #[repr(transparent)]
 pub struct ProtocolHeader(u16);
 
@@ -270,9 +271,88 @@ impl Default for ProtocolHeader {
     }
 }
 
+#[derive(Debug)]
+pub enum ConvertedLogEntry {
+    TCP(TCPLogEntry),
+    Unknown,
+}
+
+impl BinRead for ConvertedLogEntry {
+    type Args = ();
+    fn read_options<R: std::io::Read + std::io::Seek>(
+        reader: &mut R,
+        options: &binread::ReadOptions,
+        _args: Self::Args,
+    ) -> binread::BinResult<Self> {
+        let start_location = reader.stream_position()?;
+        let header = LogEntryHeader::read_options(reader, options, ())?;
+
+        // Since there are only ONE valid variant for Log Entries for now, make it simple.
+        // If there were an enum for the different kinds of Log Entries,
+        // pass `header.get_type()` as the third parameter of BinRead::read_options.
+
+        let general_packet = GeneralPktEntry::read_options(reader, options, ())?;
+        let protocol_entry = TCPProtocolEntry::read_options(reader, options, ())?;
+
+        let end_location = start_location + header.get_length() as u64;
+        reader.seek(std::io::SeekFrom::Start(end_location))?;
+
+        match (
+            header.get_type(),
+            general_packet.header.get_type(),
+            protocol_entry.header.get_type(),
+        ) {
+            (0, 0, 0) => Ok(ConvertedLogEntry::TCP(TCPLogEntry {
+                header,
+                general_pkt_entry: general_packet,
+                tcp_entry: protocol_entry,
+            })),
+            _ => Ok(Self::Unknown),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
+    use binread::io::Cursor;
+    use binread::BinReaderExt;
+
     use super::*;
+
+    #[test]
+    fn test_parse() {
+        let data = hex::decode("200008019e3e01004a00160000000102a5bdcf8001020304a89100400f93020a")
+            .unwrap();
+        assert_eq!(data.len(), 32);
+        let mut cursor = Cursor::new(data.as_slice());
+
+        if let ConvertedLogEntry::TCP(entry) = cursor.read_le::<ConvertedLogEntry>().unwrap() {
+            assert_eq!(entry.header.get_length(), 32);
+            assert_eq!(entry.header.get_type(), 0);
+
+            let pkt = entry.general_pkt_entry;
+            assert_eq!(pkt.header.get_length(), 8);
+            assert_eq!(pkt.header.get_pkt_action(), PktAction::Recv as u8);
+            assert_eq!(pkt.pkt_length, 74);
+            let ts = pkt.ts;
+            assert_eq!(ts, 81566);
+
+            let tcp = entry.tcp_entry;
+            assert_eq!(tcp.header.get_length(), 22);
+            assert_eq!(tcp.header.get_type(), 0);
+            let (flow_id, seq, ack) = (tcp.flow_id, tcp.seq, tcp.ack);
+            assert_eq!(flow_id, 33619968);
+            assert_eq!(seq, 2161098149);
+            assert_eq!(ack, 67305985);
+            assert_eq!(tcp.ip_id, 37288);
+            assert_eq!(tcp.ip_frag, 16384);
+            assert_eq!(tcp.checksum, 37647);
+            assert_eq!(tcp.flags, 2);
+            assert_eq!(tcp.dataofs, 10);
+        } else {
+            unreachable!()
+        }
+    }
 
     #[test]
     fn test_ser() {

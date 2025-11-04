@@ -2,58 +2,57 @@
 name = "rattan"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 homepage.workspace = true
 repository.workspace = true
-rust-version.workspace = true
+
 [workspace]
-members = ['.', 'rattan-core']
 resolver = "2"
+members = [".", "rattan-core"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.86"
 homepage = "https://github.com/stack-rs/rattan"
 repository = "https://github.com/stack-rs/rattan"
-rust-version = "1.86"
 
 [workspace.dependencies]
 ctrlc = "3.2.5"
-figment = { version = "0.10", features = ["toml", "env", "json"] }
+figment = { version = "0.10", features = ["env", "json", "toml"] }
 futures = "0.3.29"
-human-bandwidth = { version = "0.1.4", features = ["serde", "binary-system"] }
+human-bandwidth = { version = "0.1.4", features = ["binary-system", "serde"] }
 jiff = "0.2.15"
-netem-trace = { version = "0.4.3", features = ["serde", "human", "mahimahi"] }
+netem-trace = { version = "0.4.3", features = ["human", "mahimahi", "serde"] }
 nix = { version = "0.29.0", features = [
-  "time",
-  "net",
   "event",
   "ioctl",
   "mount",
+  "net",
   "sched",
   "signal",
+  "time",
 ] }
 once_cell = "1.19"
 rand = "0.9.1"
 serde = { version = "1.0.160", features = ["derive"] }
 tokio = { version = "1.26.0", features = [
-  "rt-multi-thread",
-  "time",
-  "net",
-  "sync",
-  "signal",
-  "tokio-macros",
   "macros",
+  "net",
+  "rt-multi-thread",
+  "signal",
+  "sync",
+  "time",
+  "tokio-macros",
 ] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
-[features]
-default = ["first-packet"]
-first-packet = ["rattan-core/first-packet"]
-http = ["rattan-core/http"]
-packet-dump = ["rattan-core/packet-dump"]
+[[example]]
+name = "log_converter"
 
 [dependencies]
+binread = "2.2.0"
 # anyhow = "1.0.75"
 # bollard = "0.15.0"
 clap = { version = "4.2.4", features = ["derive"] }
@@ -78,14 +77,23 @@ tracing = { workspace = true }
 tracing-appender = "0.2.3"
 tracing-subscriber = { workspace = true }
 
+[dev-dependencies]
+pcap-file = "2.0.0"
+
 [build-dependencies]
 shadow-rs = "1.3.0"
+
+[features]
+default = ["first-packet"]
+first-packet = ["rattan-core/first-packet"]
+http = ["rattan-core/http"]
+packet-dump = ["rattan-core/packet-dump"]
+
+# required for cargo flamegraph
+[profile.dev]
+opt-level = 0
+debug = true
 
 # required for cargo flamegraph
 [profile.release]
 debug = true
-
-# required for cargo flamegraph
-[profile.dev]
-debug = true
-opt-level = 0
