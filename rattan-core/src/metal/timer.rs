@@ -1,10 +1,13 @@
-use std::os::fd::{AsFd, AsRawFd};
+use std::{
+    os::fd::{AsFd, AsRawFd},
+    time::Duration,
+};
 
 use nix::sys::{
     time::TimeSpec,
     timerfd::{ClockId, Expiration, TimerFd, TimerFlags, TimerSetTimeFlags},
 };
-use tokio::io::unix::AsyncFd;
+use tokio::{io::unix::AsyncFd, time::Instant};
 
 use crate::metal::error::MetalError;
 
@@ -31,9 +34,10 @@ impl Timer {
         })
     }
 
+    #[inline(always)]
     pub async fn sleep(&mut self, duration: std::time::Duration) -> Result<(), MetalError> {
         // Set TimerFd to 0 will disable it. We need to handle this case.
-        if duration.as_nanos() == 0 {
+        if duration.is_zero() {
             return Ok(());
         }
         self.timer.get_mut().0.set(
@@ -54,5 +58,13 @@ impl Timer {
                 Err(_would_block) => continue,
             }
         }
+    }
+
+    pub async fn sleep_until(&mut self, instant: Instant) -> Result<Instant, MetalError> {
+        match instant.duration_since(Instant::now()) {
+            Duration::ZERO => tokio::task::yield_now().await,
+            sleep_time => self.sleep(sleep_time).await?,
+        }
+        Ok(instant)
     }
 }

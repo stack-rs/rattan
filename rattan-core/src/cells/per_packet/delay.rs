@@ -37,7 +37,7 @@ where
     P: Packet + Send,
 {
     fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.set_timestamp(Instant::now());
+        packet.delay_until(Instant::now());
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -280,7 +280,7 @@ impl<Config: DelayPerPacketTraceConfig + 'static> From<Config> for DelayPerPacke
 #[cfg(test)]
 mod tests {
     use netem_trace::{model::StaticDelayPerPacketConfig, Delay};
-    use std::time::{Duration, Instant};
+    use tokio::time::{Duration, Instant};
     use tracing::{info, span, Level};
 
     use crate::cells::StdPacket;

@@ -1,6 +1,6 @@
+use super::TRACE_START_INSTANT;
 use crate::cells::bandwidth::queue::PacketQueue;
 use crate::cells::{Cell, Packet};
-use crate::core::CALIBRATED_START_INSTANT;
 use crate::error::Error;
 use crate::metal::timer::Timer;
 use async_trait::async_trait;
@@ -8,7 +8,6 @@ use bandwidth::Bandwidth;
 use bytesize::ByteSize;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::cmp::{max, min};
 use std::fmt::Debug;
 use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
@@ -20,47 +19,9 @@ use super::bandwidth::queue::{DropTailQueue, DropTailQueueConfig};
 use super::bandwidth::LARGE_DURATION;
 use super::{ControlInterface, Egress, Ingress};
 
-/// transfer length in bytes into time consumed to send the packet
-fn length_to_time(length: u64, rate: Bandwidth) -> Duration {
-    debug!("{}", rate.as_bps());
-    if rate.as_bps() == 0 {
-        LARGE_DURATION
-    } else {
-        Duration::from_secs_f64((8 * length) as f64 / rate.as_bps() as f64)
-    }
-}
+mod bucket;
 
-#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-#[derive(Debug, Clone, Copy)]
-pub struct TokenBucket {
-    /// burst or minburst of tb or ptb, in bytes
-    burst: ByteSize,
-    /// rate or peakrate of tb or ptb, in bps
-    rate: Bandwidth,
-    /// number of tokens, in ns
-    tokens: Duration,
-}
-
-impl Default for TokenBucket {
-    fn default() -> Self {
-        Self {
-            burst: ByteSize::b(u64::MAX / 8),
-            rate: Bandwidth::from_bps(u64::MAX),
-            tokens: Duration::ZERO,
-        }
-    }
-}
-
-impl TokenBucket {
-    /// Create a TokenBucket with burst in bytes and rate in bps.
-    pub fn new(burst: ByteSize, rate: Bandwidth) -> Self {
-        Self {
-            burst,
-            rate,
-            tokens: Duration::ZERO,
-        }
-    }
-}
+use bucket::TokenBucket;
 
 pub struct TokenBucketCellIngress<P>
 where
@@ -84,8 +45,7 @@ impl<P> Ingress<P> for TokenBucketCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.set_timestamp(Instant::now());
+    fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -93,79 +53,53 @@ where
     }
 }
 
+fn debug_relative_time(t: Instant) -> Duration {
+    t.duration_since(*TRACE_START_INSTANT.get_or_init(Instant::now))
+}
+
 pub struct TokenBucketCellEgress<P>
 where
     P: Packet,
 {
     egress: mpsc::UnboundedReceiver<P>,
-    max_size: ByteSize,
-    token_bucket: TokenBucket,
-    peak_token_bucket: TokenBucket,
-    packet_queue: DropTailQueue<P>,
+    token_bucket: Option<TokenBucket>,
     next_available: Instant,
-    last_check: Instant,
+    peak_token_bucket: Option<TokenBucket>,
+    max_size: ByteSize,
+    packet_queue: DropTailQueue<P>,
     config_rx: mpsc::UnboundedReceiver<TokenBucketCellConfig>,
     timer: Timer,
     state: AtomicI32,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
+    logical_clock: Instant,
 }
 
 impl<P> TokenBucketCellEgress<P>
 where
-    P: Packet + Send + Sync,
+    P: Packet + Send,
 {
-    fn set_token_bucket(&mut self, new_rate: Option<Bandwidth>, new_burst: Option<ByteSize>) {
-        if let Some(rate) = new_rate {
-            self.token_bucket.rate = rate;
-        }
-        if let Some(burst) = new_burst {
-            self.token_bucket.burst = burst;
-        }
-        self.token_bucket.tokens =
-            length_to_time(self.token_bucket.burst.as_u64(), self.token_bucket.rate);
-    }
+    fn set_config(&mut self, config: TokenBucketCellConfig, timestamp: Instant) {
+        let mut new_max_size = ByteSize(u64::MAX);
+        self.token_bucket =
+            if let (Some(burst_size), Some(token_rate)) = (config.burst, config.rate) {
+                new_max_size = new_max_size.min(burst_size);
+                TokenBucket::new(burst_size, token_rate, timestamp - LARGE_DURATION).into()
+            } else {
+                None
+            };
 
-    fn set_peak_token_bucket(
-        &mut self,
-        new_peakrate: Option<Bandwidth>,
-        new_minburst: Option<ByteSize>,
-    ) {
-        if let Some(peakrate) = new_peakrate {
-            self.peak_token_bucket.rate = peakrate;
-        }
-        if let Some(minburst) = new_minburst {
-            self.peak_token_bucket.burst = minburst;
-        }
-        self.peak_token_bucket.tokens = length_to_time(
-            self.peak_token_bucket.burst.as_u64(),
-            self.peak_token_bucket.rate,
-        );
-    }
-
-    fn set_config(&mut self, config: TokenBucketCellConfig) {
-        let now = Instant::now();
-        debug!(
-            "set_config: Previous next_available distance: {:?}",
-            self.next_available - now
-        );
-        debug!("Previous check_point distance: {:?}", now - self.last_check);
-
-        self.last_check = now;
-
-        // modify self.token_bucket
-        self.set_token_bucket(config.rate, config.burst);
-        self.set_peak_token_bucket(config.peakrate, config.minburst);
-
-        debug!(
-            "toks: {}, ptoks: {}",
-            self.token_bucket.tokens.as_nanos(),
-            self.peak_token_bucket.tokens.as_nanos()
-        );
+        self.peak_token_bucket =
+            if let (Some(burst_size), Some(token_rate)) = (config.minburst, config.peakrate) {
+                new_max_size = new_max_size.min(burst_size);
+                TokenBucket::new(burst_size, token_rate, timestamp - LARGE_DURATION).into()
+            } else {
+                None
+            };
 
         // calculate max_size
         let old_max_size = self.max_size;
-        self.max_size = min(self.token_bucket.burst, self.peak_token_bucket.burst);
+        self.max_size = new_max_size;
 
         // set queue
         if let Some(limit) = config.limit {
@@ -179,18 +113,123 @@ where
 
         // drop all packets larger than max_size in the queue when max_size is shrunk
         if self.max_size < old_max_size {
-            let extra_length = self.packet_queue.get_extra_length();
+            let max_length =
+                (self.max_size.0 as usize).saturating_sub(self.packet_queue.get_extra_length());
             self.packet_queue
-                .retain(|packet| packet.l3_length() + extra_length <= self.max_size.0 as usize);
+                .retain(|packet| packet.l3_length() <= max_length);
         }
 
         // set next_available
         if !self.packet_queue.is_empty() {
             debug!("set_config: set next_available to now");
-            self.next_available = now;
+            self.next_available = timestamp;
         } else {
-            self.next_available = now + LARGE_DURATION;
+            self.next_available = timestamp + LARGE_DURATION;
         }
+    }
+
+    // Returns None only if both token_buckets is None
+    fn next_token_ready(&self, size: ByteSize) -> Option<Instant> {
+        self.token_bucket
+            .iter()
+            .chain(self.peak_token_bucket.iter())
+            .map(|token_bucket| token_bucket.next_available(size))
+            .max()
+    }
+
+    fn update_available(&mut self, current_size: Option<usize>) {
+        if let Some(current_size) = current_size {
+            let current_size = ByteSize(current_size as u64);
+            let next_token_ready = self
+                .next_token_ready(current_size)
+                .expect("All token buckets are None");
+
+            debug!(
+                "Should wait until {:?}",
+                debug_relative_time(next_token_ready)
+            );
+            self.next_available = next_token_ready;
+        } else {
+            debug!(
+                "No packet to send at {:?}",
+                debug_relative_time(self.logical_clock)
+            );
+            self.next_available += LARGE_DURATION;
+        }
+    }
+
+    fn handle_packet(&mut self, new_packet: Option<P>) -> Option<P> {
+        let front_size = self.packet_queue.get_front_size();
+        let new_packet_size = new_packet
+            .as_ref()
+            .map(|p| self.packet_queue.get_packet_size(p));
+
+        let packet = if let Some(current_bytes) = front_size.or(new_packet_size) {
+            let current_size = ByteSize(current_bytes as u64);
+            match (
+                self.token_bucket.as_mut().map(|t| t.reserve(current_size)),
+                self.peak_token_bucket
+                    .as_mut()
+                    .map(|t| t.reserve(current_size)),
+            ) {
+                (Some(None), _) | (_, Some(None)) => {
+                    // We have packets waiting to be send, yet at least one token bucket is not ready
+                    debug!(
+                        "Insufficient token at {:?}",
+                        debug_relative_time(self.logical_clock)
+                    );
+                    if let Some(new_packet) = new_packet {
+                        self.packet_queue.enqueue(new_packet);
+                    };
+                    self.update_available(Some(current_bytes));
+                    return None;
+                }
+                (Some(Some(token)), None) | (None, Some(Some(token))) => {
+                    token.consume();
+                }
+                (Some(Some(token_a)), Some(Some(token_b))) => {
+                    token_a.consume();
+                    token_b.consume();
+                }
+                (None, None) => {}
+            }
+            // Send this packet!
+            let mut current_packet = if let Some(head_packet) = self.packet_queue.dequeue() {
+                if let Some(new_packet) = new_packet {
+                    self.packet_queue.enqueue(new_packet);
+                }
+                head_packet.into()
+            } else {
+                // Send directly without enque
+                new_packet
+            }
+            .expect("There should be a packet here");
+
+            debug!(
+                "Send packet, timestamp {:?} -> {:?}",
+                debug_relative_time(current_packet.get_timestamp()),
+                debug_relative_time(self.logical_clock)
+            );
+            current_packet.delay_until(self.logical_clock);
+            current_packet.into()
+        } else {
+            None
+        };
+        let next_size = self.packet_queue.get_front_size();
+        self.update_available(next_size);
+        packet
+    }
+
+    fn update_timestamp(&mut self, timestamp: Instant) {
+        let update = |tb: &mut TokenBucket| tb.update(timestamp);
+        debug!(
+            "[{:?}] Update timestamp to {:?}",
+            debug_relative_time(Instant::now()),
+            debug_relative_time(timestamp)
+        );
+        self.logical_clock = timestamp;
+        self.token_bucket.iter_mut().for_each(update);
+        self.peak_token_bucket.iter_mut().for_each(update);
     }
 }
 
@@ -204,123 +243,47 @@ where
         crate::wait_until_started!(self, Start);
 
         // wait until next_available
-        loop {
+        let mut new_packet = None;
+        while new_packet.is_none() {
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
-                    self.set_config(config);
+                    self.set_config(config, Instant::now());
                 }
                 recv_packet = self.egress.recv() => {
-                    match recv_packet {
-                        Some(new_packet) => {
-                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                                0 => {
-                                    return None;
-                                }
-                                1 => {
-                                    return Some(new_packet);
-                                }
-                                _ => {
-                                    // check the size of packet and drop it or let it enter the queue
-                                    let packet_size = new_packet.l3_length() + self.packet_queue.get_extra_length();
-                                    if packet_size <= (self.max_size.0 as usize) {
-                                        // enqueue the packet
-                                        if self.packet_queue.is_empty() {
-                                            self.packet_queue.enqueue(new_packet);
-                                            break;
-                                        } else {
-                                            self.packet_queue.enqueue(new_packet);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        None => {
-                            // channel closed
+                    // return None if the channel is closed
+                    let recv_packet = recv_packet?;
+                    self.update_timestamp(recv_packet.get_timestamp());
+
+                    match self.state.load(std::sync::atomic::Ordering::Acquire) {
+                        0 => {
                             return None;
                         }
+                        1 => {
+                            return Some(recv_packet);
+                        }
+                        _ => {}
                     }
+
+                    // drop packet if is too large to pass through a full token bucket
+                    let packet_size = self.packet_queue.get_packet_size(&recv_packet);
+                    if packet_size > (self.max_size.0 as usize) {
+                        continue;
+                    }
+                    new_packet =  self.handle_packet(recv_packet.into());
                 }
-                _ = self.timer.sleep(self.next_available - Instant::now()) => {
-                    break;
+                Ok(logical_now) = self.timer.sleep_until(self.next_available) => {
+                    self.update_timestamp(logical_now);
+                    new_packet =  self.handle_packet(None);
                 }
             }
         }
-        let now = Instant::now();
-        if let Some(size) = self.packet_queue.get_front_size() {
-            // There will be at least one packet in the queue
-            // get number of tokens added from last_check
-            debug!(
-                "Previous next_available distance: {:?}",
-                self.next_available - now
-            );
-            let burst_duration =
-                length_to_time(self.token_bucket.burst.as_u64(), self.token_bucket.rate);
-            let minburst_duration = length_to_time(
-                self.peak_token_bucket.burst.as_u64(),
-                self.peak_token_bucket.rate,
-            );
-            self.token_bucket.tokens = min(
-                burst_duration,
-                now - self.last_check + self.token_bucket.tokens,
-            );
-            self.peak_token_bucket.tokens = min(
-                minburst_duration,
-                now - self.last_check + self.peak_token_bucket.tokens,
-            );
 
-            debug!("size: {}", size);
-            debug!("max_size: {}", self.max_size);
-            let consumed_tokens = length_to_time(size as u64, self.token_bucket.rate);
-            let consumed_ptokens = length_to_time(size as u64, self.peak_token_bucket.rate);
-
-            self.last_check = now;
-
-            // if tokens and ptokens are both enough, send the packet, and update number of tokens
-            if self.token_bucket.tokens >= consumed_tokens
-                && self.peak_token_bucket.tokens >= consumed_ptokens
-            {
-                let packet_to_send = self.packet_queue.dequeue().unwrap();
-                self.token_bucket.tokens -= consumed_tokens;
-                self.peak_token_bucket.tokens -= consumed_ptokens;
-                debug!(
-                    "in dequeue, toks: {}, ptoks: {}",
-                    self.token_bucket.tokens.as_nanos(),
-                    self.peak_token_bucket.tokens.as_nanos()
-                );
-                // set next_available
-                if let Some(next_size) = self.packet_queue.get_front_size() {
-                    debug!("next_size: {}", next_size);
-                    self.next_available = now
-                        + max(
-                            length_to_time(next_size as u64, self.token_bucket.rate)
-                                .saturating_sub(self.token_bucket.tokens),
-                            length_to_time(next_size as u64, self.peak_token_bucket.rate)
-                                .saturating_sub(self.peak_token_bucket.tokens),
-                        );
-                } else {
-                    self.next_available = now + LARGE_DURATION;
-                }
-                Some(packet_to_send)
-            } else {
-                // set next_available
-                self.next_available = now
-                    + max(
-                        consumed_tokens.saturating_sub(self.token_bucket.tokens),
-                        consumed_ptokens.saturating_sub(self.peak_token_bucket.tokens),
-                    );
-                None
-            }
-        } else {
-            self.next_available = now + LARGE_DURATION;
-            None
-        }
+        new_packet
     }
 
     fn reset(&mut self) {
-        let now = Instant::now();
-        self.next_available = *CALIBRATED_START_INSTANT.get_or_init(|| now);
-        self.last_check = *CALIBRATED_START_INSTANT.get_or_init(|| now);
+        self.next_available = *TRACE_START_INSTANT.get_or_init(Instant::now);
     }
 
     fn change_state(&self, state: i32) {
@@ -509,42 +472,31 @@ where
         debug!("New TokenBucketCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
-        let mut token_bucket = TokenBucket::new(
-            burst.into().unwrap_or(ByteSize::b(u64::MAX / 8)),
-            rate.into().unwrap_or(Bandwidth::from_bps(u64::MAX)),
-        );
-        token_bucket.tokens = length_to_time(token_bucket.burst.as_u64(), token_bucket.rate);
-
-        let mut peak_token_bucket = TokenBucket::new(
-            minburst.into().unwrap_or(ByteSize::b(u64::MAX / 8)),
-            peakrate.into().unwrap_or(Bandwidth::from_bps(u64::MAX)),
-        );
-        peak_token_bucket.tokens =
-            length_to_time(peak_token_bucket.burst.as_u64(), peak_token_bucket.rate);
-
-        let packet_queue = DropTailQueue::new(DropTailQueueConfig::new(
-            None,
-            limit,
-            crate::cells::bandwidth::BwType::NetworkLayer,
-        ));
 
         let now = Instant::now();
+        let mut egress = TokenBucketCellEgress {
+            egress: tx,
+            max_size: ByteSize::b(0),
+            token_bucket: None,
+            peak_token_bucket: None,
+            packet_queue: DropTailQueue::default(),
+            next_available: now + LARGE_DURATION,
+            config_rx,
+            timer: Timer::new()?,
+            state: AtomicI32::new(0),
+            notify_rx: None,
+            started: false,
+            logical_clock: now,
+        };
+
+        egress.set_config(
+            TokenBucketCellConfig::new(limit, rate, burst, peakrate, minburst),
+            now,
+        );
+
         Ok(TokenBucketCell {
             ingress: Arc::new(TokenBucketCellIngress { ingress: rx }),
-            egress: TokenBucketCellEgress {
-                egress: tx,
-                max_size: min(token_bucket.burst, peak_token_bucket.burst),
-                token_bucket,
-                peak_token_bucket,
-                packet_queue,
-                next_available: now + LARGE_DURATION,
-                last_check: now,
-                config_rx,
-                timer: Timer::new()?,
-                state: AtomicI32::new(0),
-                notify_rx: None,
-                started: false,
-            },
+            egress,
             control_interface: Arc::new(TokenBucketCellControlInterface { config_tx }),
         })
     }
@@ -552,25 +504,48 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use tokio::time::Instant;
     use tracing::{info, span, Level};
 
-    use crate::cells::StdPacket;
+    use crate::cells::{StdPacket, TestPacket};
 
     use super::*;
 
     // The tolerance of the accuracy of the delays, in ms
     const DELAY_ACCURACY_TOLERANCE: f64 = 1.0;
 
+    fn get_diff_ns(t1: &Instant, t2: &Instant) -> i64 {
+        (t1.duration_since(*t2).as_nanos() as i64) - (t2.duration_since(*t1).as_nanos() as i64)
+    }
+
+    fn compare_delays(expected: Vec<Duration>, measured: Vec<Duration>, logical: Vec<Duration>) {
+        assert_eq!(expected.len(), measured.len());
+        assert_eq!(expected.len(), logical.len());
+        for (idx, expected_delay) in expected.iter().enumerate() {
+            assert_eq!(expected_delay, &logical[idx]);
+            // A larger torlerance is needed in paralleled testing
+            assert!(
+                expected_delay.saturating_sub(measured[idx]).as_secs_f64()
+                    <= DELAY_ACCURACY_TOLERANCE * 2E-3
+            );
+            assert!(
+                measured[idx].saturating_sub(*expected_delay).as_secs_f64()
+                    <= DELAY_ACCURACY_TOLERANCE * 2E-3
+            );
+        }
+    }
+
     fn get_delays(
         number: usize,
         packet_size: usize,
         config: TokenBucketCellConfig,
-    ) -> Result<Vec<f64>, Error> {
+        send_interval: Duration,
+    ) -> Result<(Vec<Duration>, Vec<Duration>), Error> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
         let _guard = rt.enter();
+        let mut timer = Timer::new().unwrap();
 
         let cell = TokenBucketCell::new(
             config.limit,
@@ -584,23 +559,27 @@ mod tests {
         egress.reset();
         egress.change_state(2);
 
-        info!("Testing delay time for token bucket cell");
-        let mut delays: Vec<f64> = Vec::new();
+        let mut time_shifts: Vec<i64> = Vec::new();
+        let mut logical_delays = Vec::new();
+        let mut measured_delays = Vec::new();
+
+        let mut logical_time = Instant::now() + Duration::from_millis(10);
 
         for _ in 0..number {
             let buf: &[u8] = &vec![0; packet_size];
-            let test_packet = StdPacket::from_raw_buffer(buf);
-            let start = Instant::now();
-            ingress.enqueue(test_packet)?;
-            let mut received: Option<StdPacket> = None;
+            let test_packet = TestPacket::<StdPacket>::with_timestamp(buf, logical_time);
+
+            rt.block_on(async {
+                timer.sleep_until(logical_time).await.unwrap();
+                ingress.enqueue(test_packet).unwrap();
+            });
+            let send_time = Instant::now();
+
+            let mut received: Option<TestPacket<StdPacket>> = None;
             while received.is_none() {
                 received = rt.block_on(async { egress.dequeue().await });
             }
-
-            // Use microsecond to get precision up to 0.001ms
-            let duration = start.elapsed().as_micros() as f64 / 1000.0;
-
-            delays.push(duration);
+            let actual_receive_time = Instant::now();
 
             // Should never loss packet
             assert!(received.is_some());
@@ -609,10 +588,35 @@ mod tests {
 
             // The length should be correct
             assert!(received.length() == packet_size);
-        }
-        info!("Tested delays for token bucket cell: {:?}", delays);
 
-        Ok(delays)
+            time_shifts.push(get_diff_ns(&received.get_timestamp(), &actual_receive_time));
+            logical_time = received.get_timestamp() + send_interval;
+            logical_delays.push(received.delay());
+
+            measured_delays.push(actual_receive_time.duration_since(send_time));
+        }
+        info!(
+            "Tested time_shifts for token bucket cell: {:?}",
+            time_shifts
+        );
+        info!(
+            "Tested measured delays for token bucket cell: {:?}",
+            measured_delays
+        );
+        info!(
+            "Tested logical delays for token bucket cell: {:?}",
+            logical_delays
+        );
+
+        let avg_time_shift = time_shifts.iter().map(|x| x.abs()).sum::<i64>() as f64 * 1E-6
+            / time_shifts.len() as f64;
+        info!(
+            "Average time shift of receive times from packet timestamps: {:?}ms",
+            avg_time_shift
+        );
+        assert!(avg_time_shift <= DELAY_ACCURACY_TOLERANCE);
+
+        Ok((measured_delays, logical_delays))
     }
 
     fn get_delays_with_update(
@@ -620,11 +624,12 @@ mod tests {
         packet_size: usize,
         config: TokenBucketCellConfig,
         updated_config: TokenBucketCellConfig,
-    ) -> Result<Vec<f64>, Error> {
+    ) -> Result<(Vec<Duration>, Vec<Duration>), Error> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
         let _guard = rt.enter();
+        let mut timer = Timer::new().unwrap();
 
         let cell = TokenBucketCell::new(
             config.limit,
@@ -633,30 +638,36 @@ mod tests {
             config.peakrate,
             config.minburst,
         )?;
-        let config_changer = cell.control_interface();
+        let controller_interface = cell.control_interface.clone();
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
         egress.change_state(2);
 
-        let mut delays: Vec<f64> = Vec::new();
+        let mut time_shifts: Vec<i64> = Vec::new();
+        let mut logical_delays = Vec::new();
+        let mut measured_delays = Vec::new();
+
+        let logical_time = Instant::now() + Duration::from_millis(10);
+
+        rt.block_on(async {
+            timer.sleep_until(logical_time).await.unwrap();
+        });
 
         for _ in 0..number {
             let buf: &[u8] = &vec![0; packet_size];
-            let test_packet = StdPacket::from_raw_buffer(buf);
-            ingress.enqueue(test_packet)?;
+            let test_packet = TestPacket::<StdPacket>::with_timestamp(buf, logical_time);
+            ingress.enqueue(test_packet).unwrap();
         }
+
+        let send_time = Instant::now();
+
         for _ in 0..number {
-            let start = Instant::now();
-            let mut received: Option<StdPacket> = None;
+            let mut received: Option<TestPacket<StdPacket>> = None;
             while received.is_none() {
                 received = rt.block_on(async { egress.dequeue().await });
             }
-
-            // Use microsecond to get precision up to 0.001ms
-            let duration = start.elapsed().as_micros() as f64 / 1000.0;
-
-            delays.push(duration);
+            let actual_receive_time = Instant::now();
 
             // Should never loss packet
             assert!(received.is_some());
@@ -665,44 +676,72 @@ mod tests {
 
             // The length should be correct
             assert!(received.length() == packet_size);
+
+            time_shifts.push(get_diff_ns(&received.get_timestamp(), &actual_receive_time));
+            logical_delays.push(received.delay());
+
+            measured_delays.push(actual_receive_time.duration_since(send_time));
         }
 
-        info!("Delays before update: {:?}", delays);
+        controller_interface.config_tx.send(updated_config).unwrap();
+
+        let logical_time = Instant::now() + Duration::from_millis(10);
+
+        rt.block_on(async {
+            timer.sleep_until(logical_time).await.unwrap();
+        });
+
+        for _ in 0..number {
+            let buf: &[u8] = &vec![0; packet_size];
+            let test_packet = TestPacket::<StdPacket>::with_timestamp(buf, logical_time);
+            ingress.enqueue(test_packet).unwrap();
+        }
+
+        let send_time = Instant::now();
+
+        for _ in 0..number {
+            let mut received: Option<TestPacket<StdPacket>> = None;
+            while received.is_none() {
+                received = rt.block_on(async { egress.dequeue().await });
+            }
+            let actual_receive_time = Instant::now();
+
+            // Should never loss packet
+            assert!(received.is_some());
+
+            let received = received.unwrap();
+
+            // The length should be correct
+            assert!(received.length() == packet_size);
+
+            time_shifts.push(get_diff_ns(&received.get_timestamp(), &actual_receive_time));
+            logical_delays.push(received.delay());
+
+            measured_delays.push(actual_receive_time.duration_since(send_time));
+        }
 
         info!(
-            "Change rate to {}bps.",
-            updated_config.rate.unwrap().as_bps()
+            "Tested time_shifts for token bucket cell: {:?}",
+            time_shifts
         );
-        config_changer.set_config(updated_config)?;
+        info!(
+            "Tested measured delays for token bucket cell: {:?}",
+            measured_delays
+        );
+        info!(
+            "Tested logical delays for token bucket cell: {:?}",
+            logical_delays
+        );
 
-        for _ in 0..number {
-            let buf: &[u8] = &vec![0; packet_size];
-            let test_packet = StdPacket::from_raw_buffer(buf);
-            ingress.enqueue(test_packet)?;
-        }
-        for _ in 0..number {
-            let start = Instant::now();
-            let mut received: Option<StdPacket> = None;
-            while received.is_none() {
-                received = rt.block_on(async { egress.dequeue().await });
-            }
+        let avg_time_shift = time_shifts.iter().map(|x| x.abs()).sum::<i64>() as f64 * 1E-6
+            / time_shifts.len() as f64;
+        info!(
+            "Average time shift of receive times from packet timestamps: {:?}ms",
+            avg_time_shift
+        );
+        assert!(avg_time_shift <= DELAY_ACCURACY_TOLERANCE);
 
-            // Use microsecond to get precision up to 0.001ms
-            let duration = start.elapsed().as_micros() as f64 / 1000.0;
-
-            delays.push(duration);
-
-            // Should never loss packet
-            assert!(received.is_some());
-
-            let received = received.unwrap();
-
-            // The length should be correct
-            assert!(received.length() == packet_size);
-        }
-
-        info!("Delays after update: {:?}", &delays[number..]);
-        Ok(delays)
+        Ok((measured_delays, logical_delays))
     }
 
     #[test_log::test]
@@ -713,21 +752,32 @@ mod tests {
         let config = TokenBucketCellConfig::new(
             1024,
             Bandwidth::from_bps(4096),
-            ByteSize::b(512),
+            ByteSize::b(512), // L3 length
             None,
             None,
         );
 
-        let delays = get_delays(8, 256, config)?;
+        // L3 size should be 256 Bytes
+        let (measured_delays, logical_delays) =
+            get_delays(8, 256 + 14, config, Duration::from_millis(10))?;
 
-        assert!(delays[0] <= DELAY_ACCURACY_TOLERANCE);
-        assert!(delays[1] <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[2] - 417.875).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[3] - 472.5625).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[4] - 472.5625).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[5] - 472.5625).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[6] - 472.5625).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[7] - 472.5625).abs() <= DELAY_ACCURACY_TOLERANCE);
+        // Initially, the bucket contains tokens for 2 packets
+        // Each packet consumed token that needs 500ms to refill
+        // Each packet was sent 10ms after the last packet as logically received
+        compare_delays(
+            vec![
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::from_millis(480),
+                Duration::from_millis(490),
+                Duration::from_millis(490),
+                Duration::from_millis(490),
+                Duration::from_millis(490),
+                Duration::from_millis(490),
+            ],
+            measured_delays,
+            logical_delays,
+        );
 
         Ok(())
     }
@@ -745,13 +795,26 @@ mod tests {
             ByteSize::b(128),
         );
 
-        let delays = get_delays(5, 128, config)?;
+        // 128 Byte L3 length
+        let (measured_delays, logical_delays) =
+            get_delays(5, 128 + 14, config, Duration::from_millis(10))?;
 
-        assert!(delays[0] <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[1] - 195.3125).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[2] - 222.65625).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[3] - 222.65625).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[4] - 222.65625).abs() <= DELAY_ACCURACY_TOLERANCE);
+        // In this test, only minburst and peakrate is the bottleneck
+        //
+        // Initially, the bucket contains tokens for 8 / 1 packets
+        // Each packet consumed token that needs 31.25ms / 250ms to refill
+        // Each packet was sent 10ms after the last packet as logically received
+        compare_delays(
+            vec![
+                Duration::ZERO,
+                Duration::from_millis(240),
+                Duration::from_millis(240),
+                Duration::from_millis(240),
+                Duration::from_millis(240),
+            ],
+            measured_delays,
+            logical_delays,
+        );
 
         Ok(())
     }
@@ -769,13 +832,25 @@ mod tests {
             ByteSize::b(256),
         );
 
-        let delays = get_delays(5, 128, config)?;
+        let (measured_delays, logical_delays) =
+            get_delays(5, 128 + 14, config, Duration::from_millis(10))?;
+        // In this test, rate and minburst is the bottleneck
+        //
+        // Initially, the bucket contains tokens for 4 / 2 packets
+        // Each packet consumed token that needs 125ms / 62.5ms to refill
+        // Each packet was sent 10ms after the last packet as logically received
+        compare_delays(
+            vec![
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::from_millis(105),
+                Duration::from_millis(115),
+                Duration::from_millis(115),
+            ],
+            measured_delays,
+            logical_delays,
+        );
 
-        assert!(delays[0] <= DELAY_ACCURACY_TOLERANCE);
-        assert!(delays[1] <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[2] - 83.984375).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[3] - 111.328125).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[4] - 111.328125).abs() <= DELAY_ACCURACY_TOLERANCE);
         Ok(())
     }
 
@@ -800,17 +875,30 @@ mod tests {
             None,
         );
 
-        let delays = get_delays_with_update(4, 256, config, updated_config)?;
+        // 256 Bytes L3 length
+        let (measured_delays, logical_delays) =
+            get_delays_with_update(4, 256 + 14, config, updated_config)?;
 
-        assert!(delays[0] <= DELAY_ACCURACY_TOLERANCE);
-        assert!(delays[1] <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[2] - 417.875).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[3] - 472.5625).abs() <= DELAY_ACCURACY_TOLERANCE);
+        // In this test, rate and burst is the bottleneck
+        //
+        // Initially, the bucket contains tokens for 2 packets
+        // Each packet consumed token that needs 500ms to refill before the config change.
+        // Each packet consumed token that needs 1s to refill after the config change.
+        compare_delays(
+            vec![
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::from_millis(500),
+                Duration::from_millis(1000),
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::from_millis(1000),
+                Duration::from_millis(2000),
+            ],
+            measured_delays,
+            logical_delays,
+        );
 
-        assert!(delays[4] <= DELAY_ACCURACY_TOLERANCE);
-        assert!(delays[5] <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[6] - 835.9375).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[7] - 945.3125).abs() <= DELAY_ACCURACY_TOLERANCE);
         Ok(())
     }
 
@@ -834,18 +922,30 @@ mod tests {
             None,
             None,
         );
+        // 256 Bytes L3 length
+        let (measured_delays, logical_delays) =
+            get_delays_with_update(4, 256 + 14, config, updated_config)?;
 
-        let delays = get_delays_with_update(4, 256, config, updated_config)?;
+        // In this test, rate and burst is the bottleneck
+        //
+        // Initially, the bucket contains tokens for 1 packets
+        // Each packet consumed token that needs 1s to refill before the config change.
+        // Each packet consumed token that needs 500ms to refill after the config change.
+        compare_delays(
+            vec![
+                Duration::ZERO,
+                Duration::from_millis(1000),
+                Duration::from_millis(2000),
+                Duration::from_millis(3000),
+                Duration::ZERO,
+                Duration::from_millis(500),
+                Duration::from_millis(1000),
+                Duration::from_millis(1500),
+            ],
+            measured_delays,
+            logical_delays,
+        );
 
-        assert!(delays[0] <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[1] - 890.625).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[2] - 945.3125).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[3] - 945.3125).abs() <= DELAY_ACCURACY_TOLERANCE);
-
-        assert!(delays[4] <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[5] - 445.3125).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[6] - 472.65625).abs() <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[7] - 472.65625).abs() <= DELAY_ACCURACY_TOLERANCE);
         Ok(())
     }
 
@@ -875,17 +975,18 @@ mod tests {
 
         info!("Testing queue of token bucket cell");
         let mut delays: Vec<f64> = Vec::new();
+        let mut logical_delays = Vec::new();
 
         // Test queue
         // enqueue 5 packets of 256B
         for i in 0..5 {
-            let mut test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let mut test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
             test_packet.set_flow_id(i);
             ingress.enqueue(test_packet)?;
         }
         for _ in 0..4 {
             let start = Instant::now();
-            let mut received: Option<StdPacket> = None;
+            let mut received: Option<TestPacket<StdPacket>> = None;
             while received.is_none() {
                 received = rt.block_on(async { egress.dequeue().await });
             }
@@ -901,6 +1002,8 @@ mod tests {
             // The length should be correct
             received_packets[received.get_flow_id() as usize] = true;
             assert!(received.length() == 256);
+
+            logical_delays.push(received.delay());
         }
 
         // receive the first two packets immediately
@@ -943,25 +1046,23 @@ mod tests {
         egress.change_state(2);
 
         info!("Testing burst of token bucket cell");
-        let mut delays: Vec<f64> = Vec::new();
+        let mut delays: Vec<Duration> = Vec::new();
+        let mut logical_delays = Vec::new();
 
         // Test burst
         // enqueue 5 packets of 128B
+
+        let burst_time = Instant::now();
         for _ in 0..5 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 128]);
+            let test_packet = TestPacket::<StdPacket>::with_timestamp(&[0; 128], burst_time);
             ingress.enqueue(test_packet)?;
         }
         for _ in 0..5 {
-            let start = Instant::now();
-            let mut received: Option<StdPacket> = None;
+            let mut received: Option<TestPacket<StdPacket>> = None;
             while received.is_none() {
                 received = rt.block_on(async { egress.dequeue().await });
             }
-
-            // Use microsecond to get precision up to 0.001ms
-            let duration = start.elapsed().as_micros() as f64 / 1000.0;
-
-            delays.push(duration);
+            delays.push(burst_time.elapsed());
 
             // Should never loss packet
             assert!(received.is_some());
@@ -970,27 +1071,25 @@ mod tests {
 
             // The length should be correct
             assert!(received.length() == 128);
+
+            logical_delays.push(received.delay());
         }
 
         // wait for 1000ms
         std::thread::sleep(Duration::from_millis(1000));
-
+        let burst_time = Instant::now();
         // enqueue 5 packets of 128B
         for _ in 0..5 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 128]);
+            let test_packet = TestPacket::<StdPacket>::with_timestamp(&[0; 128], burst_time);
             ingress.enqueue(test_packet)?;
         }
         for _ in 0..5 {
-            let start = Instant::now();
-            let mut received: Option<StdPacket> = None;
+            let mut received: Option<TestPacket<StdPacket>> = None;
             while received.is_none() {
                 received = rt.block_on(async { egress.dequeue().await });
             }
 
-            // Use microsecond to get precision up to 0.001ms
-            let duration = start.elapsed().as_micros() as f64 / 1000.0;
-
-            delays.push(duration);
+            delays.push(burst_time.elapsed());
 
             // Should never loss packet
             assert!(received.is_some());
@@ -999,21 +1098,33 @@ mod tests {
 
             // The length should be correct
             assert!(received.length() == 128);
+
+            logical_delays.push(received.delay());
         }
 
-        info!("Tested delays for token bucket cell: {:?}", delays);
+        info!("Tested measured delays for token bucket cell: {:?}", delays);
+        info!(
+            "Tested logical delays for token bucket cell: {:?}",
+            logical_delays
+        );
 
-        assert!(delays[0] <= DELAY_ACCURACY_TOLERANCE);
-        assert!(delays[1] <= DELAY_ACCURACY_TOLERANCE);
-        assert!(delays[2] <= DELAY_ACCURACY_TOLERANCE);
-        assert!(delays[3] <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[4] - 113.28125).abs() <= DELAY_ACCURACY_TOLERANCE);
+        compare_delays(
+            vec![
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::from_nanos(113_281_250),
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::ZERO,
+                Duration::from_nanos(113_281_250),
+            ],
+            delays,
+            logical_delays,
+        );
 
-        assert!(delays[5] <= DELAY_ACCURACY_TOLERANCE);
-        assert!(delays[6] <= DELAY_ACCURACY_TOLERANCE);
-        assert!(delays[7] <= DELAY_ACCURACY_TOLERANCE);
-        assert!(delays[8] <= DELAY_ACCURACY_TOLERANCE);
-        assert!((delays[9] - 113.28125).abs() <= DELAY_ACCURACY_TOLERANCE);
         Ok(())
     }
 
@@ -1045,14 +1156,14 @@ mod tests {
         info!("Testing max_size of token bucket cell");
 
         // Test max_size
-        let mut test_packet = StdPacket::from_raw_buffer(&[0; 1024]);
+        let mut test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 1024]);
         test_packet.set_flow_id(0);
         ingress.enqueue(test_packet)?;
-        let mut test_packet = StdPacket::from_raw_buffer(&[0; 512]);
+        let mut test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 512]);
         test_packet.set_flow_id(1);
         ingress.enqueue(test_packet)?;
 
-        let mut received: Option<StdPacket> = None;
+        let mut received: Option<TestPacket<StdPacket>> = None;
         while received.is_none() {
             received = rt.block_on(async { egress.dequeue().await });
         }
@@ -1069,10 +1180,10 @@ mod tests {
             None,
             None,
         ))?;
-        let test_packet = StdPacket::from_raw_buffer(&[0; 1024]);
+        let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 1024]);
         ingress.enqueue(test_packet)?;
 
-        let mut received: Option<StdPacket> = None;
+        let mut received: Option<TestPacket<StdPacket>> = None;
         while received.is_none() {
             received = rt.block_on(async { egress.dequeue().await });
         }
@@ -1086,17 +1197,17 @@ mod tests {
         for i in 0..5 {
             let mut test_packet;
             if i == 4 {
-                test_packet = StdPacket::from_raw_buffer(&[0; 128]);
+                test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 128]);
                 test_packet.set_flow_id(i);
             } else {
-                test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+                test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
                 test_packet.set_flow_id(i);
             }
             ingress.enqueue(test_packet)?;
         }
 
         // call dequeue to make these 5 packets to enter the queue
-        let mut received: Option<StdPacket> = None;
+        let mut received: Option<TestPacket<StdPacket>> = None;
         while received.is_none() {
             received = rt.block_on(async { egress.dequeue().await });
         }
@@ -1117,7 +1228,7 @@ mod tests {
             None,
         ))?;
         // the 5th packet which is 128B can be received, but the left are lost
-        let mut received: Option<StdPacket> = None;
+        let mut received: Option<TestPacket<StdPacket>> = None;
         while received.is_none() {
             received = rt.block_on(async { egress.dequeue().await });
         }
@@ -1133,6 +1244,104 @@ mod tests {
         assert!(!received_packets[2]);
         assert!(!received_packets[3]);
         assert!(received_packets[4]);
+        Ok(())
+    }
+
+    #[test_log::test]
+    fn test_token_bucket_traffic_policing() -> Result<(), Error> {
+        // check dropped packet and packet sequence
+        let _span = span!(Level::INFO, "test_token_bucket_traffic_policing").entered();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let _guard = rt.enter();
+
+        info!("Creating cell with 512 B burst, 4096 bps rate and a 0 limit queue.");
+
+        let cell =
+            TokenBucketCell::new(0, Bandwidth::from_bps(4096), ByteSize::b(512), None, None)?;
+        let mut received_packets: Vec<bool> = vec![false; 6];
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
+        egress.reset();
+        egress.change_state(2);
+
+        info!("Testing queue of token bucket cell");
+        let mut delays: Vec<f64> = Vec::new();
+
+        // Test queue
+        // enqueue 3 packets of 256B
+        for i in 0..3 {
+            let mut test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
+            test_packet.set_flow_id(i);
+            ingress.enqueue(test_packet)?;
+        }
+        for _ in 0..2 {
+            let start = Instant::now();
+            let mut received: Option<_> = None;
+            while received.is_none() {
+                received = rt.block_on(async { egress.dequeue().await });
+            }
+
+            // Use microsecond to get precision up to 0.001ms
+            let duration = start.elapsed().as_micros() as f64 / 1000.0;
+
+            delays.push(duration);
+
+            assert!(received.is_some());
+            let received = received.unwrap();
+
+            // The length should be correct
+            received_packets[received.get_flow_id() as usize] = true;
+            tracing::debug!("Received flow id {}", received.get_flow_id());
+            assert!(received.length() == 256);
+        }
+
+        // wait for 1000ms
+        std::thread::sleep(Duration::from_millis(1000));
+
+        // Test queue
+        // enqueue 3 packets of 256B
+        for i in 3..6 {
+            let mut test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
+            test_packet.set_flow_id(i);
+            ingress.enqueue(test_packet)?;
+        }
+        for _ in 0..2 {
+            let start = Instant::now();
+            let mut received: Option<_> = None;
+            while received.is_none() {
+                received = rt.block_on(async { egress.dequeue().await });
+            }
+
+            // Use microsecond to get precision up to 0.001ms
+            let duration = start.elapsed().as_micros() as f64 / 1000.0;
+
+            delays.push(duration);
+
+            assert!(received.is_some());
+            let received = received.unwrap();
+
+            // The length should be correct
+            received_packets[received.get_flow_id() as usize] = true;
+            tracing::debug!("Received flow id {}", received.get_flow_id());
+            assert!(received.length() == 256);
+        }
+
+        // receive the first two packets immediately
+        assert!(delays[0] <= DELAY_ACCURACY_TOLERANCE);
+        assert!(delays[1] <= DELAY_ACCURACY_TOLERANCE);
+
+        // receive left 2 packets immediately
+        assert!(delays[2] <= DELAY_ACCURACY_TOLERANCE);
+        assert!(delays[3] <= DELAY_ACCURACY_TOLERANCE);
+
+        assert!(received_packets[0]);
+        assert!(received_packets[1]);
+        assert!(!received_packets[2]);
+        assert!(received_packets[3]);
+        assert!(received_packets[4]);
+        assert!(!received_packets[5]);
         Ok(())
     }
 }

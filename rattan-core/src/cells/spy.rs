@@ -101,8 +101,7 @@ impl<P> Ingress<P> for SpyCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.set_timestamp(tokio::time::Instant::now());
+    fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.ingress
             .send((
                 SystemTime::now()
@@ -213,7 +212,6 @@ mod test {
         io::{Seek, SeekFrom},
     };
 
-    use crate::cells::StdPacket;
     use pnet::{
         packet::{
             ethernet::{EtherType, MutableEthernetPacket},
@@ -223,6 +221,8 @@ mod test {
         },
         util::MacAddr,
     };
+
+    use crate::cells::{StdPacket, TestPacket};
 
     use super::*;
 
@@ -242,7 +242,7 @@ mod test {
 
     #[tokio::test]
     async fn test_spy_cell_ordering() {
-        let (mut spy, mut cell) = spy_cell::<StdPacket>();
+        let (mut spy, mut cell) = spy_cell::<TestPacket<StdPacket>>();
 
         let packet_creation = |id| -> Vec<u8> {
             let size = if id < MAX_PAYLOAD_LEN as u32 {
@@ -300,7 +300,9 @@ mod test {
         let sender = Arc::clone(&cell.sender());
         let server = tokio::task::spawn(async move {
             for packet in packets_clone {
-                sender.enqueue(StdPacket::from_raw_buffer(&packet)).unwrap();
+                sender
+                    .enqueue(TestPacket::<StdPacket>::from_raw_buffer(&packet))
+                    .unwrap();
             }
         });
 
@@ -310,6 +312,7 @@ mod test {
         let client = tokio::spawn(async move {
             for packet in packets_clone {
                 let new = cell.receiver().dequeue().await.unwrap();
+                assert_eq!(new.delay(), Duration::ZERO);
                 assert_eq!(new.as_slice(), packet);
             }
         });

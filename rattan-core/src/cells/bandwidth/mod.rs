@@ -74,8 +74,7 @@ impl<P> Ingress<P> for BwCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.set_timestamp(Instant::now());
+    fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -218,13 +217,14 @@ where
         }
 
         // send the packet
-        let packet = packet.unwrap();
+        let mut packet = packet.unwrap();
         let transfer_time = transfer_time(packet.l3_length(), self.bandwidth, self.bw_type);
         if packet.get_timestamp() >= self.next_available {
             // the packet arrives after next_available
             self.next_available = packet.get_timestamp() + transfer_time;
         } else {
             // the packet arrives before next_available and now >= self.next_available
+            packet.delay_until(self.next_available);
             self.next_available += transfer_time;
         }
         Some(packet)
@@ -589,13 +589,14 @@ where
         }
 
         // send the packet
-        let packet = packet.unwrap();
+        let mut packet = packet.unwrap();
         let transfer_time = transfer_time(packet.l3_length(), self.current_bandwidth, self.bw_type);
         if packet.get_timestamp() >= self.next_available {
             // the packet arrives after next_available
             self.next_available = packet.get_timestamp() + transfer_time;
         } else {
             // the packet arrives before next_available and now >= self.next_available
+            packet.delay_until(self.next_available);
             self.next_available += transfer_time;
         }
         Some(packet)

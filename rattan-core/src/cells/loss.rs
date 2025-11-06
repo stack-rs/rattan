@@ -40,8 +40,7 @@ impl<P> Ingress<P> for LossCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.set_timestamp(Instant::now());
+    fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -453,7 +452,7 @@ mod tests {
     use std::time::Duration;
     use tracing::{span, Level};
 
-    use crate::cells::StdPacket;
+    use crate::cells::{StdPacket, TestPacket};
 
     use super::*;
 
@@ -489,7 +488,7 @@ mod tests {
         let _guard = rt.enter();
         let pattern_len = pattern.len();
 
-        let mut cell: LossCell<StdPacket, StdRng> =
+        let mut cell: LossCell<TestPacket<StdPacket>, StdRng> =
             LossCell::new(pattern, StdRng::seed_from_u64(rng_seed))?;
         let mut received_packets: Vec<bool> = Vec::with_capacity(100 * pattern_len);
         let ingress = cell.sender();
@@ -498,7 +497,7 @@ mod tests {
         egress.change_state(2);
 
         for _ in 0..(100 * pattern_len) {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
             received_packets.push(received.is_some());
@@ -525,13 +524,14 @@ mod tests {
         let mut statistics = PacketStatistics::new();
 
         for _ in 0..100 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
 
             match received {
                 Some(content) => {
-                    assert!(content.length() == 256);
+                    assert_eq!(content.length(), 256);
+                    assert_eq!(content.delay(), Duration::ZERO);
                     statistics.recv_normal_packet();
                 }
                 None => statistics.recv_loss_packet(),
@@ -591,7 +591,7 @@ mod tests {
         egress.change_state(2);
 
         info!("Sending a packet to transfer to second state");
-        ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+        ingress.enqueue(TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]))?;
         let received = rt.block_on(async { egress.dequeue().await });
         assert!(received.is_none());
 
@@ -602,7 +602,7 @@ mod tests {
         // The packet should always be lost
 
         for _ in 0..100 {
-            ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+            ingress.enqueue(TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]))?;
             let received = rt.block_on(async { egress.dequeue().await });
 
             assert!(received.is_none());
@@ -629,7 +629,7 @@ mod tests {
 
         info!("Sending 2 packet to transfer to 3rd state");
         for _ in 0..2 {
-            ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+            ingress.enqueue(TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]))?;
             let received = rt.block_on(async { egress.dequeue().await });
             assert!(received.is_none());
         }
@@ -639,7 +639,7 @@ mod tests {
 
         // Now the loss rate should fall back to the last available, 1.0
         for _ in 0..100 {
-            ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+            ingress.enqueue(TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]))?;
             let received = rt.block_on(async { egress.dequeue().await });
             assert!(received.is_none());
         }
@@ -649,7 +649,7 @@ mod tests {
 
         // Now the lost packet is well over 3, thus the loss rate would still be 1
         for _ in 0..100 {
-            ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+            ingress.enqueue(TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]))?;
             let received = rt.block_on(async { egress.dequeue().await });
             assert!(received.is_none());
         }
@@ -681,7 +681,7 @@ mod tests {
             as Box<dyn LossTraceConfig>;
         let loss_trace = loss_trace_config.into_model();
 
-        let cell: LossReplayCell<StdPacket, StdRng> =
+        let cell: LossReplayCell<TestPacket<StdPacket>, StdRng> =
             LossReplayCell::new(loss_trace, StdRng::seed_from_u64(42))?;
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
@@ -689,7 +689,7 @@ mod tests {
         let start_time = tokio::time::Instant::now();
 
         for _ in 0..100 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
             // Should drop all packets
@@ -700,12 +700,14 @@ mod tests {
             tokio::time::sleep_until(start_time + Duration::from_millis(10)).await;
         });
         for _ in 0..100 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
             // Should never loss packet
             assert!(received.is_some());
-            assert!(received.unwrap().length() == 256)
+            let received = received.unwrap();
+            assert_eq!(received.length(), 256);
+            assert_eq!(received.delay(), Duration::ZERO);
         }
         egress.change_state(2);
 
@@ -716,13 +718,16 @@ mod tests {
             let mut statistics = PacketStatistics::new();
 
             for _ in 0..100 {
-                let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+                let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
 
                 statistics.total += 1;
                 match received {
-                    Some(content) => assert!(content.length() == 256),
+                    Some(content) => {
+                        assert_eq!(content.length(), 256);
+                        assert_eq!(content.delay(), Duration::ZERO)
+                    }
                     None => statistics.lost += 1,
                 }
             }

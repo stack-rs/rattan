@@ -136,8 +136,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
-    use crate::cells::StdPacket;
+    use crate::cells::{StdPacket, TestPacket};
     use rand::{rng, Rng};
     use tracing::{span, Level};
 
@@ -158,11 +160,13 @@ mod tests {
         let mut buffer = [0u8; 256];
         for _ in 0..100 {
             rng().fill(&mut buffer);
-            let test_packet = StdPacket::from_raw_buffer(&buffer);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&buffer);
             ingress.enqueue(test_packet)?;
 
             let received = rt.block_on(async { egress.dequeue().await });
-            assert_eq!(received.unwrap().as_slice(), buffer);
+            let received = received.unwrap();
+            assert_eq!(received.as_slice(), buffer);
+            assert_eq!(received.delay(), Duration::ZERO)
         }
         Ok(())
     }

@@ -2,8 +2,16 @@ use async_trait::async_trait;
 use etherparse::{Ethernet2Header, Ipv4Header};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, net::Ipv4Addr, sync::Arc};
-use tokio::time::Instant;
+use std::{
+    collections::BTreeMap,
+    fmt::Debug,
+    net::Ipv4Addr,
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc,
+    },
+};
+use tokio::time::{Duration, Instant};
 
 use crate::error::Error;
 
@@ -17,39 +25,76 @@ pub mod shadow;
 pub mod spy;
 pub mod token_bucket;
 
+/// Description of a packet
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub enum FlowDesc {
+    /// Description of a TCP packet
     TCP(Ipv4Addr, Ipv4Addr, u16, u16),
 }
 
+/// Trait characterizing a packet that can be sent through a cell
 pub trait Packet: Debug + 'static + Send {
     type PacketGenerator;
     fn empty(maximum: usize, generator: &Self::PacketGenerator) -> Self;
 
     // fn empty(maximum: usize) -> Self;
+    /// Creates a new packet from its content and the timestamp at which it arrived.
+    /// The timestamp should should be initialized with `Instant::now()`.
     fn from_raw_buffer(buf: &[u8]) -> Self;
 
-    // Raw buffer length
+    // Creates a new packet from its content and the timestamp at which it arrived.
+    // Used (and exists) in test code only.
+    #[cfg(any(test, doc))]
+    fn with_timestamp(buf: &[u8], timestamp: Instant) -> Self;
+
+    /// Returns the length of the raw buffer
     fn length(&self) -> usize;
-    // Link layer length, i.e. the length of the Ethernet frame (not including the preamble, SFD, FCS and IPG)
+    /// Returns the link layer length, i.e. the length of the Ethernet frame (not including the preamble, SFD, FCS and IPG)
     fn l2_length(&self) -> usize;
-    // Network layer length
+    /// Returns the network layer length
     fn l3_length(&self) -> usize;
+    /// Returns a reference to the raw buffer
     fn as_slice(&self) -> &[u8];
+    /// Returns a mutable reference to the raw buffer
     fn as_raw_buffer(&mut self) -> &mut [u8];
+    /// Returns the Ethernet header, if any
     fn ether_hdr(&self) -> Option<Ethernet2Header>;
+    /// Returns the IP header, if any
     fn ip_hdr(&self) -> Option<Ipv4Header>;
 
     // Timestamp
+    /// Returns the timestamp at which this packet should have reached the cell
+    ///
+    /// This is initially set by rattan and need to be updated when leaving the cell with [`delay_until`](Self::delay_until) and [`delay_by`](Self::delay_by)
     fn get_timestamp(&self) -> Instant;
-    fn set_timestamp(&mut self, timestamp: Instant);
+    /// Sets the timestamp of the packet
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use [`delay_until`](Self::delay_until) and [`delay_by`](Self::delay_by) instead"
+    )]
+    fn set_timestamp(&mut self, timestamp: Instant) {
+        self.delay_until(timestamp);
+    }
 
-    // Packet description
+    /// Sets the duration the packet should have been delayed by the cell
+    ///
+    /// Like [`delay_until`](Self::delay_until) this should be the theoretical duration spent in the cell.
+    /// This help to avoid over-delaying packets du to sleep timeshift.
+    fn delay_by(&mut self, delay: Duration);
+
+    /// Sets the timestamp at which the packet should have left the cell, if it delayed it
+    ///
+    /// Like [`delay_by`](Self::delay_by) this should be the theoretical duration spent in the cell.
+    /// This help to avoid over-delaying packets du to sleep timeshift.
+    fn delay_until(&mut self, timestamp: Instant);
+
+    /// Returns a text description of the packet
     fn desc(&self) -> String {
         String::new()
     }
 
+    /// Returns a packet description
     fn flow_desc(&self) -> Option<FlowDesc> {
         None
     }
@@ -60,6 +105,9 @@ pub trait Packet: Debug + 'static + Send {
     }
 }
 
+/// The default packet struct used by rattan
+///
+/// This packet is an ethernet frame
 #[derive(Clone, Debug)]
 pub struct StdPacket {
     buf: Vec<u8>,
@@ -82,6 +130,16 @@ impl Packet for StdPacket {
         Self {
             buf: buf.to_vec(),
             timestamp: Instant::now(),
+            flow_id: 0,
+        }
+    }
+
+    // For test code only.
+    #[cfg(any(test, doc))]
+    fn with_timestamp(buf: &[u8], timestamp: Instant) -> Self {
+        Self {
+            buf: buf.to_vec(),
+            timestamp,
             flow_id: 0,
         }
     }
@@ -124,7 +182,11 @@ impl Packet for StdPacket {
         self.timestamp
     }
 
-    fn set_timestamp(&mut self, timestamp: Instant) {
+    fn delay_by(&mut self, delay: Duration) {
+        self.timestamp += delay;
+    }
+
+    fn delay_until(&mut self, timestamp: Instant) {
         self.timestamp = timestamp;
     }
 
@@ -256,6 +318,107 @@ impl Packet for StdPacket {
     }
 }
 
+/// A wrapper around a packet structure to analyse a cell behaviour
+#[cfg(any(test, doc))]
+#[derive(Clone, Debug, derive_more::Deref, derive_more::DerefMut)]
+pub struct TestPacket<P> {
+    init_timestamp: Instant,
+    #[deref]
+    #[deref_mut]
+    packet: P,
+}
+
+#[cfg(any(test, doc))]
+impl<P: Packet> Packet for TestPacket<P> {
+    type PacketGenerator = P::PacketGenerator;
+
+    fn empty(maximum: usize, generator: &Self::PacketGenerator) -> Self {
+        let packet = P::empty(maximum, generator);
+        TestPacket {
+            init_timestamp: packet.get_timestamp(),
+            packet,
+        }
+    }
+
+    fn from_raw_buffer(buf: &[u8]) -> Self {
+        let packet = P::from_raw_buffer(buf);
+        Self {
+            init_timestamp: packet.get_timestamp(),
+            packet,
+        }
+    }
+
+    fn with_timestamp(buf: &[u8], timestamp: Instant) -> Self {
+        Self {
+            init_timestamp: timestamp,
+            packet: P::with_timestamp(buf, timestamp),
+        }
+    }
+
+    fn length(&self) -> usize {
+        self.packet.length()
+    }
+
+    fn l2_length(&self) -> usize {
+        self.packet.l2_length()
+    }
+
+    fn l3_length(&self) -> usize {
+        self.packet.l3_length()
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        self.packet.as_slice()
+    }
+
+    fn as_raw_buffer(&mut self) -> &mut [u8] {
+        self.packet.as_raw_buffer()
+    }
+
+    fn ip_hdr(&self) -> Option<Ipv4Header> {
+        self.packet.ip_hdr()
+    }
+
+    fn ether_hdr(&self) -> Option<Ethernet2Header> {
+        self.packet.ether_hdr()
+    }
+
+    fn get_timestamp(&self) -> Instant {
+        self.packet.get_timestamp()
+    }
+
+    fn delay_by(&mut self, delay: Duration) {
+        self.packet.delay_by(delay)
+    }
+
+    fn delay_until(&mut self, timestamp: Instant) {
+        self.packet.delay_until(timestamp)
+    }
+
+    fn desc(&self) -> String {
+        self.packet.desc()
+    }
+
+    fn flow_desc(&self) -> Option<FlowDesc> {
+        self.packet.flow_desc()
+    }
+
+    fn set_flow_id(&mut self, flow_id: u32) {
+        self.packet.set_flow_id(flow_id);
+    }
+
+    fn get_flow_id(&self) -> u32 {
+        self.packet.get_flow_id()
+    }
+}
+
+#[cfg(any(test, doc))]
+impl<P: Packet> TestPacket<P> {
+    pub fn delay(&self) -> Duration {
+        self.get_timestamp() - self.init_timestamp
+    }
+}
+
 pub trait Ingress<P>: Send + Sync
 where
     P: Packet,
@@ -362,3 +525,85 @@ macro_rules! wait_until_started {
 pub use crate::core::CALIBRATED_START_INSTANT as TRACE_START_INSTANT;
 #[cfg(feature = "first-packet")]
 pub use crate::core::FIRST_PACKET_INSTANT as TRACE_START_INSTANT;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum State {
+    // Drops all packets
+    Drop,
+    // Passes through all packets
+    PassThrough,
+    // Normal operation
+    Normal,
+}
+
+pub struct AtomicState(AtomicU8);
+
+impl AtomicState {
+    pub fn new(state: State) -> Self {
+        AtomicState(AtomicU8::new(state.into()))
+    }
+
+    pub fn load(&self, ordering: Ordering) -> State {
+        let state: u8 = self.0.load(ordering);
+        state.into()
+    }
+
+    pub fn store(&self, state: State, ordering: Ordering) {
+        self.0.store(state.into(), ordering);
+    }
+}
+
+impl From<u8> for State {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => State::Drop,
+            1 => State::PassThrough,
+            _ => State::Normal,
+        }
+    }
+}
+
+impl From<i32> for State {
+    fn from(value: i32) -> Self {
+        match value {
+            0 => State::Drop,
+            1 => State::PassThrough,
+            _ => State::Normal,
+        }
+    }
+}
+
+impl From<State> for u8 {
+    fn from(state: State) -> Self {
+        match state {
+            State::Drop => 0,
+            State::PassThrough => 1,
+            State::Normal => 2,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Configs<C> {
+    pub configs: BTreeMap<Instant, C>,
+}
+
+impl<C> Configs<C> {
+    pub fn new() -> Self {
+        Self {
+            configs: BTreeMap::new(),
+        }
+    }
+    fn insert(&mut self, time: Instant, data: Option<C>) {
+        if let Some(data) = data {
+            self.configs.insert(time, data);
+        }
+    }
+}
+
+impl<C, const N: usize> From<[(Instant, C); N]> for Configs<C> {
+    fn from(configs: [(Instant, C); N]) -> Self {
+        Self {
+            configs: BTreeMap::from(configs),
+        }
+    }
+}

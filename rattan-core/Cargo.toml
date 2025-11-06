@@ -2,11 +2,23 @@
 name = "rattan-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 homepage.workspace = true
 repository.workspace = true
-rust-version.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[example]]
+name = "channel-xdp"
+required-features = ["camellia"]
+
+[[bench]]
+harness = false
+name = "bandwidth"
+
+[[bench]]
+name = "cells"
+harness = false
 
 [dependencies]
 async-trait = "0.1.68"
@@ -16,6 +28,7 @@ bandwidth = "0.3.0"
 bitfield = "0.19.0"
 bytesize = "2.0.1"
 camellia = { git = "https://github.com/minhuw/camellia.git", optional = true }
+derive_more = { version = "2.0", features = ["deref", "deref_mut"] }
 dyn-clone = "1.0"
 etherparse = "0.18.0"
 figment = { workspace = true }
@@ -38,11 +51,11 @@ rtnetlink = "0.17.0"
 serde = { workspace = true, optional = true }
 serde_json = { version = "1.0.96", optional = true }
 serde_with = "3"
+tempfile = "3.10.1"
 thiserror = "2.0.0"
 tokio = { workspace = true }
 tokio-util = "0.7.7"
 tracing = { workspace = true }
-tempfile = "3.10.1"
 uuid = { version = "1.10.0", features = ["v4"] }
 
 [dev-dependencies]
@@ -56,30 +69,24 @@ netns-rs = "0.1.0"
 pnet = "0.35"
 regex = "1.7.3"
 reqwest = { version = "0.12.9", default-features = false, features = [
-  "json",
   "blocking",
+  "json",
 ] }
 test-log = { version = "0.2.12", default-features = false, features = [
   "trace",
 ] }
 tracing-subscriber = { workspace = true }
 
-[[bench]]
-name = "bandwidth"
-harness = false
-
-[[bench]]
-name = "cells"
-harness = false
-
 [features]
 default = []
-first-packet = []
-http = ["serde", "dep:axum"]
-packet-dump = []
-serde = ["dep:serde", "dep:serde_json", "bandwidth/serde", "bytesize/serde", "rand_distr/serde"]
 camellia = ["dep:camellia"]
-
-[[example]]
-name = "channel-xdp"
-required-features = ["camellia"]
+first-packet = []
+http = ["dep:axum", "serde"]
+packet-dump = []
+serde = [
+  "bandwidth/serde",
+  "bytesize/serde",
+  "dep:serde",
+  "dep:serde_json",
+  "rand_distr/serde",
+]
