@@ -1,4 +1,4 @@
-use std::sync::{atomic::AtomicI32, Arc};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use netem_trace::{model::DelayPerPacketTraceConfig, DelayPerPacketTrace};
@@ -8,6 +8,7 @@ use tokio::{sync::mpsc, time::Instant};
 use tracing::debug;
 
 use crate::cells::per_packet::DelayedQueue;
+use crate::cells::{AtomicCellState, CellState};
 use crate::{
     cells::{Cell, ControlInterface, Egress, Ingress, Packet},
     error::Error,
@@ -54,7 +55,7 @@ where
     packet_queue: DelayedQueue<P>,
     config_rx: mpsc::UnboundedReceiver<DelayPerPacketCellConfig>,
     timer: Timer,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
 }
@@ -87,18 +88,9 @@ where
                 recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                                0 => {
-                                    return None;
-                                }
-                                1 => {
-                                    return Some(new_packet);
-                                }
-                                _ => {
-                                    let Some(delay) = self.delay.next_delay() else { continue };
-                                    self.packet_queue.enqueue(new_packet, delay);
-                                }
-                            }
+                            let new_packet = crate::check_cell_state!(self.state, new_packet);
+                            let Some(delay) = self.delay.next_delay() else { continue };
+                            self.packet_queue.enqueue(new_packet, delay);
                         }
                         None => {
                             // channel closed
@@ -123,19 +115,11 @@ where
                 recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                                0 => {
-                                    return None;
-                                }
-                                1 => {
-                                    return Some(new_packet);
-                                }
-                                _ => {
-                                    let Some(delay) = self.delay.next_delay() else { continue };
-                                    self.packet_queue.enqueue(new_packet, delay);
-                                    packet = self.packet_queue.dequeue();
-                                }
-                            }
+                            let new_packet = crate::check_cell_state!(self.state, new_packet);
+                            let Some(delay) = self.delay.next_delay() else { continue };
+                            self.packet_queue.enqueue(new_packet, delay);
+                            packet = self.packet_queue.dequeue();
+
                         }
                         None => {
                             // channel closed
@@ -157,7 +141,7 @@ where
         }
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -252,7 +236,7 @@ where
                 packet_queue: DelayedQueue::new(),
                 config_rx,
                 timer: Timer::new()?,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
             },
@@ -311,7 +295,7 @@ mod tests {
             let ingress = cell.sender();
             let mut egress = cell.into_receiver();
             egress.reset();
-            egress.change_state(2);
+            egress.change_state(CellState::PassThrough);
 
             info!("Testing delay time for {}ms delay cell", testing_delay);
             let mut delays: Vec<f64> = Vec::new();
@@ -374,7 +358,7 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         //Test whether the packet will wait longer if the config is updated
         let test_packet = StdPacket::from_raw_buffer(&[0; 256]);

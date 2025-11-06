@@ -201,7 +201,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::cells::{shadow::ShadowCell, StdPacket, TestPacket};
+    use crate::cells::{shadow::ShadowCell, CellState, StdPacket, TestPacket};
     use etherparse::{PacketBuilder, SlicedPacket, TransportSlice};
     use ipnet::IpNet;
     use rand::{rng, Rng};
@@ -266,9 +266,9 @@ mod tests {
 
         let mut egresses = [shadow0.into_receiver(), shadow1.into_receiver()];
         egresses[0].reset();
-        egresses[0].change_state(2);
+        egresses[0].change_state(CellState::Normal);
         egresses[1].reset();
-        egresses[1].change_state(2);
+        egresses[1].change_state(CellState::Normal);
 
         let cell: RouterCell<TestPacket<StdPacket>, SimpleRoutingTable> = RouterCell::new(
             ingresses,
@@ -312,9 +312,9 @@ mod tests {
             vec![shadow0.sender().clone(), shadow1.sender().clone()];
         let mut egresses = [shadow0.into_receiver(), shadow1.into_receiver()];
         egresses[0].reset();
-        egresses[0].change_state(2);
+        egresses[0].change_state(CellState::Normal);
         egresses[1].reset();
-        egresses[1].change_state(2);
+        egresses[1].change_state(CellState::Normal);
 
         let cell: RouterCell<TestPacket<StdPacket>, SimpleRoutingTable> =
             RouterCell::new(ingresses, vec![RoutingEntry::new(ips[0], Some(0))])?;

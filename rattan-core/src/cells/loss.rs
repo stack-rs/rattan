@@ -1,5 +1,5 @@
 use super::TRACE_START_INSTANT;
-use crate::cells::{Cell, Packet};
+use crate::cells::{AtomicCellState, Cell, CellState, Packet};
 use crate::error::Error;
 use crate::metal::timer::Timer;
 use crate::utils::sync::AtomicRawCell;
@@ -10,7 +10,6 @@ use rand::Rng;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
@@ -59,7 +58,7 @@ where
     /// How many packets have been lost consecutively
     prev_loss: usize,
     rng: R,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
 }
@@ -78,15 +77,7 @@ where
             Some(packet) => packet,
             None => return None,
         };
-        match self.state.load(std::sync::atomic::Ordering::Acquire) {
-            0 => {
-                return None;
-            }
-            1 => {
-                return Some(packet);
-            }
-            _ => {}
-        }
+        let packet = crate::check_cell_state!(self.state, packet);
         if let Some(pattern) = self.pattern.swap_null() {
             self.inner_pattern = pattern;
             debug!(?self.inner_pattern, "Set inner pattern:");
@@ -105,7 +96,7 @@ where
         }
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -201,7 +192,7 @@ where
                 inner_pattern: Box::default(),
                 prev_loss: 0,
                 rng,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
             },
@@ -226,7 +217,7 @@ where
     /// How many packets have been lost consecutively
     prev_loss: usize,
     rng: R,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
 }
@@ -257,8 +248,8 @@ where
         if self.next_change(now).is_none() {
             tracing::warn!("Setting null trace");
             self.next_change = now;
-            // set state to 0 to indicate the trace goes to end and the cell will drop all packets
-            self.change_state(0);
+            // set state to Drop to indicate the trace goes to end and the cell will drop all packets
+            self.change_state(CellState::Drop);
         }
     }
 
@@ -304,15 +295,7 @@ where
                 packet = self.egress.recv() => if let Some(packet) = packet { break packet }
             }
         };
-        match self.state.load(std::sync::atomic::Ordering::Acquire) {
-            0 => {
-                return None;
-            }
-            1 => {
-                return Some(packet);
-            }
-            _ => {}
-        }
+        let packet = crate::check_cell_state!(self.state, packet);
         let loss_rate = match self.current_loss_pattern.get(self.prev_loss) {
             Some(&loss_rate) => loss_rate,
             None => *self.current_loss_pattern.last().unwrap_or(&0.0),
@@ -332,7 +315,7 @@ where
         self.next_change = *TRACE_START_INSTANT.get_or_init(Instant::now);
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -434,7 +417,7 @@ where
                 change_timer: Timer::new()?,
                 prev_loss: 0,
                 rng,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
             },
@@ -494,7 +477,7 @@ mod tests {
         let ingress = cell.sender();
         let egress = cell.receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         for _ in 0..(100 * pattern_len) {
             let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
@@ -518,7 +501,7 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         info!("Testing loss for loss cell of loss [0.1]");
         let mut statistics = PacketStatistics::new();
@@ -588,7 +571,7 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         info!("Sending a packet to transfer to second state");
         ingress.enqueue(TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]))?;
@@ -625,7 +608,7 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         info!("Sending 2 packet to transfer to 3rd state");
         for _ in 0..2 {
@@ -695,7 +678,7 @@ mod tests {
             // Should drop all packets
             assert!(received.is_none());
         }
-        egress.change_state(1);
+        egress.change_state(CellState::PassThrough);
         rt.block_on(async {
             tokio::time::sleep_until(start_time + Duration::from_millis(10)).await;
         });
@@ -709,7 +692,7 @@ mod tests {
             assert_eq!(received.length(), 256);
             assert_eq!(received.delay(), Duration::ZERO);
         }
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         for (interval, calibrated_loss_rate) in [(1100, 0.5), (2100, 0.0)] {
             rt.block_on(async {

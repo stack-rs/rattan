@@ -10,7 +10,9 @@ use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, error, info};
 
 use crate::cells::bandwidth::LARGE_DURATION;
-use crate::cells::{AtomicState, Cell, Configs, ControlInterface, Egress, Ingress, Packet, State};
+use crate::cells::{
+    AtomicCellState, Cell, CellState, Configs, ControlInterface, Egress, Ingress, Packet,
+};
 use crate::core::CALIBRATED_START_INSTANT;
 use crate::error::Error;
 use crate::metal::timer::Timer;
@@ -53,7 +55,7 @@ where
     delays: Configs<Delay>,
     config_rx: mpsc::UnboundedReceiver<DelayCellConfig>,
     timer: Timer,
-    state: AtomicState,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
     latest_egress_timestamp: Instant,
@@ -131,20 +133,12 @@ where
         // Wait for Start notify if not started yet
         crate::wait_until_started!(self, Start);
 
-        let mut packet = match self.egress.recv().await {
+        let packet = match self.egress.recv().await {
             Some(packet) => packet,
             None => return None,
         };
 
-        match self.state.load(std::sync::atomic::Ordering::Acquire) {
-            State::Drop => {
-                return None;
-            }
-            State::PassThrough => {
-                return Some(packet);
-            }
-            State::Normal => {}
-        }
+        let mut packet = crate::check_cell_state!(self.state, packet);
 
         // Logical timestamps are considered non-decreasing.
         let timestamp = packet.get_timestamp();
@@ -169,9 +163,9 @@ where
         Some(packet)
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
-            .store(state.into(), std::sync::atomic::Ordering::Release);
+            .store(state, std::sync::atomic::Ordering::Release);
     }
 
     fn set_notify_receiver(
@@ -260,7 +254,7 @@ where
                 delays: Configs::from([(Instant::now(), delay)]),
                 config_rx,
                 timer: Timer::new()?,
-                state: AtomicState::new(State::Drop),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
                 latest_egress_timestamp: *CALIBRATED_START_INSTANT.get_or_init(Instant::now),
@@ -285,7 +279,7 @@ where
     config_rx: mpsc::UnboundedReceiver<DelayReplayCellConfig>,
     send_timer: Timer,
     change_timer: Timer,
-    state: AtomicState,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
     latest_egress_timestamp: Instant,
@@ -330,7 +324,7 @@ where
         #[cfg(not(feature = "first-packet"))]
         crate::wait_until_started!(self, Start);
 
-        let mut packet = loop {
+        let packet = loop {
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
@@ -351,15 +345,7 @@ where
             }
         };
 
-        match self.state.load(std::sync::atomic::Ordering::Acquire) {
-            State::Drop => {
-                return None;
-            }
-            State::PassThrough => {
-                return Some(packet);
-            }
-            State::Normal => {}
-        }
+        let mut packet = crate::check_cell_state!(self.state, packet);
 
         let timestamp = packet.get_timestamp();
 
@@ -403,9 +389,9 @@ where
         self.latest_egress_timestamp = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
-            .store(state.into(), std::sync::atomic::Ordering::Release);
+            .store(state, std::sync::atomic::Ordering::Release);
     }
 
     fn set_notify_receiver(
@@ -502,7 +488,7 @@ where
                 config_rx,
                 send_timer: Timer::new()?,
                 change_timer: Timer::new()?,
-                state: AtomicState::new(State::Drop),
+                state: AtomicCellState::new(CellState::Drop),
                 latest_egress_timestamp: Instant::now() - Duration::from_secs(10),
                 notify_rx: None,
                 started: false,
@@ -544,7 +530,7 @@ mod tests {
             let ingress = cell.sender();
             let mut egress = cell.into_receiver();
             egress.reset();
-            egress.change_state(2);
+            egress.change_state(CellState::Normal);
 
             info!("Testing delay time for {}ms delay cell", testing_delay);
             let mut delays: Vec<f64> = Vec::new();
@@ -605,7 +591,7 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         //Test whether the packet will wait longer if the config is updated
         let start = Instant::now();
@@ -695,7 +681,7 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
         let start_time = tokio::time::Instant::now();
         let mut delays: Vec<f64> = Vec::new();
         let mut real_delays: Vec<Duration> = Vec::new();
@@ -791,7 +777,7 @@ mod tests {
             // Should drop all packets
             assert!(received.is_none());
         }
-        egress.change_state(1);
+        egress.change_state(CellState::PassThrough);
         let mut delays: Vec<f64> = Vec::new();
         let mut real_delays: Vec<_> = Vec::new();
         rt.block_on(async {
@@ -818,7 +804,7 @@ mod tests {
 
             real_delays.push(received.delay());
         }
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
         for interval in [2100, 3100] {
             rt.block_on(async {
                 tokio::time::sleep_until(start_time + Duration::from_millis(interval)).await;

@@ -1,13 +1,10 @@
 use super::{ControlInterface, Egress, Ingress};
-use crate::cells::{Cell, Packet};
+use crate::cells::{AtomicCellState, Cell, CellState, Packet};
 use crate::error::Error;
 use async_trait::async_trait;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::Debug,
-    sync::{atomic::AtomicI32, Arc},
-};
+use std::{fmt::Debug, sync::Arc};
 use tokio::sync::mpsc;
 
 #[derive(Clone)]
@@ -32,7 +29,7 @@ where
 
 pub struct ShadowCellEgress<P: Packet> {
     egress: mpsc::UnboundedReceiver<P>,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
 }
@@ -47,12 +44,12 @@ where
         crate::wait_until_started!(self, Start);
 
         match self.state.load(std::sync::atomic::Ordering::Acquire) {
-            0 => None,
+            CellState::Drop => None,
             _ => self.egress.recv().await,
         }
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -125,7 +122,7 @@ where
             ingress: Arc::new(ShadowCellIngress { ingress: rx }),
             egress: ShadowCellEgress {
                 egress: tx,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
             },
@@ -155,7 +152,7 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         let mut buffer = [0u8; 256];
         for _ in 0..100 {

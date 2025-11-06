@@ -1,6 +1,6 @@
 use super::TRACE_START_INSTANT;
 use crate::cells::bandwidth::queue::PacketQueue;
-use crate::cells::{Cell, Packet};
+use crate::cells::{AtomicCellState, Cell, CellState, Packet};
 use crate::error::Error;
 use crate::metal::timer::Timer;
 use async_trait::async_trait;
@@ -9,7 +9,6 @@ use bytesize::ByteSize;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
@@ -69,7 +68,7 @@ where
     packet_queue: DropTailQueue<P>,
     config_rx: mpsc::UnboundedReceiver<TokenBucketCellConfig>,
     timer: Timer,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
     logical_clock: Instant,
@@ -255,15 +254,7 @@ where
                     let recv_packet = recv_packet?;
                     self.update_timestamp(recv_packet.get_timestamp());
 
-                    match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                        0 => {
-                            return None;
-                        }
-                        1 => {
-                            return Some(recv_packet);
-                        }
-                        _ => {}
-                    }
+                    let recv_packet = crate::check_cell_state!(self.state, recv_packet);
 
                     // drop packet if is too large to pass through a full token bucket
                     let packet_size = self.packet_queue.get_packet_size(&recv_packet);
@@ -286,7 +277,7 @@ where
         self.next_available = *TRACE_START_INSTANT.get_or_init(Instant::now);
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -483,7 +474,7 @@ where
             next_available: now + LARGE_DURATION,
             config_rx,
             timer: Timer::new()?,
-            state: AtomicI32::new(0),
+            state: AtomicCellState::new(CellState::Drop),
             notify_rx: None,
             started: false,
             logical_clock: now,
@@ -557,7 +548,7 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         let mut time_shifts: Vec<i64> = Vec::new();
         let mut logical_delays = Vec::new();
@@ -642,7 +633,7 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         let mut time_shifts: Vec<i64> = Vec::new();
         let mut logical_delays = Vec::new();
@@ -971,7 +962,7 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         info!("Testing queue of token bucket cell");
         let mut delays: Vec<f64> = Vec::new();
@@ -1043,7 +1034,7 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         info!("Testing burst of token bucket cell");
         let mut delays: Vec<Duration> = Vec::new();
@@ -1151,7 +1142,7 @@ mod tests {
         let config_changer = cell.control_interface();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         info!("Testing max_size of token bucket cell");
 
@@ -1264,7 +1255,7 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         info!("Testing queue of token bucket cell");
         let mut delays: Vec<f64> = Vec::new();

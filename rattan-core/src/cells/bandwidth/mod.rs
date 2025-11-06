@@ -1,6 +1,6 @@
 use super::TRACE_START_INSTANT;
 use crate::cells::bandwidth::queue::PacketQueue;
-use crate::cells::{Cell, Packet};
+use crate::cells::{AtomicCellState, Cell, CellState, Packet};
 use crate::error::Error;
 use crate::metal::timer::Timer;
 use async_trait::async_trait;
@@ -8,7 +8,6 @@ use netem_trace::{model::BwTraceConfig, Bandwidth, BwTrace, Delay};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
@@ -94,7 +93,7 @@ where
     next_available: Instant,
     config_rx: mpsc::UnboundedReceiver<BwCellConfig<P, Q>>,
     timer: Timer,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
 }
@@ -159,17 +158,8 @@ where
                 recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                                0 => {
-                                    return None;
-                                }
-                                1 => {
-                                    return Some(new_packet);
-                                }
-                                _ => {
-                                    self.packet_queue.enqueue(new_packet);
-                                }
-                            }
+                            let new_packet = crate::check_cell_state!(self.state, new_packet);
+                            self.packet_queue.enqueue(new_packet);
                         }
                         None => {
                             // channel closed
@@ -194,18 +184,9 @@ where
                 recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                                0 => {
-                                    return None;
-                                }
-                                1 => {
-                                    return Some(new_packet);
-                                }
-                                _ => {
-                                    self.packet_queue.enqueue(new_packet);
-                                    packet = self.packet_queue.dequeue();
-                                }
-                            }
+                            let new_packet = crate::check_cell_state!(self.state, new_packet);
+                            self.packet_queue.enqueue(new_packet);
+                            packet = self.packet_queue.dequeue();
                         }
                         None => {
                             // channel closed
@@ -230,7 +211,7 @@ where
         Some(packet)
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -391,7 +372,7 @@ where
                 next_available: Instant::now(),
                 config_rx,
                 timer: Timer::new()?,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
             },
@@ -417,7 +398,7 @@ where
     config_rx: mpsc::UnboundedReceiver<BwReplayCellConfig<P, Q>>,
     send_timer: Timer,
     change_timer: Timer,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
 }
@@ -466,7 +447,7 @@ where
                 tracing::warn!("Setting null trace");
                 self.next_change = now;
                 // set state to 0 to indicate the trace goes to end and the cell will drop all packets
-                self.change_state(0);
+                self.change_state(CellState::Drop);
             }
         }
         if let Some(queue_config) = config.queue_config {
@@ -524,17 +505,8 @@ where
                recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                                0 => {
-                                    return None;
-                                }
-                                1 => {
-                                    return Some(new_packet);
-                                }
-                                _ => {
-                                    self.packet_queue.enqueue(new_packet);
-                                }
-                            }
+                            let new_packet = crate::check_cell_state!(self.state, new_packet);
+                            self.packet_queue.enqueue(new_packet);
                         }
                         None => {
                             // channel closed
@@ -566,18 +538,9 @@ where
                 recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                                0 => {
-                                    return None;
-                                }
-                                1 => {
-                                    return Some(new_packet);
-                                }
-                                _ => {
-                                    self.packet_queue.enqueue(new_packet);
-                                    packet = self.packet_queue.dequeue();
-                                }
-                            }
+                            let new_packet = crate::check_cell_state!(self.state, new_packet);
+                            self.packet_queue.enqueue(new_packet);
+                            packet = self.packet_queue.dequeue();
                         }
                         None => {
                             // channel closed
@@ -608,7 +571,7 @@ where
         self.next_change = *TRACE_START_INSTANT.get_or_init(Instant::now);
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -777,7 +740,7 @@ where
                 config_rx,
                 send_timer: Timer::new()?,
                 change_timer: Timer::new()?,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
             },

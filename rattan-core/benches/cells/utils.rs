@@ -1,5 +1,5 @@
 use rattan_core::{
-    cells::{Cell, Egress, Packet},
+    cells::{Cell, CellState, Egress, Packet},
     core::CellFactory,
     error::Error,
 };
@@ -12,7 +12,7 @@ pub fn create_cell<C: Cell<P>, P: Packet, Config: CellFactory<C>>(
     handle: &Handle,
 ) -> Result<C, Error> {
     let mut cell = config(handle)?;
-    cell.receiver().change_state(2);
+    cell.receiver().change_state(CellState::Normal);
     Ok(cell)
 }
 

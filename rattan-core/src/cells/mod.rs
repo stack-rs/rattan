@@ -438,7 +438,7 @@ where
     fn reset(&mut self) {}
 
     /// 0 means drop, 1 means pass-through, 2 means normal operation
-    fn change_state(&self, _state: i32) {}
+    fn change_state(&self, _state: CellState) {}
 
     /// Set the notify receiver for the cell to handle Start signals internally
     fn set_notify_receiver(
@@ -499,7 +499,7 @@ macro_rules! wait_until_started {
                 match notify_rx.recv().await {
                     Ok($crate::control::RattanNotify::$variant) => {
                         $self.reset();
-                        $self.change_state(2);
+                        $self.change_state($crate::cells::CellState::Normal);
                         $self.started = true;
                     }
                     Ok(_) => {
@@ -525,61 +525,56 @@ macro_rules! wait_until_started {
 pub use crate::core::CALIBRATED_START_INSTANT as TRACE_START_INSTANT;
 #[cfg(feature = "first-packet")]
 pub use crate::core::FIRST_PACKET_INSTANT as TRACE_START_INSTANT;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum State {
+#[repr(u8)]
+pub enum CellState {
     // Drops all packets
-    Drop,
+    Drop = 0,
     // Passes through all packets
-    PassThrough,
+    PassThrough = 1,
     // Normal operation
-    Normal,
+    Normal = 2,
 }
 
-pub struct AtomicState(AtomicU8);
+#[repr(transparent)]
+pub struct AtomicCellState(AtomicU8);
 
-impl AtomicState {
-    pub fn new(state: State) -> Self {
-        AtomicState(AtomicU8::new(state.into()))
+impl AtomicCellState {
+    pub const fn new(state: CellState) -> Self {
+        Self(AtomicU8::new(state as u8))
     }
 
-    pub fn load(&self, ordering: Ordering) -> State {
-        let state: u8 = self.0.load(ordering);
-        state.into()
-    }
-
-    pub fn store(&self, state: State, ordering: Ordering) {
-        self.0.store(state.into(), ordering);
-    }
-}
-
-impl From<u8> for State {
-    fn from(value: u8) -> Self {
-        match value {
-            0 => State::Drop,
-            1 => State::PassThrough,
-            _ => State::Normal,
+    #[inline]
+    pub fn load(&self, order: Ordering) -> CellState {
+        match self.0.load(order) {
+            0 => CellState::Drop,
+            1 => CellState::PassThrough,
+            2 => CellState::Normal,
+            _ => unreachable!("invalid CellState value"),
         }
     }
-}
 
-impl From<i32> for State {
-    fn from(value: i32) -> Self {
-        match value {
-            0 => State::Drop,
-            1 => State::PassThrough,
-            _ => State::Normal,
-        }
+    #[inline]
+    pub fn store(&self, state: CellState, order: Ordering) {
+        self.0.store(state as u8, order);
     }
 }
 
-impl From<State> for u8 {
-    fn from(state: State) -> Self {
-        match state {
-            State::Drop => 0,
-            State::PassThrough => 1,
-            State::Normal => 2,
+// Check cell state, and:
+// Automately handle Drop and Passthrough.
+// Packet is returned, on normal conditions.
+//
+// This is the behaviour for most (excpet ShadowCell) cells.
+#[macro_export]
+macro_rules! check_cell_state {
+    ($state:expr, $packet:expr) => {
+        match $state.load(std::sync::atomic::Ordering::Acquire) {
+            $crate::cells::CellState::Drop => return None,
+            $crate::cells::CellState::PassThrough => return Some($packet),
+            $crate::cells::CellState::Normal => $packet,
         }
-    }
+    };
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
