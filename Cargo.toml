@@ -59,6 +59,7 @@ figment = { workspace = true }
 futures = { workspace = true }
 human-bandwidth = { workspace = true }
 jiff = { workspace = true }
+memmap2 = "0.9.9"
 netem-trace = { workspace = true }
 nix = { workspace = true }
 once_cell = { workspace = true }

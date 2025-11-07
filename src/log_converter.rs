@@ -9,7 +9,7 @@ use rattan_core::radix::log::*;
 use clap::Args;
 use serde::Deserialize;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Result, Write};
+use std::io::{BufRead, BufReader, Cursor, Result, Write};
 use std::net::IpAddr;
 
 use pcap_file::{
@@ -23,6 +23,13 @@ use pcap_file::{
     },
     DataLink,
 };
+
+use memmap2::{Mmap, MmapOptions};
+
+pub fn mmap_load_file<P: AsRef<Path>>(path: P) -> Result<Mmap> {
+    let file = File::open(path)?;
+    unsafe { MmapOptions::new().map(&file) }
+}
 
 #[derive(Debug, Deserialize)]
 struct FlowDesc {
@@ -244,7 +251,12 @@ pub fn convert_log_to_pcapng(input: impl AsRef<Path>, output: impl AsRef<Path>) 
         flows_map.insert(line.flow_id, line);
     }
 
-    let mut logs = File::open(input_log_file)?;
+    let logs_mmap = mmap_load_file(input_log_file)?;
+
+    let logs_mmap_buffer = &logs_mmap[..];
+
+    // let mut logs = File::open(input_log_file)?;
+    let mut logs = Cursor::new(&logs_mmap_buffer);
 
     while let Ok(entry) = logs.read_le::<ConvertedLogEntry>() {
         if let ConvertedLogEntry::TCP(tcp_entry) = entry {
