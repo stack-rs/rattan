@@ -10,7 +10,7 @@ pub fn relative_time(time: Instant) -> Duration {
 /// Store the current active config and next config.
 #[derive(Debug, Default)]
 pub struct IncomingConfigs<C: Clone> {
-    fallback: Option<C>,
+    last: Option<C>,
     current: Option<(Instant, Instant, C)>,
     next: Option<C>,
 }
@@ -20,7 +20,7 @@ impl<C: Clone + Debug> IncomingConfigs<C> {
         dbg!("reset");
         self.current = None;
         self.next = None;
-        self.fallback = None;
+        self.last = None;
     }
 
     /// The value should be current_value during the period [valid_since, valid_duration)
@@ -32,7 +32,7 @@ impl<C: Clone + Debug> IncomingConfigs<C> {
         valid_since: Instant,
         valid_duration: Duration,
     ) {
-        self.fallback = self.current.take().map(|(_, _, value)| value);
+        self.last = self.current.take().map(|(_, _, value)| value);
         self.current = (valid_since, valid_since + valid_duration, current_value).into();
         self.next = next_value;
     }
@@ -43,10 +43,10 @@ impl<C: Clone + Debug> IncomingConfigs<C> {
     /// According to the given timestamp,
     ///
     /// 0)  If `current` value is not set.
-    ///     a) Try to use the `fallback`
+    ///     a) Try to use the `last`
     ///
     /// 1)  If `current` value has not yet taken effect,
-    ///     a) Try to use the `fallback`
+    ///     a) Try to use the `last`
     ///     b) Use the `current` value
     ///
     /// 2)  If `current` value is in its validity period,
@@ -56,16 +56,20 @@ impl<C: Clone + Debug> IncomingConfigs<C> {
     ///     a) Try to use the expected `next_value`, if some
     ///     b) Use the `current` value
     ///
+    /// As long as `self.update` as been called at least once since last `self.reset`,
+    /// it is impossible for `self.current` and `self.last` to be `None`.
+    /// So if this function ever returned a `None`, it should be unwrapped with
+    /// some default value.
     pub fn get_current(&self, timestamp: Instant) -> Option<C> {
         if let Some((valid_since, expiry, value)) = self.current.as_ref() {
             if (*valid_since..=*expiry).contains(&timestamp) {
                 return value.clone().into();
             }
             if *expiry <= timestamp {
-                return self.next.clone().or(value.clone().into());
+                return self.next.clone().unwrap_or_else(|| value.clone()).into();
             }
-            return self.fallback.clone().or(value.clone().into());
+            return self.last.clone().unwrap_or_else(|| value.clone()).into();
         }
-        self.fallback.clone()
+        self.last.clone()
     }
 }
