@@ -24,10 +24,11 @@ use tracing::warn;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::build::CLAP_LONG_VERSION;
+use crate::{build::CLAP_LONG_VERSION, log_converter::LogConverterArgs};
 use shadow_rs::shadow;
 
 mod channel;
+mod log_converter;
 // mod docker;
 
 // const CONFIG_PORT_BASE: u16 = 8086;
@@ -120,6 +121,8 @@ enum CliCommand {
     Link(channel::ChannelArgs),
     /// Run the instance according to the config.
     Run(RunArgs),
+    /// Convert Rattan packet log into .pcapng file.
+    Convert(LogConverterArgs),
 }
 
 #[derive(Args, Debug, Default, Clone)]
@@ -302,6 +305,10 @@ fn main() -> ExitCode {
                     .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
                 let config = args.build_rattan_config()?;
                 (config, commands)
+            }
+            CliCommand::Convert(args) => {
+                log_converter::convert_log_to_pcapng(args.input, args.output)?;
+                return Ok(());
             }
         };
 

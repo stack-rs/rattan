@@ -1,5 +1,4 @@
 use binread::BinReaderExt;
-use clap::Parser;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -7,6 +6,7 @@ use std::time::Duration;
 
 use rattan_core::radix::log::*;
 
+use clap::Args;
 use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Result, Write};
@@ -190,23 +190,16 @@ impl PacketWriter {
 }
 
 /// Convert Rattan Packet Log file to pcapng file for each end
-#[derive(Parser, Debug)]
-#[command(name = "log_converter")]
-#[command(about = "Convert Rattan Packet Log file to pcapng file for each end", long_about = None)]
-struct Args {
+#[derive(Args, Debug, Default, Clone)]
+#[command(rename_all = "kebab-case")]
+pub struct LogConverterArgs {
     /// Input Rattan Packet Log file path
-    input: PathBuf,
-
+    pub input: PathBuf,
     /// Output pcapng file name prefix
-    output: PathBuf,
+    pub output: PathBuf,
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
-    convert_log_to_pcapng(&args.input, &args.output)
-}
-
-fn convert_log_to_pcapng(input: impl AsRef<Path>, output: impl AsRef<Path>) -> Result<()> {
+pub fn convert_log_to_pcapng(input: impl AsRef<Path>, output: impl AsRef<Path>) -> Result<()> {
     let input_log_file: &Path = input.as_ref();
     let input_flow_file_name = input_log_file
         .file_name()
