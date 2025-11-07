@@ -3,7 +3,6 @@ use etherparse::{Ethernet2Header, Ipv4Header};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
     fmt::Debug,
     net::Ipv4Addr,
     sync::{
@@ -18,6 +17,7 @@ use crate::error::Error;
 pub mod bandwidth;
 pub mod delay;
 pub mod external;
+pub mod incoming_config;
 pub mod loss;
 pub mod per_packet;
 pub mod router;
@@ -575,30 +575,4 @@ macro_rules! check_cell_state {
             $crate::cells::CellState::Normal => $packet,
         }
     };
-}
-
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct Configs<C> {
-    pub configs: BTreeMap<Instant, C>,
-}
-
-impl<C> Configs<C> {
-    pub fn new() -> Self {
-        Self {
-            configs: BTreeMap::new(),
-        }
-    }
-    fn insert(&mut self, time: Instant, data: Option<C>) {
-        if let Some(data) = data {
-            self.configs.insert(time, data);
-        }
-    }
-}
-
-impl<C, const N: usize> From<[(Instant, C); N]> for Configs<C> {
-    fn from(configs: [(Instant, C); N]) -> Self {
-        Self {
-            configs: BTreeMap::from(configs),
-        }
-    }
 }

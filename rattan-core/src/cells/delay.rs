@@ -1,4 +1,6 @@
 use super::TRACE_START_INSTANT;
+
+use std::iter::Peekable;
 use std::time::Duration;
 use std::{fmt::Debug, sync::Arc};
 
@@ -6,16 +8,27 @@ use async_trait::async_trait;
 use netem_trace::{model::DelayTraceConfig, Delay, DelayTrace};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+
 use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, error, info};
 
 use crate::cells::bandwidth::LARGE_DURATION;
-use crate::cells::{
-    AtomicCellState, Cell, CellState, Configs, ControlInterface, Egress, Ingress, Packet,
-};
+use crate::cells::incoming_config::IncomingConfigs;
+use crate::cells::{AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, Packet};
 use crate::core::CALIBRATED_START_INSTANT;
 use crate::error::Error;
 use crate::metal::timer::Timer;
+
+struct DelayTraceIter {
+    inner: Box<dyn DelayTrace>,
+}
+
+impl Iterator for DelayTraceIter {
+    type Item = (Duration, Duration);
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next_delay()
+    }
+}
 
 pub struct DelayCellIngress<P>
 where
@@ -52,7 +65,7 @@ where
     P: Packet,
 {
     egress: mpsc::UnboundedReceiver<P>,
-    delays: Configs<Delay>,
+    delay: IncomingConfigs<Delay>,
     config_rx: mpsc::UnboundedReceiver<DelayCellConfig>,
     timer: Timer,
     state: AtomicCellState,
@@ -66,61 +79,8 @@ where
     P: Packet + Send + Sync,
 {
     fn set_config(&mut self, config: DelayCellConfig) {
-        let timestamp = Instant::now();
-        debug!(
-            before = ?self.delays.configs.last_key_value(),
-            after = ?(timestamp, config.delay),
-            "Set inner delay:"
-        );
-        self.delays.insert(timestamp, config.delay.into());
-    }
-}
-
-impl Configs<Delay> {
-    // fn delay(&self, packet_timestamp: Instant) -> Delay {
-    //     let mut packet_delay = Delay::ZERO;
-    //     // Todo: eliminate out-dated items from the Configs<Delay>
-    //     for (timestamp, delay) in self.iter() {
-    //         if *timestamp <= packet_timestamp {
-    //             packet_delay = *delay;
-    //         } else if packet_timestamp + packet_delay < *timestamp {
-    //             // If the delay applies after the packet exited the queue
-    //             // then this new delay does not apply and all after neither
-    //             break;
-    //         } else if packet_timestamp + *delay <= *timestamp {
-    //             // If the delay applies before the packet exited the queue
-    //             // but with the new delay it should have left before the new delay
-    //             // then the packet leaves immediately and no further new delay apply
-    //             packet_delay = *timestamp - packet_timestamp;
-    //             break;
-    //         } else {
-    //             packet_delay = *delay
-    //         }
-    //     }
-    //     packet_delay
-    // }
-    // ************ Which behavior here is right is under discussion. ***********
-    fn delay(&mut self, packet_timestamp: Instant) -> Delay {
-        // Eliminate out-dated items from the Configs<Delay>
-        // The correctness of this function relies on that the `pakcet_timestamp` never decreases.
-
-        let (result, kill_before) =
-            if let Some((&time, &delay)) = self.configs.range(..=packet_timestamp).next_back() {
-                (delay, time.into())
-            } else if let Some((&last, &delay)) = self.configs.range(..).next() {
-                tracing::warn!("Failed to find delay for packet");
-                // Try to apply the oldest delay?
-                (delay, last.into())
-            } else {
-                tracing::warn!("Failed to find delay for packet, using 0ms as default");
-                (Delay::ZERO, None)
-            };
-
-        if let Some(kill_before) = kill_before {
-            self.configs.retain(|&k, _| k >= kill_before);
-        }
-
-        result
+        self.delay
+            .update(config.delay, None, Instant::now(), LARGE_DURATION);
     }
 }
 
@@ -144,8 +104,10 @@ where
         let timestamp = packet.get_timestamp();
 
         let send_time = loop {
-            let logical_send_time =
-                (timestamp + self.delays.delay(timestamp)).max(self.latest_egress_timestamp);
+            // `get_current` returns None if and only if `self.delays` has never been updated
+            // since last reset.
+            let delay_time = self.delay.get_current(timestamp).unwrap_or_default();
+            let logical_send_time = (timestamp + delay_time).max(self.latest_egress_timestamp);
 
             tokio::select! {
                 biased;
@@ -247,17 +209,21 @@ where
         debug!(?delay, "New DelayCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
+
+        let logical_time = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
+        let mut delay_setting = IncomingConfigs::default();
+        delay_setting.update(delay, None, logical_time, LARGE_DURATION);
         Ok(DelayCell {
             ingress: Arc::new(DelayCellIngress { ingress: rx }),
             egress: DelayCellEgress {
                 egress: tx,
-                delays: Configs::from([(Instant::now(), delay)]),
+                delay: delay_setting,
                 config_rx,
                 timer: Timer::new()?,
                 state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
-                latest_egress_timestamp: *CALIBRATED_START_INSTANT.get_or_init(Instant::now),
+                latest_egress_timestamp: logical_time,
             },
             control_interface: Arc::new(DelayCellControlInterface { config_tx }),
         })
@@ -271,10 +237,8 @@ where
     P: Packet,
 {
     egress: mpsc::UnboundedReceiver<P>,
-    trace: Box<dyn DelayTrace>,
-    delays: Configs<Delay>,
-
-    // Next timestamp to be inserted into delays
+    trace: Peekable<DelayTraceIter>,
+    delays: IncomingConfigs<Delay>,
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<DelayReplayCellConfig>,
     send_timer: Timer,
@@ -291,22 +255,31 @@ where
 {
     fn set_config(&mut self, config: DelayReplayCellConfig) {
         tracing::debug!("Set inner trace config");
-        self.trace = config.trace_config.into_model();
+        let trace_iter = DelayTraceIter {
+            inner: config.trace_config.into_model(),
+        };
+        self.trace = trace_iter.peekable();
     }
 
     fn update_delay(&mut self, timestamp: Instant) {
-        if let Some((delay, duration)) = self.trace.next_delay() {
+        if let Some((current_delay, duration)) = self.trace.next() {
             debug!(
                 "Setting {:?} delay valid from {:?} till {:?}",
-                delay,
+                current_delay,
                 duration,
                 timestamp + duration
             );
-            self.delays.insert(timestamp, Some(delay));
+
+            // Not valid before T0 = `timestamp + duration`.
+            // Not valid after  T0'= the next call of this function.
+            // Logically T0 = T0', yet T0' >= T0 due to unavoidable scheduling delays.
+            let next_value = self.trace.peek().map(|(next_value, _)| next_value.clone());
+
+            self.delays
+                .update(current_delay, next_value, timestamp, duration);
             self.next_change = timestamp + duration;
         } else {
             debug!("Trace goes to end");
-            self.delays.insert(timestamp, None);
             self.next_change = timestamp + LARGE_DURATION
         }
     }
@@ -350,8 +323,10 @@ where
         let timestamp = packet.get_timestamp();
 
         let send_time = loop {
-            let logical_send_time =
-                (timestamp + self.delays.delay(timestamp)).max(self.latest_egress_timestamp);
+            // `get_current` returns None if and only if `self.delays` has never been updated
+            // since last reset.
+            let delay_time = self.delays.get_current(timestamp).unwrap_or_default();
+            let logical_send_time = (timestamp + delay_time).max(self.latest_egress_timestamp);
 
             tokio::select! {
             biased;
@@ -385,6 +360,7 @@ where
             "calculate next delay for logical trace change time {:?} (reset)",
             self.next_change
         );
+        self.delays.reset();
         self.update_delay(self.next_change);
         self.latest_egress_timestamp = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
     }
@@ -482,14 +458,14 @@ where
             ingress: Arc::new(DelayReplayCellIngress { ingress: rx }),
             egress: DelayReplayCellEgress {
                 egress: tx,
-                trace,
-                delays: Configs::new(),
+                trace: DelayTraceIter { inner: trace }.peekable(),
+                delays: IncomingConfigs::default(),
                 next_change: Instant::now(),
                 config_rx,
                 send_timer: Timer::new()?,
                 change_timer: Timer::new()?,
                 state: AtomicCellState::new(CellState::Drop),
-                latest_egress_timestamp: Instant::now() - Duration::from_secs(10),
+                latest_egress_timestamp: *CALIBRATED_START_INSTANT.get_or_init(Instant::now),
                 notify_rx: None,
                 started: false,
             },
@@ -504,7 +480,7 @@ mod tests {
     use netem_trace::model::{RepeatedDelayPatternConfig, StaticDelayConfig};
     use std::time::Duration;
     use tokio::time::Instant;
-    use tracing::{span, Level};
+    use tracing::{span, warn, Level};
 
     use crate::cells::{StdPacket, TestPacket};
 
@@ -613,14 +589,9 @@ mod tests {
         let received = received.unwrap();
         assert!(received.length() == 256);
 
-        // assert_eq!(received.delay(), Duration::from_millis(20));
-        // assert!((duration - 20.0).abs() <= DELAY_ACCURACY_TOLERANCE);
-        // ************ Which behavior here is right is under discussion. ***********
-        // For simplicity, only consider how long should a packet be delayed based on the latest config upon the packet's timestamp
         assert_eq!(received.delay(), Duration::from_millis(10));
         assert!((duration - 10.0).abs() <= DELAY_ACCURACY_TOLERANCE);
 
-        // Test whether the packet will be returned immediately when the new delay is less than the already passed time
         let start = Instant::now();
         let test_packet = TestPacket::<StdPacket>::with_timestamp(&[0; 256], start);
 
@@ -628,6 +599,7 @@ mod tests {
 
         // Wait for 15ms, then change the config back to 10ms
         std::thread::sleep(Duration::from_millis(15));
+        // Set after the timestamp of packets, so does not take effect.
         config_changer.set_config(DelayCellConfig::new(Duration::from_millis(10)))?;
 
         let received = rt.block_on(async { egress.dequeue().await });
@@ -640,12 +612,6 @@ mod tests {
         let received = received.unwrap();
         assert!(received.length() == 256);
 
-        // The packet was released not before the order to change delay to 10ms
-        // was recieved and processed. So it is not expected to be exactly 15ms.
-        // assert!((received.delay().as_secs_f64() * 1E3 - 15.0).abs() <= DELAY_ACCURACY_TOLERANCE);
-        // assert!((duration - 15.0).abs() <= DELAY_ACCURACY_TOLERANCE);
-        // ************ Which behavior here is right is under discussion. ***********
-        // For simplicity, only consider how long should a packet be delayed based on the latest config upon the packet's timestamp
         assert_eq!(received.delay(), Duration::from_millis(20));
         assert!((duration - 20.0).abs() <= DELAY_ACCURACY_TOLERANCE);
 
@@ -783,6 +749,10 @@ mod tests {
         rt.block_on(async {
             tokio::time::sleep_until(start_time + Duration::from_millis(1100)).await;
         });
+        warn!(
+            "Start pass through {:?}",
+            crate::cells::incoming_config::relative_time(Instant::now())
+        );
         for _ in 0..10 {
             let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
             let start = Instant::now();
@@ -809,6 +779,12 @@ mod tests {
             rt.block_on(async {
                 tokio::time::sleep_until(start_time + Duration::from_millis(interval)).await;
             });
+
+            warn!(
+                "Begin test at {:?}",
+                crate::cells::incoming_config::relative_time(Instant::now())
+            );
+
             for _ in 0..10 {
                 let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
                 let start = Instant::now();
