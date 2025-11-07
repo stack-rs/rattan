@@ -263,8 +263,13 @@ impl Packet for XDPPacket {
         todo!()
     }
 
-    fn from_raw_buffer(_buf: &[u8], _timestamp: Instant) -> Self {
+    fn from_raw_buffer(_buf: &[u8]) -> Self {
         todo!()
+    }
+
+    #[cfg(any(test, doc))]
+    fn with_timestamp(_buf: &[u8], _timestamp: Instant) -> Self {
+        todo!();
     }
 
     fn length(&self) -> usize {

@@ -273,7 +273,7 @@ where
             // Not valid before T0 = `timestamp + duration`.
             // Not valid after  T0'= the next call of this function.
             // Logically T0 = T0', yet T0' >= T0 due to unavoidable scheduling delays.
-            let next_value = self.trace.peek().map(|(next_value, _)| next_value.clone());
+            let next_value = self.trace.peek().map(|(next_value, _)| *next_value);
 
             self.delays
                 .update(current_delay, next_value, timestamp, duration);
