@@ -1,4 +1,7 @@
-use netem_trace::Bandwidth;
+use netem_trace::{
+    series::{expand_bw_trace, expand_delay_trace, expand_loss_trace},
+    Bandwidth,
+};
 use rattan_core::{
     cells::Packet,
     config::{BwCellBuildConfig, BwReplayCellBuildConfig, CellBuildConfig},
@@ -14,22 +17,29 @@ use tracing::warn;
 
 // Define output format of an loss item in the .csv file here
 fn express_loss(loss: Vec<f64>) -> String {
-    format!("{:?}", loss)
+    loss.iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(";")
 }
 
 // Define output format of an bandwidth item in the .csv file here
 fn express_bandwidth(bw: Bandwidth) -> String {
-    format!("{:?}", bw)
+    format!("{:?}", bw.as_bps())
 }
 // Define output format of an delay item in the .csv file here
 fn express_delay(delay: Duration) -> String {
-    format!("{:?}", delay)
+    format!("{:?}", delay.as_secs_f64())
 }
 
 // Define output format of the trace logical timestamp in the .csv file here
 fn express_time(time: Duration) -> String {
-    format!("{:?}", time.as_nanos())
+    format!("{:?}", time.as_secs_f64())
 }
+
+const LOSS_TRACE_SUFFIX: &str = "_loss_pattern";
+const BW_TRACE_SUFFIX: &str = "_bandwidth_bps";
+const DELAY_TRACE_SUFFIX: &str = "_delay_secs";
 
 pub fn write_combined_trace<P: Packet>(
     output: impl Write,
@@ -47,19 +57,20 @@ pub fn write_combined_trace<P: Packet>(
             .push((cell_id, value));
     };
 
-    for (name, cell) in cells {
-        cells_to_report.push(name);
-        let cell_id = cells_to_report.len() - 1; // index in `cells_to_report`.
+    for (mut name, cell) in cells {
+        let cell_id = cells_to_report.len(); // index in `cells_to_report`.
 
-        match cell {
+        let column_suffix = match cell {
             CellBuildConfig::Loss(config) => {
                 let loss = config.pattern;
                 add_change_point(Duration::ZERO, cell_id, express_loss(loss));
+                LOSS_TRACE_SUFFIX
             }
 
             CellBuildConfig::Delay(config) => {
                 let delay = config.delay;
                 add_change_point(Duration::ZERO, cell_id, express_delay(delay));
+                DELAY_TRACE_SUFFIX
             }
             CellBuildConfig::Bw(config) => {
                 let bandwidth = match config {
@@ -70,30 +81,32 @@ pub fn write_combined_trace<P: Packet>(
                 }
                 .unwrap();
                 add_change_point(Duration::ZERO, cell_id, express_bandwidth(bandwidth));
+                BW_TRACE_SUFFIX
             }
 
             CellBuildConfig::LossReplay(config) => {
                 let mut trace = config.get_trace()?;
-                let mut now = Duration::ZERO;
-                while let Some((loss, time)) = trace.next_loss() {
-                    if now >= length {
-                        break;
-                    }
-                    add_change_point(now, cell_id, express_loss(loss));
-                    now += time;
+
+                for trace_point in expand_loss_trace(trace.as_mut(), Duration::ZERO, length) {
+                    add_change_point(
+                        trace_point.start_time,
+                        cell_id,
+                        express_loss(trace_point.value),
+                    )
                 }
+                LOSS_TRACE_SUFFIX
             }
 
             CellBuildConfig::DelayReplay(config) => {
                 let mut trace = config.get_trace()?;
-                let mut now = Duration::ZERO;
-                while let Some((delay, time)) = trace.next_delay() {
-                    if now >= length {
-                        break;
-                    }
-                    add_change_point(now, cell_id, express_delay(delay));
-                    now += time;
+                for trace_point in expand_delay_trace(trace.as_mut(), Duration::ZERO, length) {
+                    add_change_point(
+                        trace_point.start_time,
+                        cell_id,
+                        express_delay(trace_point.value),
+                    )
                 }
+                DELAY_TRACE_SUFFIX
             }
 
             CellBuildConfig::BwReplay(config) => {
@@ -104,38 +117,52 @@ pub fn write_combined_trace<P: Packet>(
                     BwReplayCellBuildConfig::Infinite(config) => config.get_trace(),
                 }
                 .unwrap();
-                let mut now = Duration::ZERO;
-                while let Some((bw, time)) = trace.next_bw() {
-                    if now >= length {
-                        break;
-                    }
-                    add_change_point(now, cell_id, express_bandwidth(bw));
-                    now += time;
+
+                for trace_point in expand_bw_trace(trace.as_mut(), Duration::ZERO, length) {
+                    add_change_point(
+                        trace_point.start_time,
+                        cell_id,
+                        express_bandwidth(trace_point.value),
+                    )
                 }
+                BW_TRACE_SUFFIX
             }
             _ => {
-                warn!(
-                    "Cell {:?} not supported for generate combined trace",
-                    cells_to_report.pop()
-                );
+                warn!("Cell {:?} not supported for generate combined trace", name);
+                continue;
             }
-        }
+        };
+        name.push_str(column_suffix);
+        cells_to_report.push(name);
     }
 
     let mut csv_writer = csv::Writer::from_writer(output);
 
     csv_writer
-        .write_record(iter::once("time_since_ns").chain(cells_to_report.iter().map(String::as_str)))
+        .write_record(
+            iter::once("start_time_secs")
+                .chain(cells_to_report.iter().map(String::as_str))
+                .chain(iter::once("duration_secs")),
+        )
         .map_err(|e| Custom(format!("{:?}", e)))?;
 
     let mut current_state = vec![String::new(); cells_to_report.len()];
 
-    for (time, changes) in change_points {
+    while let Some((start_time, changes)) = change_points.pop_first() {
+        let end_time = change_points
+            .first_key_value()
+            .map(|(&next_start, _)| next_start)
+            .unwrap_or(length);
+
         for (cell_id, change_to) in changes {
             current_state[cell_id] = change_to;
         }
         csv_writer
-            .write_record(iter::once(&express_time(time)).chain(current_state.iter()))
+            .write_record(
+                iter::once(&express_time(start_time)) // start_time_secs
+                    .chain(current_state.iter()) // cells
+                    .chain(iter::once(&express_time(end_time - start_time))), // duration
+            )
             .map_err(|e| Custom(format!("{:?}", e)))?;
     }
 
