@@ -23,7 +23,7 @@ figment = { version = "0.10", features = ["env", "json", "toml"] }
 futures = "0.3.29"
 human-bandwidth = { version = "0.1.4", features = ["binary-system", "serde"] }
 jiff = "0.2.15"
-netem-trace = { version = "0.4.3", features = ["human", "mahimahi", "serde"] }
+netem-trace = { version = "0.4.4", features = ["human", "mahimahi", "serde"] }
 nix = { version = "0.29.0", features = [
   "event",
   "ioctl",
@@ -53,6 +53,7 @@ binread = "2.2.0"
 # anyhow = "1.0.75"
 # bollard = "0.15.0"
 clap = { version = "4.2.4", features = ["derive"] }
+csv = "1.4.0"
 ctrlc = { workspace = true }
 dirs = "6.0.0"
 figment = { workspace = true }

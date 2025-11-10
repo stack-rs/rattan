@@ -1,8 +1,10 @@
 use std::{
     borrow::Cow,
+    fs::File,
     path::PathBuf,
     process::{ExitCode, Stdio, Termination},
     sync::{atomic::AtomicBool, Arc},
+    time::Duration,
 };
 
 use clap::{command, Args, Parser, Subcommand, ValueEnum};
@@ -24,10 +26,13 @@ use tracing::warn;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{build::CLAP_LONG_VERSION, log_converter::LogConverterArgs};
+use crate::{
+    build::CLAP_LONG_VERSION, combined_trace::write_combined_trace, log_converter::LogConverterArgs,
+};
 use shadow_rs::shadow;
 
 mod channel;
+mod combined_trace;
 mod log_converter;
 // mod docker;
 
@@ -37,6 +42,11 @@ shadow!(build);
 
 static LEFT_PID: OnceCell<i32> = OnceCell::new();
 static RIGHT_PID: OnceCell<i32> = OnceCell::new();
+
+fn parse_duration(delay: &str) -> Result<Duration, jiff::Error> {
+    let span: jiff::Span = delay.parse()?;
+    Duration::try_from(span)
+}
 
 #[derive(Debug, Parser, Clone)]
 #[command(rename_all = "kebab-case")]
@@ -56,6 +66,20 @@ pub struct Arguments {
     /// If this flag is set, the program will only generate the config to stdout and exit.
     #[arg(long, global = true)]
     generate: bool,
+
+    /// Generate combined trace until `combined_trace` since the trace starts
+    ///
+    /// If this is set, the program will only generate the csv to stdout and exit.
+    #[arg(
+        long,
+        global = true,
+        value_parser = parse_duration
+    )]
+    combined_trace: Option<Duration>,
+
+    /// Generate combined trace csv file to the specified path instead of stdout
+    #[arg(long, requires = "combined_trace", global = true, value_name = "File")]
+    combined_trace_path: Option<PathBuf>,
 
     /// Used in isolated mode only. If set, stdout of left is passed to output of this program.
     #[arg(long, global = true)]
@@ -342,6 +366,22 @@ fn main() -> ExitCode {
                 println!("{toml_string}");
             }
             return Ok(());
+        }
+
+        if let Some(combined_trace_length) = opts.combined_trace {
+            if let Some(output_path) = opts.combined_trace_path {
+                return write_combined_trace(
+                    File::create(output_path)?,
+                    config.cells,
+                    combined_trace_length,
+                );
+            } else {
+                return write_combined_trace(
+                    std::io::stdout(),
+                    config.cells,
+                    combined_trace_length,
+                );
+            }
         }
 
         // Check if the config can correctly spawn
