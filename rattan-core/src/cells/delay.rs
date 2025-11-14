@@ -55,7 +55,7 @@ where
     P: Packet,
 {
     egress: mpsc::UnboundedReceiver<P>,
-    delay: CurrentConfig<Delay>,
+    delay: Delay,
     config_rx: mpsc::UnboundedReceiver<DelayCellConfig>,
     timer: Timer,
     state: AtomicCellState,
@@ -69,7 +69,7 @@ where
     P: Packet + Send + Sync,
 {
     fn set_config(&mut self, config: DelayCellConfig) {
-        self.delay.update(config.delay, Instant::now());
+        self.delay = config.delay;
     }
 }
 
@@ -93,13 +93,7 @@ where
         let timestamp = packet.get_timestamp();
 
         let send_time = loop {
-            // `get_current` returns None if and only if `self.delays` has never been updated
-            // since last reset.
-            let logical_send_time = if let Some(delay_time) = self.delay.get_current(timestamp) {
-                (timestamp + *delay_time).max(self.latest_egress_timestamp)
-            } else {
-                timestamp.max(self.latest_egress_timestamp)
-            };
+            let logical_send_time = (timestamp + self.delay).max(self.latest_egress_timestamp);
 
             tokio::select! {
                 biased;
@@ -203,13 +197,11 @@ where
         let (config_tx, config_rx) = mpsc::unbounded_channel();
 
         let logical_time = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
-        let mut delay_setting = CurrentConfig::default();
-        delay_setting.update(delay, logical_time);
         Ok(DelayCell {
             ingress: Arc::new(DelayCellIngress { ingress: rx }),
             egress: DelayCellEgress {
                 egress: tx,
-                delay: delay_setting,
+                delay,
                 config_rx,
                 timer: Timer::new()?,
                 state: AtomicCellState::new(CellState::Drop),
@@ -582,8 +574,8 @@ mod tests {
         let received = received.unwrap();
         assert!(received.length() == 256);
 
-        assert_eq!(received.delay(), Duration::from_millis(10));
-        assert!((duration - 10.0).abs() <= DELAY_ACCURACY_TOLERANCE);
+        assert_eq!(received.delay(), Duration::from_millis(20));
+        assert!((duration - 20.0).abs() <= DELAY_ACCURACY_TOLERANCE);
 
         let start = Instant::now();
         let test_packet = TestPacket::<StdPacket>::with_timestamp(&[0; 256], start);
@@ -592,9 +584,10 @@ mod tests {
 
         // Wait for 15ms, then change the config back to 10ms
         std::thread::sleep(Duration::from_millis(15));
-        // Set after the timestamp of packets, so does not take effect.
         config_changer.set_config(DelayCellConfig::new(Duration::from_millis(10)))?;
 
+        // The expected behavior is that, the packet exits the cell almost immediately
+        // after the config change.
         let received = rt.block_on(async { egress.dequeue().await });
 
         let duration = start.elapsed().as_micros() as f64 / 1000.0;
@@ -604,9 +597,8 @@ mod tests {
         assert!(received.is_some());
         let received = received.unwrap();
         assert!(received.length() == 256);
-
-        assert_eq!(received.delay(), Duration::from_millis(20));
-        assert!((duration - 20.0).abs() <= DELAY_ACCURACY_TOLERANCE);
+        assert_eq!(received.delay(), Duration::from_millis(10));
+        assert!((duration - 15.0).abs() <= DELAY_ACCURACY_TOLERANCE);
 
         Ok(())
     }
