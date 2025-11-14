@@ -141,8 +141,8 @@ pub fn write_combined_trace<P: Packet>(
     csv_writer
         .write_record(
             iter::once("start_time_secs")
-                .chain(cells_to_report.iter().map(String::as_str))
-                .chain(iter::once("duration_secs")),
+                .chain(iter::once("duration_secs"))
+                .chain(cells_to_report.iter().map(String::as_str)),
         )
         .map_err(|e| Custom(format!("{:?}", e)))?;
 
@@ -160,8 +160,8 @@ pub fn write_combined_trace<P: Packet>(
         csv_writer
             .write_record(
                 iter::once(&express_time(start_time)) // start_time_secs
-                    .chain(current_state.iter()) // cells
-                    .chain(iter::once(&express_time(end_time - start_time))), // duration
+                    .chain(iter::once(&express_time(end_time - start_time))) // duration
+                    .chain(current_state.iter()), // cells
             )
             .map_err(|e| Custom(format!("{:?}", e)))?;
     }
