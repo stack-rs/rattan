@@ -15,9 +15,9 @@ use tokio::time::{Duration, Instant};
 use crate::error::Error;
 
 pub mod bandwidth;
+pub mod config_timestamp;
 pub mod delay;
 pub mod external;
-pub mod incoming_config;
 pub mod loss;
 pub mod per_packet;
 pub mod router;
@@ -575,4 +575,12 @@ macro_rules! check_cell_state {
             $crate::cells::CellState::Normal => $packet,
         }
     };
+}
+
+// For test code only. Converts an Instant (machine time) to a relative time since the
+// logical start point of trace start. This makes the test output more human-readable.
+#[cfg(test)]
+pub fn relative_time(time: Instant) -> Duration {
+    let start = crate::cells::TRACE_START_INSTANT.get_or_init(Instant::now);
+    time.duration_since(*start)
 }

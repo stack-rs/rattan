@@ -1,5 +1,6 @@
 use super::TRACE_START_INSTANT;
 use crate::cells::bandwidth::queue::PacketQueue;
+use crate::cells::config_timestamp::CurrentConfig;
 use crate::cells::{AtomicCellState, Cell, CellState, Packet};
 use crate::error::Error;
 use crate::metal::timer::Timer;
@@ -392,7 +393,7 @@ where
     bw_type: BwType,
     trace: Box<dyn BwTrace>,
     packet_queue: Q,
-    current_bandwidth: Bandwidth,
+    current_bandwidth: CurrentConfig<Bandwidth>,
     next_available: Instant,
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<BwReplayCellConfig<P, Q>>,
@@ -409,32 +410,34 @@ where
     Q: PacketQueue<P>,
 {
     fn change_bandwidth(&mut self, bandwidth: Bandwidth, change_time: Instant) {
+        let last_bandwidth = self
+            .current_bandwidth
+            .update_get_last(bandwidth, change_time);
+
         trace!(
-            "Changing bandwidth to {:?} (should at {:?} ago)",
+            "Changing bandwidth from{:?} to {:?} (should at {:?} ago)",
+            last_bandwidth,
             bandwidth,
             change_time.elapsed()
         );
+
+        let last_bandwidth = last_bandwidth.unwrap_or(&bandwidth);
         trace!(
             "Previous next_available distance: {:?}",
             self.next_available - change_time
         );
+
         self.next_available = if bandwidth == Bandwidth::from_bps(0) {
             Instant::now() + LARGE_DURATION
         } else {
             change_time
                 + (self.next_available - change_time)
-                    .mul_f64(self.current_bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64)
+                    .mul_f64(last_bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64)
         };
-        trace!(
-            before = ?self.current_bandwidth,
-            after = ?bandwidth,
-            "Set inner bandwidth:"
-        );
         trace!(
             "Now next_available distance: {:?}",
             self.next_available - change_time
         );
-        self.current_bandwidth = bandwidth;
     }
 
     fn set_config(&mut self, config: BwReplayCellConfig<P, Q>) {
@@ -521,6 +524,7 @@ where
         }
 
         let mut packet = self.packet_queue.dequeue();
+
         while packet.is_none() {
             // the queue is empty, wait for the next packet
             tokio::select! {
@@ -553,7 +557,14 @@ where
 
         // send the packet
         let mut packet = packet.unwrap();
-        let transfer_time = transfer_time(packet.l3_length(), self.current_bandwidth, self.bw_type);
+        let transfer_time = self
+            .current_bandwidth
+            .get_current(packet.get_timestamp())
+            .map(|bw| transfer_time(packet.l3_length(), *bw, self.bw_type));
+
+        // release the packet immediately (aka infinity bandwidth) when no avaiable bandwidth has been set.
+        let transfer_time = transfer_time.unwrap_or_default();
+
         if packet.get_timestamp() >= self.next_available {
             // the packet arrives after next_available
             self.next_available = packet.get_timestamp() + transfer_time;
@@ -734,7 +745,7 @@ where
                 bw_type: bw_type.into().unwrap_or_default(),
                 trace,
                 packet_queue,
-                current_bandwidth: Bandwidth::from_bps(0),
+                current_bandwidth: CurrentConfig::default(),
                 next_available: Instant::now(),
                 next_change: Instant::now(),
                 config_rx,

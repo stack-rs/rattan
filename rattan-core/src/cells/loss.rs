@@ -1,4 +1,5 @@
 use super::TRACE_START_INSTANT;
+use crate::cells::config_timestamp::CurrentConfig;
 use crate::cells::{AtomicCellState, Cell, CellState, Packet};
 use crate::error::Error;
 use crate::metal::timer::Timer;
@@ -210,7 +211,7 @@ where
 {
     egress: mpsc::UnboundedReceiver<P>,
     trace: Box<dyn LossTrace>,
-    current_loss_pattern: LossPattern,
+    current_loss_pattern: CurrentConfig<LossPattern>,
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<LossReplayCellConfig>,
     change_timer: Timer,
@@ -238,7 +239,7 @@ where
             after = ?loss,
             "Set inner loss pattern:"
         );
-        self.current_loss_pattern = loss;
+        self.current_loss_pattern.update(loss, change_time);
     }
 
     fn set_config(&mut self, config: LossReplayCellConfig) {
@@ -296,10 +297,21 @@ where
             }
         };
         let packet = crate::check_cell_state!(self.state, packet);
-        let loss_rate = match self.current_loss_pattern.get(self.prev_loss) {
-            Some(&loss_rate) => loss_rate,
-            None => *self.current_loss_pattern.last().unwrap_or(&0.0),
+
+        let current_loss_pattern = self
+            .current_loss_pattern
+            .get_current(packet.get_timestamp());
+
+        // Notice that if the trace has gone to an end, the last value will be used.
+        let loss_rate = if let Some(current_loss_pattern) = current_loss_pattern {
+            match current_loss_pattern.get(self.prev_loss) {
+                Some(&loss_rate) => loss_rate,
+                None => current_loss_pattern.last().cloned().unwrap_or_default(),
+            }
+        } else {
+            0.0
         };
+
         let rand_num = self.rng.random_range(0.0..1.0);
         if rand_num < loss_rate {
             self.prev_loss += 1;
@@ -405,13 +417,12 @@ where
     pub fn new(trace: Box<dyn LossTrace>, rng: R) -> Result<LossReplayCell<P, R>, Error> {
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
-        let current_loss_pattern = vec![1.0];
         Ok(LossReplayCell {
             ingress: Arc::new(LossReplayCellIngress { ingress: rx }),
             egress: LossReplayCellEgress {
                 egress: tx,
                 trace,
-                current_loss_pattern,
+                current_loss_pattern: CurrentConfig::default(),
                 next_change: Instant::now(),
                 config_rx,
                 change_timer: Timer::new()?,
