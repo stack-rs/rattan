@@ -1,12 +1,11 @@
-use async_trait::async_trait;
-use etherparse::{Ethernet2Header, Ipv4Header};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, net::Ipv4Addr, sync::Arc};
-use tokio::time::Instant;
-
 use crate::error::Error;
-
+use async_trait::async_trait;
+use etherparse::{Ethernet2Header, Ipv4Header, TcpOptionElement};
+use rattan_log::FlowDesc;
+#[cfg(feature = "serde")]
+use serde::Deserialize;
+use std::{fmt::Debug, sync::Arc};
+use tokio::time::Instant;
 pub mod bandwidth;
 pub mod delay;
 pub mod external;
@@ -16,12 +15,6 @@ pub mod router;
 pub mod shadow;
 pub mod spy;
 pub mod token_bucket;
-
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub enum FlowDesc {
-    TCP(Ipv4Addr, Ipv4Addr, u16, u16),
-}
 
 pub trait Packet: Debug + 'static + Send {
     type PacketGenerator;
@@ -225,11 +218,20 @@ impl Packet for StdPacket {
                                         .get(ether_hdr.slice().len() + ip_hdr.slice().len()..)
                                         .unwrap_or(&[]),
                                 ) {
+                                    // Check and record the window scale option, only if SYN bit
+                                    // is set (SYN/ SYN_ACK) packet.
+                                    let window_scale = tcp_hdr.syn().then(|| {
+                                        tcp_hdr.options_iterator().find_map(|option| match option {
+                                            Ok(TcpOptionElement::WindowScale(scale)) => Some(scale),
+                                            _ => None,
+                                        })
+                                    });
                                     Some(FlowDesc::TCP(
                                         ip_hdr.source_addr(),
                                         ip_hdr.destination_addr(),
                                         tcp_hdr.source_port(),
                                         tcp_hdr.destination_port(),
+                                        window_scale.flatten(),
                                     ))
                                 } else {
                                     None

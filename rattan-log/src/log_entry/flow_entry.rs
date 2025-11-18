@@ -1,0 +1,146 @@
+use crate::{FlowDesc, PlainBytes};
+
+use super::{LogEntry, LogEntryHeader};
+use binread::BinRead;
+use plain::Plain;
+
+// The detailed spec of TCP flow entry
+//
+// 0                   1                   2                   3
+// 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |       LH.length       | LH.ty.|       FLE.length    | FLE.ty. |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                           flow id                             |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                            src.ip                             |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                            dst.ip                             |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |          src.port             |          dst.port             |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |  win_scale    |    RESERVED   |           **RESERVED**        |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                   base ts (lower 32bit)                       |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                   base ts (upper 32bit)                       |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+pub type FlowEntryHeader = LogEntryHeader;
+#[derive(Debug, Clone, Copy)]
+
+pub struct TCPFlowEntry {
+    pub header: LogEntryHeader,
+    pub tcp_flow: TCPFlow,
+}
+
+impl TCPFlowEntry {
+    pub fn new(tcp_flow: TCPFlow) -> Self {
+        let mut header = LogEntryHeader::new();
+        header.set_length(32);
+        header.set_type(2);
+        Self { header, tcp_flow }
+    }
+}
+
+unsafe impl Plain for TCPFlowEntry {}
+
+static_assertions::assert_eq_size!(TCPFlowEntry, [u8; 32]);
+
+#[derive(Debug, Clone, Copy, BinRead)]
+#[br(import(header: LogEntryHeader))]
+#[repr(C, packed(2))]
+pub struct TCPFlow {
+    #[br(calc = header)]
+    pub entryheader: FlowEntryHeader,
+    pub flow_id: u32,
+    pub src_ip: u32,
+    pub dst_ip: u32,
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub window_scalling: u8,
+    pub _reserved_1: u8,
+    pub _reserved_2: u16,
+    pub base_ts: i64,
+}
+
+unsafe impl Plain for TCPFlow {}
+
+// window scalling should be 0 to 14. Thus a 15 is invalid.
+const UNKNOWN_WINDOW_SCALLING: u8 = 15;
+
+pub enum FlowEntryVariant {
+    TCP(TCPFlow),
+}
+
+impl FlowEntryVariant {
+    pub fn build(self) -> Vec<u8> {
+        match self {
+            FlowEntryVariant::TCP(tcp_flow) => {
+                let entry = TCPFlowEntry::new(tcp_flow);
+                entry.as_bytes().to_vec()
+            }
+        }
+    }
+}
+
+impl From<(u32, i64, FlowDesc)> for FlowEntryVariant {
+    // (flow_id, base_ts, flow_desc)
+    fn from(value: (u32, i64, FlowDesc)) -> Self {
+        let (flow_id, base_ts, flow_desc) = value;
+        let mut entryheader = FlowEntryHeader::default();
+        entryheader.set_length(32);
+        match flow_desc {
+            FlowDesc::TCP(src_ip, dst_ip, src_port, dst_port, win_scale) => {
+                entryheader.set_type(0);
+                let entry = TCPFlow {
+                    entryheader,
+                    flow_id,
+                    src_ip: src_ip.to_bits(),
+                    dst_ip: dst_ip.to_bits(),
+                    src_port,
+                    dst_port,
+                    window_scalling: win_scale.unwrap_or(UNKNOWN_WINDOW_SCALLING),
+                    _reserved_1: 0,
+                    _reserved_2: 0,
+                    base_ts,
+                };
+                Self::TCP(entry)
+            }
+        }
+    }
+}
+
+impl FlowEntryVariant {
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            FlowEntryVariant::TCP(tcp) => tcp.as_bytes(),
+        }
+    }
+}
+
+pub fn read_flow_entry<R: std::io::Read + std::io::Seek>(
+    reader: &mut R,
+    options: &binread::ReadOptions,
+) -> binread::BinResult<FlowEntryVariant> {
+    let pos = reader.stream_position()?;
+
+    let flow_header = FlowEntryHeader::read_options(reader, options, ())?;
+
+    match flow_header.get_type() {
+        // TCP Flow
+        0 => TCPFlow::read_options(reader, options, (flow_header,)).map(FlowEntryVariant::TCP),
+        // More kinds of flow entries may be supported here.
+        _ => Err(binread::Error::NoVariantMatch { pos }),
+    }
+}
+
+impl From<(LogEntryHeader, FlowEntryVariant)> for LogEntry {
+    fn from(value: (LogEntryHeader, FlowEntryVariant)) -> Self {
+        let (header, payload) = value;
+
+        match payload {
+            FlowEntryVariant::TCP(tcp_flow) => Self::TCPFlow(TCPFlowEntry { header, tcp_flow }),
+        }
+    }
+}

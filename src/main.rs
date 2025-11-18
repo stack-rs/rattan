@@ -20,6 +20,8 @@ use rattan_core::cells::StdPacket;
 use rattan_core::env::StdNetEnvMode;
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
+
+use rattan_core::radix::PacketLogMode;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -27,13 +29,15 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
-    build::CLAP_LONG_VERSION, combined_trace::write_combined_trace, log_converter::LogConverterArgs,
+    build::CLAP_LONG_VERSION,
+    combined_trace::write_combined_trace,
+    // log_converter::LogConverterArgs,
 };
 use shadow_rs::shadow;
 
 mod channel;
 mod combined_trace;
-mod log_converter;
+// mod log_converter;
 // mod docker;
 
 // const CONFIG_PORT_BASE: u16 = 8086;
@@ -114,6 +118,10 @@ pub struct Arguments {
     #[arg(long, value_name = "File", global = true)]
     packet_log: Option<PathBuf>,
 
+    /// If this flag is set, raw packet header would be recorded for packet_log.
+    #[arg(long, value_name = "Mode", global = true)]
+    packet_log_mode: Option<PacketLogMode>,
+
     /// Enable logging to file
     #[arg(long, global = true)]
     file_log: bool,
@@ -145,8 +153,8 @@ enum CliCommand {
     Link(channel::ChannelArgs),
     /// Run the instance according to the config.
     Run(RunArgs),
-    /// Convert Rattan packet log into .pcapng file.
-    Convert(LogConverterArgs),
+    // Convert Rattan packet log into .pcapng file.
+    // Convert(LogConverterArgs),
 }
 
 #[derive(Args, Debug, Default, Clone)]
@@ -329,11 +337,10 @@ fn main() -> ExitCode {
                     .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
                 let config = args.build_rattan_config()?;
                 (config, commands)
-            }
-            CliCommand::Convert(args) => {
-                log_converter::convert_log_to_pcapng(args.input, args.output)?;
-                return Ok(());
-            }
+            } // CliCommand::Convert(args) => {
+              //     log_converter::convert_log_to_pcapng(args.input, args.output)?;
+              //     return Ok(());
+              // }
         };
 
         // Overwrite config with CLI options
@@ -347,6 +354,9 @@ fn main() -> ExitCode {
         }
         if let Some(packet_log) = opts.packet_log {
             config.general.packet_log = Some(packet_log);
+        }
+        if let Some(packet_log_mode) = opts.packet_log_mode {
+            config.general.packet_log_mode = Some(packet_log_mode)
         }
         tracing::debug!(?config);
 

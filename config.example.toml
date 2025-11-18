@@ -41,11 +41,9 @@
 # - [commands] Section: Commands to run in rattan
 #
 
-
 # ----- General Section -----
 # This section determines how to run the rattan itself in general.
 [general]
-
 # Configure the path to store compressed packet log.
 # This logging feature will only be enabled when the `packet_log` field is specified.
 # The meta data of flows will be stored in the file of name `packet_log`.flows
@@ -53,11 +51,9 @@
 
 # ----- General Section End -----
 
-
 # ----- Environment Section -----
 # This section determines how to build the environment.
 [env]
-
 # Netns mode
 # Possible values:
 # - "Compatible" : The `ns-left` side is a new network namespace
@@ -71,7 +67,6 @@
 #
 # Default: "Compatible"
 mode = "Compatible"
-
 # The number of veth pairs between `ns-left` and `ns-rattan`
 # Possible values: 1..=254
 # Default value: 1
@@ -82,23 +77,19 @@ left_veth_count = 2
 
 # ----- Environment Section End -----
 
-
 # ----- HTTP Section -----
 # This section configures Rattan's HTTP control server.
 [http]
-
 # Enable HTTP server
 #
 # Default: false
 enable = false
-
 # HTTP server port
 #
 # Default: 8086
 port = 8086
 
 # ----- HTTP Section End -----
-
 
 # ----- Cells Section -----
 # This section describes the emulation cells.
@@ -112,12 +103,9 @@ port = 8086
 # - "Custom"   : Custom cell, only specify the cell ID used in link section,
 #                and the cell must be built by the user
 [cells]
-
-
 # Bw Cell Example
 [cells.up_1]
 type = "Bw"
-
 # Type of bandwidth calculation
 # Possible values:
 # - "LinkLayer"    : Count the link layer size (NetworkLayer + 38)
@@ -127,7 +115,6 @@ type = "Bw"
 #
 # Default: "NetworkLayer"
 bw_type = "NetworkLayer"
-
 # Bandwidth
 # Now we need to break down the bandwidth into two parts: <gbps> and <bps>,
 # which means (1e9 * <gbps> + <bps>) bps. Here <bps> must be less than 1e9.
@@ -135,7 +122,6 @@ bw_type = "NetworkLayer"
 #
 # Default: Unlimited
 bandwidth = "1Gbps 200Mbps"
-
 # Queue type
 # Possible values:
 # - "Infinite" : Infinite queue
@@ -145,7 +131,6 @@ bandwidth = "1Gbps 200Mbps"
 #
 # Default: "Infinite"
 queue = "DropTail"
-
 # Queue configuration
 # Different queue types have different configurations.
 # - For Infinite queue, no configuration is needed.
@@ -166,11 +151,9 @@ queue = "DropTail"
 #
 queue_config = { packet_limit = 60 }
 
-
 # Delay Cell Example
 [cells.up_2]
 type = "Delay"
-
 # Delay
 # Delay is a string like 10ms, 1s, 100us, etc.
 #
@@ -180,7 +163,6 @@ delay = "10ms"
 # Delay Replay Cell Example
 [cells.up_3]
 type = "DelayReplay"
-
 # Delay trace
 #
 # Should specify the delay trace file in JSON or TOML format.
@@ -194,7 +176,6 @@ trace = "./assets/dynamic-delay.json"
 # Loss Replay Cell Example
 [cells.up_4]
 type = "LossReplay"
-
 # Loss trace
 #
 # Should specify the loss trace file in JSON or TOML format.
@@ -208,7 +189,6 @@ trace = "./assets/dynamic-loss.toml"
 # BwReplay Cell Example
 [cells.down_1]
 type = "BwReplay"
-
 # Bandwidth trace
 #
 # Should specify the bandwidth trace file either in Mahimahi format, or in JSON or TOML format (netem-trace) .
@@ -222,17 +202,15 @@ type = "BwReplay"
 # Trace file is in the format of Mahimahi bandwidth trace file.
 # Refer to: <https://github.com/ravinet/mahimahi/tree/master/traces>
 # For example, the following trace means 24Mbps forever.
-trace = "./assets/24Mbps.trace"
-
+# trace = "./assets/24Mbps.trace"
+trace = "./assets/rectangular_32Mbps_11s.trace.toml"
 # Queue type
 # Same as Bw cell
 queue = "CoDel"
 
-
 # Loss Cell Example
 [cells.down_2]
 type = "Loss"
-
 # Loss pattern
 # The loss pattern describes how the packets are dropped when going through.
 # It is a list of float numbers, each number is the loss rate of one packet.
@@ -248,24 +226,20 @@ pattern = [0.1, 0.2]
 # Delay Per-Packet Cell Example
 [cells.down_3]
 type = "DelayPerPacket"
-
 trace = "./assets/delay-per-packet.toml"
 
 # Spy Cell Example
 [cells.spy]
 type = "Spy"
-
 path = "/tmp/spy.pcap"
 
 # Shadow Cell Example
 [cells.shadow]
 type = "Shadow"
 
-
 # Router Cell Example
 [cells.router]
 type = "Router"
-
 # Egress connections
 #
 # It is an ordered list of strings, where each one is a cell ID.
@@ -293,31 +267,25 @@ prefix = "10.2.0.0/16"
 # Token Bucket Cell Example
 [cells.token_bucket]
 type = "TokenBucket"
-
 # Token Bucket configuration
 # We have 5 fields for TokenBucket:
 # "limit" : Size of the queue of TokenBucket cell in bytes.
 # Default: Unlimited
 limit = 1024
-
 # "burst" : Size of the bucket in bytes.
 # Default: Unlimited
 burst = "5KB"
-
 # "rate" : The rate limit of the bucket in bytes per second.
 # Default: Unlimited
 rate = "500Kbps"
-
 # - "minburst" : Specifies the size of the peakrate bucket.
 # Default: Unlimited
 minburst = "1540B"
-
 # - "peakrate" : Maximum depletion rate of the bucket.
 # Default: Unlimited
 peakrate = "1Mbps"
 
 # ----- Cells Section End -----
-
 
 # ----- Links Section -----
 # This section describes how to link the cells.

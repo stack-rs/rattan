@@ -22,7 +22,18 @@
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 # |          ip.checksum          |   tcp.flags   |  tcp.dataofs  |
 # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
+#
+# 0                   1                   2                   3
+# 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# |       LH.length       | LH.ty.|   GPH.length  |GPH.ac.|GPH.ty.|
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# |                          GP.timestamp                         |
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# |           GP.length           |       PRH.length      |PRH.ty.|
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+# |                 header_offset                 | header_length |
+# +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 import argparse
 import ctypes
 import json
@@ -32,7 +43,7 @@ import sys
 import pcapng.blocks as blocks
 import pcapng.constants.link_types as link_types
 from pcapng import FileWriter
-from scapy.layers.inet import Ether, IP, TCP
+from scapy.layers.inet import IP, TCP, Ether
 
 c_uint8 = ctypes.c_uint8
 c_uint16 = ctypes.c_uint16

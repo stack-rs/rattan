@@ -1,0 +1,25 @@
+[package]
+name = "rattan-log"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+binread = { workspace = true }
+bitfield = { workspace = true }
+num_enum = { workspace = true }
+pcap-file = { workspace = true }
+plain = { workspace = true }
+derive_more = {workspace = true}
+static_assertions = "1.1.0"
+once_cell = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+memmap2 = "0.9.9"
+hex = "0.4.3"
+
+[dev-dependencies]
+hex = "0.4.3"
+test-log = "0.2.18"
