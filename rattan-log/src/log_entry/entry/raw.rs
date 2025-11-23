@@ -1,19 +1,18 @@
 use binread::BinRead;
 use plain::Plain;
 
-use super::ProtocolHeader;
 use crate::{
     blob::RelativePointer,
-    log_entry::{general_packet::GeneralPktEntry, protocol::Protocol, LogEntryHeader},
+    log_entry::{
+        general_packet::{GeneralPacketType, GeneralPktEntry},
+        LogEntryHeader,
+    },
 };
 
 #[derive(Debug, Clone, Copy, BinRead, PartialEq, Eq, Default)]
-#[br(import(header: ProtocolHeader))]
 #[repr(C, packed(2))]
 pub struct RawEntry {
-    #[br(calc = header)]
-    pub header: ProtocolHeader,
-    // pub flow_id: u32,
+    pub flow_index: u16,
     pub pointer: RelativePointer,
 }
 
@@ -27,7 +26,7 @@ unsafe impl Plain for RawEntry {}
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |                          GP.timestamp                         |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |           GP.length           |       PRH.length      |PRH.ty.|
+// |           GP.length           |          flow index           |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |           Relative Offset to Chunk            |   Record.len  |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -43,31 +42,14 @@ pub struct RawLogEntry {
 unsafe impl Plain for RawLogEntry {}
 
 impl RawLogEntry {
-    pub fn new_tcpip() -> Self {
+    pub fn new(pkt_type: GeneralPacketType) -> Self {
         let mut entry = Self::default();
 
         entry.header.set_length(16);
         entry.header.set_type(0);
 
         entry.general_pkt_entry.header.set_length(8);
-        entry.general_pkt_entry.header.set_type(0);
-
-        entry.raw_entry.header.set_length(6);
-        entry.raw_entry.header.set_type(Protocol::TCPIPRaw as u8);
-
-        entry
-    }
-    pub fn new_tcp() -> Self {
-        let mut entry = Self::default();
-
-        entry.header.set_length(16);
-        entry.header.set_type(0);
-
-        entry.general_pkt_entry.header.set_length(8);
-        entry.general_pkt_entry.header.set_type(0);
-
-        entry.raw_entry.header.set_length(6);
-        entry.raw_entry.header.set_type(Protocol::TCPRaw as u8);
+        entry.general_pkt_entry.header.set_type(pkt_type as u8);
 
         entry
     }

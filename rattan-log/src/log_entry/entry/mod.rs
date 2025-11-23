@@ -1,13 +1,13 @@
+pub mod chunk_header;
+pub mod flow_entry;
+pub mod raw;
 pub mod tcp_ip_compact;
 
-pub mod raw;
+use super::{LogEntry, LogEntryHeader};
+
 use binread::BinRead;
 use num_enum::TryFromPrimitive;
-
-use crate::log_entry::{
-    protocol::{raw::RawEntry, tcp_ip_compact::TCPProtocolEntry},
-    LogEntryHeader,
-};
+use tcp_ip_compact::TCPProtocolEntry;
 
 pub type ProtocolHeader = LogEntryHeader;
 
@@ -15,14 +15,11 @@ pub type ProtocolHeader = LogEntryHeader;
 #[repr(u8)]
 pub enum Protocol {
     TCPIPCompact = 0,
-    TCPRaw = 1,
-    TCPIPRaw = 2,
 }
 
 #[derive(Debug)]
 pub enum ProtocolEntryVariant {
     TCPIPCompact(TCPProtocolEntry),
-    Raw(RawEntry),
 }
 
 impl BinRead for ProtocolEntryVariant {
@@ -39,9 +36,7 @@ impl BinRead for ProtocolEntryVariant {
             Some(Protocol::TCPIPCompact) => ProtocolEntryVariant::TCPIPCompact(
                 TCPProtocolEntry::read_options(reader, options, (protocol_header,))?,
             ),
-            Some(Protocol::TCPIPRaw) | Some(Protocol::TCPRaw) => ProtocolEntryVariant::Raw(
-                RawEntry::read_options(reader, options, (protocol_header,))?,
-            ),
+
             _ => Err(binread::Error::NoVariantMatch { pos })?,
         };
 
@@ -51,15 +46,11 @@ impl BinRead for ProtocolEntryVariant {
 
 #[cfg(test)]
 mod test {
-    use crate::{
-        blob::RelativePointer,
-        log_entry::protocol::{raw::RawEntry, Protocol},
-        PlainBytes,
-    };
+    use crate::{log_entry::entry::Protocol, PlainBytes};
     use binread::BinRead;
     use std::io::Cursor;
 
-    use crate::log_entry::protocol::{
+    use crate::log_entry::entry::{
         tcp_ip_compact::TCPProtocolEntry, ProtocolEntryVariant, ProtocolHeader,
     };
 
@@ -87,35 +78,6 @@ mod test {
 
         match decoded {
             ProtocolEntryVariant::TCPIPCompact(entry) => assert_eq!(entry, compact_entry),
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    pub fn parse_raw_entry() {
-        let mut pointer = RelativePointer::new();
-        pointer.set_length(20);
-        pointer.set_offset(0x223344); // 24-bit
-
-        let mut raw_entry = RawEntry {
-            header: ProtocolHeader::default(),
-            // flow_id: 0x19260817,
-            pointer,
-        };
-        // const ENTRY_SIZE: usize = 10;
-        const ENTRY_SIZE: usize = 6;
-        assert_eq!(ENTRY_SIZE, size_of::<RawEntry>());
-        raw_entry.header.set_length(ENTRY_SIZE as u16);
-        raw_entry.header.set_type(Protocol::TCPRaw as u8);
-
-        let bytes = raw_entry.as_bytes().to_owned();
-        dbg!(hex::encode_upper(&bytes));
-        let mut cursor = Cursor::new(bytes);
-        let decoded = ProtocolEntryVariant::read(&mut cursor).unwrap();
-
-        match decoded {
-            ProtocolEntryVariant::Raw(entry) => assert_eq!(entry, raw_entry),
-            _ => unreachable!(),
         }
     }
 }

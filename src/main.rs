@@ -21,19 +21,15 @@ use rattan_core::env::StdNetEnvMode;
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
 
+use crate::{build::CLAP_LONG_VERSION, combined_trace::write_combined_trace};
 use rattan_core::radix::PacketLogMode;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
+use rattan_log::{convert_log_to_pcapng, LogConverterArgs};
 use serde::{Deserialize, Serialize};
+use shadow_rs::shadow;
 use tracing::warn;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-use crate::{
-    build::CLAP_LONG_VERSION,
-    combined_trace::write_combined_trace,
-    // log_converter::LogConverterArgs,
-};
-use shadow_rs::shadow;
 
 mod channel;
 mod combined_trace;
@@ -153,8 +149,8 @@ enum CliCommand {
     Link(channel::ChannelArgs),
     /// Run the instance according to the config.
     Run(RunArgs),
-    // Convert Rattan packet log into .pcapng file.
-    // Convert(LogConverterArgs),
+    /// Convert Rattan packet log into .pcapng file.
+    Convert(LogConverterArgs),
 }
 
 #[derive(Args, Debug, Default, Clone)]
@@ -337,10 +333,11 @@ fn main() -> ExitCode {
                     .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
                 let config = args.build_rattan_config()?;
                 (config, commands)
-            } // CliCommand::Convert(args) => {
-              //     log_converter::convert_log_to_pcapng(args.input, args.output)?;
-              //     return Ok(());
-              // }
+            }
+            CliCommand::Convert(args) => {
+                convert_log_to_pcapng(args.input, args.output)?;
+                return Ok(());
+            }
         };
 
         // Overwrite config with CLI options

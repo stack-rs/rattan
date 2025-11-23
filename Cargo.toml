@@ -18,10 +18,11 @@ homepage = "https://github.com/stack-rs/rattan"
 repository = "https://github.com/stack-rs/rattan"
 
 [workspace.dependencies]
-derive_more = { version = "2.0.1", features = ["deref", "deref_mut"]}
 binread = "2.2.0"
 bitfield = "0.19.0"
+clap = { version = "4.2.4", features = ["derive"] }
 ctrlc = "3.2.5"
+derive_more = { version = "2.0.1", features = ["deref", "deref_mut"] }
 figment = { version = "0.10", features = ["env", "json", "toml"] }
 futures = "0.3.29"
 human-bandwidth = { version = "0.1.4", features = ["binary-system", "serde"] }
@@ -58,11 +59,10 @@ tokio = { version = "1.26.0", features = [
 ] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
-clap = { version = "4.2.4", features = ["derive"] }
 
 [dependencies]
-clap = { version = "4.2.4", features = ["derive"] }
 binread = "2.2.0"
+clap = { version = "4.2.4", features = ["derive"] }
 # anyhow = "1.0.75"
 # bollard = "0.15.0"
 csv = "1.4.0"
@@ -80,6 +80,7 @@ paste = "1.0.14"
 pcap-file = "2.0.0"
 rand = { workspace = true }
 rattan-core = { path = "rattan-core", features = ["serde"] }
+rattan-log = { path = "rattan-log" }
 serde = { workspace = true }
 serde_json = "1.0.114"
 shadow-rs = { version = "1.3.0", default-features = false }

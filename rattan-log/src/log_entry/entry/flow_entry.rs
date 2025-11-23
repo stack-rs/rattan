@@ -3,6 +3,7 @@ use crate::{FlowDesc, PlainBytes};
 use super::{LogEntry, LogEntryHeader};
 use binread::BinRead;
 use plain::Plain;
+use std::net::{IpAddr, Ipv4Addr};
 
 // The detailed spec of TCP flow entry
 //
@@ -19,7 +20,7 @@ use plain::Plain;
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |          src.port             |          dst.port             |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |  win_scale    |    RESERVED   |           **RESERVED**        |
+// |  win_scale    |    RESERVED   |         flow_index            |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |                   base ts (lower 32bit)                       |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -60,7 +61,7 @@ pub struct TCPFlow {
     pub dst_port: u16,
     pub window_scalling: u8,
     pub _reserved_1: u8,
-    pub _reserved_2: u16,
+    pub flow_index: u16,
     pub base_ts: i64,
 }
 
@@ -69,8 +70,15 @@ unsafe impl Plain for TCPFlow {}
 // window scalling should be 0 to 14. Thus a 15 is invalid.
 const UNKNOWN_WINDOW_SCALLING: u8 = 15;
 
+#[derive(Debug, Clone)]
 pub enum FlowEntryVariant {
     TCP(TCPFlow),
+}
+
+impl From<TCPFlow> for FlowEntryVariant {
+    fn from(value: TCPFlow) -> Self {
+        Self::TCP(value)
+    }
 }
 
 impl FlowEntryVariant {
@@ -82,12 +90,26 @@ impl FlowEntryVariant {
             }
         }
     }
+
+    pub fn get_ip(&self) -> Vec<IpAddr> {
+        vec![self.get_src_ip(), self.get_dst_ip()]
+    }
+    pub fn get_src_ip(&self) -> IpAddr {
+        match self {
+            FlowEntryVariant::TCP(tcp_flow) => IpAddr::V4(Ipv4Addr::from_bits(tcp_flow.src_ip)),
+        }
+    }
+    pub fn get_dst_ip(&self) -> IpAddr {
+        match self {
+            FlowEntryVariant::TCP(tcp_flow) => IpAddr::V4(Ipv4Addr::from_bits(tcp_flow.dst_ip)),
+        }
+    }
 }
 
-impl From<(u32, i64, FlowDesc)> for FlowEntryVariant {
+impl From<(u32, i64, FlowDesc, u16)> for FlowEntryVariant {
     // (flow_id, base_ts, flow_desc)
-    fn from(value: (u32, i64, FlowDesc)) -> Self {
-        let (flow_id, base_ts, flow_desc) = value;
+    fn from(value: (u32, i64, FlowDesc, u16)) -> Self {
+        let (flow_id, base_ts, flow_desc, flow_index) = value;
         let mut entryheader = FlowEntryHeader::default();
         entryheader.set_length(32);
         match flow_desc {
@@ -102,7 +124,7 @@ impl From<(u32, i64, FlowDesc)> for FlowEntryVariant {
                     dst_port,
                     window_scalling: win_scale.unwrap_or(UNKNOWN_WINDOW_SCALLING),
                     _reserved_1: 0,
-                    _reserved_2: 0,
+                    flow_index,
                     base_ts,
                 };
                 Self::TCP(entry)

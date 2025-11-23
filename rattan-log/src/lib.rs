@@ -9,7 +9,7 @@ pub use logger::{
     FlowDesc, RattanLogOp, LOGGING_TX,
 };
 
-pub use log_entry::protocol::{raw::RawLogEntry, tcp_ip_compact::TCPLogEntry};
+pub use log_entry::entry::{raw::RawLogEntry, tcp_ip_compact::TCPLogEntry};
 
 pub trait PlainBytes: Plain + Sized {
     fn as_bytes(&self) -> &[u8] {
@@ -22,3 +22,18 @@ pub trait PlainBytes: Plain + Sized {
     }
 }
 impl<T: Plain + Sized> PlainBytes for T {}
+
+use clap::{command, Args};
+use std::path::PathBuf;
+
+/// Convert Rattan Packet Log file to pcapng file for each end
+#[derive(Args, Debug, Default, Clone)]
+#[command(rename_all = "kebab-case")]
+pub struct LogConverterArgs {
+    /// Input Rattan Packet Log file path
+    pub input: PathBuf,
+    /// Output pcapng file name prefix
+    pub output: PathBuf,
+}
+
+pub use logger::file_reader::convert_log_to_pcapng;

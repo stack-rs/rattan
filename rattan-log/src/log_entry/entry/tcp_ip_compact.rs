@@ -1,8 +1,8 @@
 use binread::BinRead;
 use plain::Plain;
 
-use super::ProtocolHeader;
-use crate::log_entry::{general_packet::GeneralPktEntry, protocol::Protocol, LogEntryHeader};
+use super::{Protocol, ProtocolHeader};
+use crate::log_entry::{general_packet::GeneralPktEntry, LogEntryHeader};
 
 #[derive(Debug, Clone, Copy, BinRead, PartialEq, Eq, Default)]
 #[br(import(header: ProtocolHeader))]

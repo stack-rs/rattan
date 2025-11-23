@@ -15,7 +15,10 @@ use std::{
     sync::{atomic::AtomicU32, Arc},
 };
 
-use rattan_log::{FlowDesc, PlainBytes, RattanLogOp, RawLogEntry, LOGGING_TX};
+use rattan_log::{
+    log_entry::general_packet::GeneralPacketType, FlowDesc, PlainBytes, RattanLogOp, RawLogEntry,
+    LOGGING_TX,
+};
 
 use async_trait::async_trait;
 use bitfield::{BitRange, BitRangeMut};
@@ -359,10 +362,11 @@ fn log_packet<T: Packet>(
                 }
             }
             PacketLogMode::RawIP | PacketLogMode::RawTCP => {
+                let flow_id = p.get_flow_id();
                 let mut entry = if mode == &PacketLogMode::RawIP {
-                    RawLogEntry::new_tcpip()
+                    RawLogEntry::new(GeneralPacketType::RawIP)
                 } else {
-                    RawLogEntry::new_tcp()
+                    RawLogEntry::new(GeneralPacketType::RawTCPIP)
                 };
 
                 entry.general_pkt_entry.pkt_length = pkt_len;
@@ -385,7 +389,8 @@ fn log_packet<T: Packet>(
 
                         if let Some(raw) = p.as_slice().get(start..end) {
                             // Ignore error here.
-                            tx.send(RattanLogOp::RawEntry(entry, raw.to_vec())).ok();
+                            tx.send(RattanLogOp::RawEntry(flow_id, entry, raw.to_vec()))
+                                .ok();
                         }
                     }
                 }

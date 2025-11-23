@@ -1,10 +1,9 @@
 use binread::{BinRead, Error};
 use bitfield::{BitRange, BitRangeMut};
+use num_enum::TryFromPrimitive;
 use plain::Plain;
-pub mod chunk_header;
-pub mod flow_entry;
+pub mod entry;
 pub mod general_packet;
-pub mod protocol;
 pub use general_packet::PktAction;
 
 #[derive(Debug, Clone, Copy, BinRead, PartialEq, Eq)]
@@ -42,17 +41,27 @@ impl Default for LogEntryHeader {
 }
 
 use crate::log_entry::{
-    chunk_header::ChunkPrologue,
-    flow_entry::{read_flow_entry, TCPFlowEntry},
+    entry::chunk_header::ChunkPrologue,
+    entry::flow_entry::{read_flow_entry, TCPFlowEntry},
+    entry::{raw::RawLogEntry, tcp_ip_compact::TCPLogEntry},
     general_packet::read_general_packet,
-    protocol::{raw::RawLogEntry, tcp_ip_compact::TCPLogEntry},
 };
 // All possible entries.
+#[derive(Debug)]
 pub enum LogEntry {
     CompactTCP(TCPLogEntry),
     Raw(RawLogEntry),
     Chunk(ChunkPrologue),
     TCPFlow(TCPFlowEntry),
+}
+
+#[derive(Debug, Clone, Copy, TryFromPrimitive)]
+#[repr(u8)]
+pub enum LogEntryType {
+    GeneralPacket = 0,
+    Cell = 1,
+    FlowEntry = 2,
+    ChunkPrologue = 15,
 }
 
 impl BinRead for LogEntry {
@@ -67,14 +76,20 @@ impl BinRead for LogEntry {
         let header = LogEntryHeader::read_options(reader, options, ())?;
         let log_entry_type = header.get_type();
 
-        match log_entry_type {
+        match log_entry_type.try_into() {
             // Packet log entry
-            0 => read_general_packet(reader, options).map(|gp| LogEntry::from((header, gp))),
+            Ok(LogEntryType::GeneralPacket) => read_general_packet(header, reader, options),
             // Cell information
-            // 1 => todo()!,
+            Ok(LogEntryType::Cell) => {
+                unimplemented!("Cell information to be added in the future")
+            }
             // Flow entry
-            2 => read_flow_entry(reader, options).map(|flow| LogEntry::from((header, flow))),
-            15 => ChunkPrologue::read_options(reader, options, (header,)).map(LogEntry::Chunk),
+            Ok(LogEntryType::FlowEntry) => {
+                read_flow_entry(reader, options).map(|flow| LogEntry::from((header, flow)))
+            }
+            Ok(LogEntryType::ChunkPrologue) => {
+                ChunkPrologue::read_options(reader, options, (header,)).map(LogEntry::Chunk)
+            }
             _ => Err(Error::NoVariantMatch { pos }),
         }
         .or_else(|e| {
@@ -88,7 +103,7 @@ impl BinRead for LogEntry {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::log_entry::{general_packet::PktAction, protocol::Protocol};
+    use crate::log_entry::general_packet::PktAction;
     use binread::BinReaderExt;
     use std::io::Cursor;
 
@@ -129,7 +144,7 @@ mod test {
 
     #[test]
     pub fn parse_raw() {
-        let data = hex::decode("100008019e3e01004a00061044332214").unwrap();
+        let data = hex::decode("100008139e3e01004a00061044332214").unwrap();
         assert_eq!(data.len(), 16);
         let mut cursor = Cursor::new(data);
 
@@ -139,14 +154,13 @@ mod test {
 
             let pkt = entry.general_pkt_entry;
             assert_eq!(pkt.header.get_length(), 8);
-            assert_eq!(pkt.header.get_pkt_action(), PktAction::Recv as u8);
+            assert_eq!(pkt.header.get_pkt_action(), PktAction::Passthrough as u8);
             assert_eq!(pkt.pkt_length, 74);
             let ts = pkt.ts;
             assert_eq!(ts, 81566);
 
             let raw = entry.raw_entry;
-            assert_eq!(raw.header.get_length(), 6);
-            assert_eq!(raw.header.get_type(), Protocol::TCPRaw as u8);
+            assert_eq!(raw.flow_index, 0x1006);
 
             let pointer = raw.pointer;
             // assert_eq!(flow_id, 0x19260817);

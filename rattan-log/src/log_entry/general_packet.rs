@@ -1,6 +1,7 @@
-use super::protocol::{raw::RawLogEntry, tcp_ip_compact::TCPLogEntry};
+use super::entry::{raw::RawLogEntry, tcp_ip_compact::TCPLogEntry};
 use super::{LogEntry, LogEntryHeader};
-use crate::log_entry::protocol::ProtocolEntryVariant;
+use crate::log_entry::entry::raw::RawEntry;
+use crate::log_entry::entry::ProtocolEntryVariant;
 use binread::BinRead;
 use bitfield::{BitRange, BitRangeMut};
 use num_enum::TryFromPrimitive;
@@ -77,43 +78,42 @@ impl Default for GeneralPktHeader {
     }
 }
 
-// Make it simple as there is only one type possible variant for GeneralPacket now.
-pub type GeneralPacketPayload = ProtocolEntryVariant;
-
-pub type GeneralPacketVariant = (GeneralPktEntry, GeneralPacketPayload);
+#[derive(Debug, Clone, Copy, TryFromPrimitive, PartialEq, Eq)]
+#[repr(u8)]
+pub enum GeneralPacketType {
+    Compact = 0,
+    RawTCPIP = 1,
+    RawIP = 2,
+}
 
 pub fn read_general_packet<R: std::io::Read + std::io::Seek>(
+    header: LogEntryHeader,
     reader: &mut R,
     options: &binread::ReadOptions,
-) -> binread::BinResult<GeneralPacketVariant> {
+) -> binread::BinResult<LogEntry> {
     let pos = reader.stream_position()?;
 
-    let general_packet = GeneralPktEntry::read_options(reader, options, ())?;
+    let general_pkt_entry = GeneralPktEntry::read_options(reader, options, ())?;
 
-    if general_packet.header.get_type() != 0 {
-        return Err(binread::Error::NoVariantMatch { pos });
-    }
-
-    Ok((
-        general_packet,
-        ProtocolEntryVariant::read_options(reader, options, ())?,
-    ))
-}
-impl From<(LogEntryHeader, (GeneralPktEntry, GeneralPacketPayload))> for LogEntry {
-    fn from(value: (LogEntryHeader, (GeneralPktEntry, GeneralPacketPayload))) -> Self {
-        let (header, payload) = value;
-        let (general_pkt_entry, payload) = payload;
-        match payload {
-            ProtocolEntryVariant::TCPIPCompact(tcp_entry) => Self::CompactTCP(TCPLogEntry {
+    match general_pkt_entry.header.get_type().try_into() {
+        Ok(GeneralPacketType::Compact) => Ok(
+            match ProtocolEntryVariant::read_options(reader, options, ())? {
+                ProtocolEntryVariant::TCPIPCompact(tcp_entry) => {
+                    LogEntry::CompactTCP(TCPLogEntry {
+                        header,
+                        general_pkt_entry,
+                        tcp_entry,
+                    })
+                }
+            },
+        ),
+        Ok(GeneralPacketType::RawTCPIP) | Ok(GeneralPacketType::RawIP) => {
+            Ok(LogEntry::Raw(RawLogEntry {
                 header,
                 general_pkt_entry,
-                tcp_entry,
-            }),
-            ProtocolEntryVariant::Raw(raw_entry) => Self::Raw(RawLogEntry {
-                header,
-                general_pkt_entry,
-                raw_entry,
-            }),
+                raw_entry: RawEntry::read_options(reader, options, ())?,
+            }))
         }
+        _ => Err(binread::Error::NoVariantMatch { pos }),
     }
 }

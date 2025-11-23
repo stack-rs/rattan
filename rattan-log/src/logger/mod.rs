@@ -6,6 +6,8 @@ use std::net::Ipv4Addr;
 
 use crate::RawLogEntry;
 
+pub mod build_pcap;
+pub mod file_reader;
 pub mod file_writer;
 pub(crate) mod mmap;
 
@@ -47,9 +49,12 @@ impl Eq for FlowDesc {}
 #[derive(Clone)]
 pub enum RattanLogOp {
     Entry(Vec<u8>),
-    RawEntry(RawLogEntry, Vec<u8>), // Entry, Raw header
+    RawEntry(u32, RawLogEntry, Vec<u8>), // Entry, Raw header
     Flow(u32, i64, FlowDesc),
     End,
 }
 
 pub static LOGGING_TX: OnceCell<UnboundedSender<RattanLogOp>> = OnceCell::new();
+
+pub const META_DATA_CHUNK_SIZE: u64 = mmap::PAGE_SIZE; // 4KiB
+pub const LOG_ENTRY_CHUNK_SIZE: usize = (mmap::PAGE_SIZE as usize) << 8; // 1MiB

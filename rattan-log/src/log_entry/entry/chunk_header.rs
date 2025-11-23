@@ -53,6 +53,9 @@ pub struct ChunkEntry {
     pub _reserved: u64,
 }
 
+pub const TYPE_LOG_ENTRY: u8 = 0;
+pub const TYPE_LOG_META: u8 = 1;
+
 pub fn new_log_entry_chunk_prologue(
     ref_offset: u64,
     chunk_size_pages: u32,
@@ -62,7 +65,7 @@ pub fn new_log_entry_chunk_prologue(
     prologue.header.set_length(32);
     prologue.header.set_type(15);
     prologue.chunk.header.set_length(30);
-    prologue.chunk.header.set_type(0);
+    prologue.chunk.header.set_type(TYPE_LOG_ENTRY);
     prologue.chunk.offset = ref_offset;
     prologue.chunk.data_length = chunk_len as u32;
     prologue.chunk.log_version = 0x20251120;
@@ -81,8 +84,8 @@ pub fn new_meta_chunk_prologue(
     prologue.header.set_length(32);
     prologue.header.set_type(15);
     prologue.chunk.header.set_length(30);
-    prologue.chunk.header.set_type(1);
-    prologue.chunk.offset = dbg!(next_offset);
+    prologue.chunk.header.set_type(TYPE_LOG_META);
+    prologue.chunk.offset = next_offset;
     prologue.chunk.data_length = chunk_len as u32;
     prologue.chunk.log_version = 0x20251120;
     prologue.chunk.chunk_size = 4096 * chunk_size_pages;
