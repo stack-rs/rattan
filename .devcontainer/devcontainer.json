@@ -2,16 +2,13 @@
   "name": "Rattan Dev Container",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "features": {
-    "ghcr.io/devcontainers/features/common-utils:2": {
-      "installZsh": "true",
-      "username": "ubuntu",
-      "upgradePackages": "true"
-    },
     "ghcr.io/devcontainers/features/rust:1": {},
     "ghcr.io/rocker-org/devcontainer-features/apt-packages:1": {
       "packages": "ethtool,iputils-ping,iperf,iperf3,pkg-config,m4,clang,llvm,libelf-dev,libpcap-dev,gcc-multilib"
     },
-    "ghcr.io/devcontainers/features/nix:1": {},
+    "ghcr.io/devcontainers/features/nix:1": {
+      "extraNixConfig": "experimental-features = nix-command flakes"
+    },
     "ghcr.io/devcontainers/features/docker-in-docker:2": {}
   },
   "runArgs": [
