@@ -4,14 +4,9 @@ use clap::{Args, ValueEnum};
 use netem_trace::{Bandwidth, Delay};
 use paste::paste;
 use rattan_core::{
-    cells::{
-        bandwidth::{
-            queue::{
-                CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
-            },
-            BwCellConfig,
-        },
-        StdPacket,
+    cells::bandwidth::{
+        queue::{CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig},
+        BwCellConfig,
     },
     config::{
         BwCellBuildConfig, BwReplayCellBuildConfig, BwReplayQueueConfig, CellBuildConfig,
@@ -148,8 +143,11 @@ macro_rules! bwreplay_q_args_into_config {
 }
 
 impl ChannelArgs {
-    pub fn build_rattan_config(self) -> rattan_core::error::Result<RattanConfig<StdPacket>> {
-        let mut cells_config = HashMap::<String, CellBuildConfig<StdPacket>>::new();
+    pub fn build_rattan_config<P>(self) -> rattan_core::error::Result<RattanConfig<P>>
+    where
+        P: rattan_core::cells::Packet,
+    {
+        let mut cells_config = HashMap::<String, CellBuildConfig<P>>::new();
         let mut links_config = HashMap::<String, String>::new();
         let mut uplink_count = 0;
         let mut downlink_count = 0;
@@ -302,7 +300,7 @@ impl ChannelArgs {
             links_config.insert("right".to_string(), "left".to_string());
         }
 
-        Ok(RattanConfig::<StdPacket> {
+        Ok(RattanConfig::<P> {
             env: StdNetEnvConfig {
                 mode: StdNetEnvMode::Compatible,
                 client_cores: vec![1],

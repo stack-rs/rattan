@@ -14,9 +14,8 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
 
-use rattan_core::cells::StdPacket;
 use rattan_core::env::StdNetEnvMode;
-use rattan_core::metal::io::af_packet::AfPacketDriver;
+use rattan_core::metal::io::af_xdp::{XDPDriver, XDPPacket};
 use rattan_core::radix::RattanRadix;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
 use serde::{Deserialize, Serialize};
@@ -116,9 +115,9 @@ pub struct DisplayTaskCommands {
 
 #[derive(Subcommand, Debug, Clone)]
 enum CliCommand {
-    /// Run a templated channel with command line arguments.
+    /// Run a templated channel with command line arguments using AF_XDP driver.
     Link(channel::ChannelArgs),
-    /// Run the instance according to the config.
+    /// Run the instance according to the config with AF_XDP driver.
     Run(RunArgs),
 }
 
@@ -265,7 +264,7 @@ fn main() -> ExitCode {
                         args.config.display()
                     )));
                 }
-                let config: RattanConfig<StdPacket> = Figment::new()
+                let config: RattanConfig<XDPPacket> = Figment::new()
                     .merge(Toml::file(&args.config))
                     .merge(Env::prefixed("RATTAN_"))
                     .extract()
@@ -300,7 +299,7 @@ fn main() -> ExitCode {
                     .select("commands")
                     .extract::<TaskCommands>()
                     .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
-                let config = args.build_rattan_config::<StdPacket>()?;
+                let config = args.build_rattan_config::<XDPPacket>()?;
                 (config, commands)
             }
         };
@@ -358,7 +357,7 @@ fn main() -> ExitCode {
         }
 
         // Start Rattan
-        let mut radix = RattanRadix::<AfPacketDriver>::new(config)?;
+        let mut radix = RattanRadix::<XDPDriver>::new(config)?;
         radix.spawn_rattan()?;
         radix.start_rattan()?;
 
