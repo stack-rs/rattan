@@ -124,13 +124,17 @@ impl ParseContext {
         let mut flow_index = HashMap::new();
         let mut base_ts = None;
 
-        for entry in input {
+        for (index, entry) in input.into_iter().enumerate() {
+            let Ok(index) = u16::try_from(index + 1) else {
+                tracing::error!("No more than 65535 flows are supported in current version");
+                break;
+            };
             match entry {
                 FlowEntryVariant::TCP(tcp) => {
                     let flow_id = tcp.flow_id;
                     flows.insert(flow_id, entry);
                     base_ts.get_or_insert(tcp.base_ts);
-                    flow_index.insert(tcp.flow_index, tcp.flow_id);
+                    flow_index.insert(index, tcp.flow_id);
                 }
             }
         }

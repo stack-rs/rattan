@@ -13,21 +13,21 @@ pub(crate) mod mmap;
 
 #[derive(Debug, Clone)]
 pub enum FlowDesc {
-    // src.ip dst.ip src.port dst.port window_scale
-    TCP(Ipv4Addr, Ipv4Addr, u16, u16, Option<u8>),
+    // src.ip dst.ip src.port dst.port option
+    TCP(Ipv4Addr, Ipv4Addr, u16, u16, Option<Vec<u8>>),
 }
 
 impl Hash for FlowDesc {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
-            FlowDesc::TCP(src_ip, dst_ip, src_port, dst_port, _) => {
+            FlowDesc::TCP(src_ip, dst_ip, src_port, dst_port, _options) => {
                 "tcp".hash(state);
                 src_ip.hash(state);
                 dst_ip.hash(state);
                 src_port.hash(state);
                 dst_port.hash(state);
-                // Delibrately skip `window_scale`, as it can only be got from packets with
-                // SYN / SYN_ACK packet, as we need to let the other packets (in which window_scale
+                // Delibrately skip `_options`, as it can only be got from packets with
+                // SYN / SYN_ACK packet, as we need to let the other packets (in which _options
                 // is `None`) considered to be from the same TCP flow in the `Flowmap`.
             }
         }

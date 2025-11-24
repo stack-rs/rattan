@@ -263,7 +263,6 @@ fn writting(
     let mut entry_writer = EntryChunkWriter::new(&path)?;
     path.set_extension("raw");
     let mut raw_blob = raw.then(|| BlobWriter::new(&path));
-    let mut flow_cnt: u16 = 0;
 
     let mut flows = HashMap::new();
     while let Some(entry) = log_rx.blocking_recv() {
@@ -271,12 +270,9 @@ fn writting(
             RattanLogOp::Entry(entry) => entry_writer.add_log_entry(entry.as_slice())?,
 
             RattanLogOp::Flow(flow_id, base_ts, flow_desc) => {
-                flows.entry(flow_id).or_insert_with(|| {
-                    // flow_index starts from 1
-                    flow_cnt += 1;
-                    flow_cnt
-                });
-                let entry = FlowEntryVariant::from((flow_id, base_ts, flow_desc, flow_cnt)).build();
+                let flow_index = 1 + flows.len();
+                flows.entry(flow_id).or_insert(flow_index as u16);
+                let entry = FlowEntryVariant::from((flow_id, base_ts, flow_desc)).build();
                 entry_writer.add_flow_entry(entry);
             }
             RattanLogOp::RawEntry(flow_id, mut entry, raw) => {

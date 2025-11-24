@@ -1,6 +1,6 @@
 use crate::error::Error;
 use async_trait::async_trait;
-use etherparse::{Ethernet2Header, Ipv4Header, TcpOptionElement};
+use etherparse::{Ethernet2Header, Ipv4Header};
 use rattan_log::FlowDesc;
 #[cfg(feature = "serde")]
 use serde::Deserialize;
@@ -218,20 +218,15 @@ impl Packet for StdPacket {
                                         .get(ether_hdr.slice().len() + ip_hdr.slice().len()..)
                                         .unwrap_or(&[]),
                                 ) {
-                                    // Check and record the window scale option, only if SYN bit
+                                    // Record all the options, only if SYN bit
                                     // is set (SYN/ SYN_ACK) packet.
-                                    let window_scale = tcp_hdr.syn().then(|| {
-                                        tcp_hdr.options_iterator().find_map(|option| match option {
-                                            Ok(TcpOptionElement::WindowScale(scale)) => Some(scale),
-                                            _ => None,
-                                        })
-                                    });
+                                    let options = tcp_hdr.syn().then(|| tcp_hdr.options().to_vec());
                                     Some(FlowDesc::TCP(
                                         ip_hdr.source_addr(),
                                         ip_hdr.destination_addr(),
                                         tcp_hdr.source_port(),
                                         tcp_hdr.destination_port(),
-                                        window_scale.flatten(),
+                                        options,
                                     ))
                                 } else {
                                     None

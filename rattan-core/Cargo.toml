@@ -60,6 +60,7 @@ tracing = { workspace = true }
 uuid = { version = "1.10.0", features = ["v4"] }
 rattan-log = {path = "../rattan-log"}
 clap = { workspace = true}
+hex = "0.4.3"
 [dev-dependencies]
 anyhow = "1.0.69"
 clap = { version = "4.5.4", features = ["derive"] }

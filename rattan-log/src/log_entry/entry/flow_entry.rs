@@ -20,12 +20,22 @@ use std::net::{IpAddr, Ipv4Addr};
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |          src.port             |          dst.port             |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |  win_scale    |    RESERVED   |         flow_index            |
-// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |                   base ts (lower 32bit)                       |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |                   base ts (upper 32bit)                       |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                          RESERVED                             |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                                                               |
+// |                                                               |
+// |                                                               |
+// |              Options on SYN/SYN_ACK (40Bytes)                 |
+// |                                                               |
+// |                                                               |
+// |                                                               |
+// |                                                               |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//
 
 pub type FlowEntryHeader = LogEntryHeader;
 #[derive(Debug, Clone, Copy)]
@@ -46,7 +56,7 @@ impl TCPFlowEntry {
 
 unsafe impl Plain for TCPFlowEntry {}
 
-static_assertions::assert_eq_size!(TCPFlowEntry, [u8; 32]);
+static_assertions::assert_eq_size!(TCPFlowEntry, [u8; 72]);
 
 #[derive(Debug, Clone, Copy, BinRead)]
 #[br(import(header: LogEntryHeader))]
@@ -59,16 +69,47 @@ pub struct TCPFlow {
     pub dst_ip: u32,
     pub src_port: u16,
     pub dst_port: u16,
-    pub window_scalling: u8,
-    pub _reserved_1: u8,
-    pub flow_index: u16,
     pub base_ts: i64,
+    pub _reserved: u32,
+    pub options: TCPOption,
 }
 
 unsafe impl Plain for TCPFlow {}
+static_assertions::assert_eq_size!(TCPFlow, [u8; 70]);
 
-// window scalling should be 0 to 14. Thus a 15 is invalid.
-const UNKNOWN_WINDOW_SCALLING: u8 = 15;
+#[derive(Debug, Clone, Copy)]
+#[repr(transparent)]
+pub struct TCPOption {
+    pub options: [u8; 40],
+}
+// As the TCP header can be at most 15 * 4 = 60Bytes in length, the options can be at most 40Bytes long.
+//
+// Also, since a `0x00` is a valid tcp option, which means termination of the options, we can just spare
+// 40 Bytes, write from start, and leave unused part to be filled with 0.
+//
+impl BinRead for TCPOption {
+    type Args = ();
+    fn read_options<R: std::io::Read + std::io::Seek>(
+        reader: &mut R,
+        _options: &binread::ReadOptions,
+        _args: Self::Args,
+    ) -> binread::BinResult<Self> {
+        let mut options = [0u8; 40];
+        reader.read_exact(&mut options)?;
+        Ok(Self { options })
+    }
+}
+
+impl From<Option<Vec<u8>>> for TCPOption {
+    fn from(value: Option<Vec<u8>>) -> Self {
+        let mut options = [0u8; 40];
+        if let Some(value) = value {
+            let len = value.len().min(options.len());
+            options[..len].copy_from_slice(&value[..len]);
+        }
+        Self { options }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum FlowEntryVariant {
@@ -106,14 +147,14 @@ impl FlowEntryVariant {
     }
 }
 
-impl From<(u32, i64, FlowDesc, u16)> for FlowEntryVariant {
+impl From<(u32, i64, FlowDesc)> for FlowEntryVariant {
     // (flow_id, base_ts, flow_desc)
-    fn from(value: (u32, i64, FlowDesc, u16)) -> Self {
-        let (flow_id, base_ts, flow_desc, flow_index) = value;
+    fn from(value: (u32, i64, FlowDesc)) -> Self {
+        let (flow_id, base_ts, flow_desc) = value;
         let mut entryheader = FlowEntryHeader::default();
         entryheader.set_length(32);
         match flow_desc {
-            FlowDesc::TCP(src_ip, dst_ip, src_port, dst_port, win_scale) => {
+            FlowDesc::TCP(src_ip, dst_ip, src_port, dst_port, options) => {
                 entryheader.set_type(0);
                 let entry = TCPFlow {
                     entryheader,
@@ -122,10 +163,9 @@ impl From<(u32, i64, FlowDesc, u16)> for FlowEntryVariant {
                     dst_ip: dst_ip.to_bits(),
                     src_port,
                     dst_port,
-                    window_scalling: win_scale.unwrap_or(UNKNOWN_WINDOW_SCALLING),
-                    _reserved_1: 0,
-                    flow_index,
                     base_ts,
+                    _reserved: 0,
+                    options: options.into(),
                 };
                 Self::TCP(entry)
             }
