@@ -392,7 +392,7 @@ mod test {
         let file = new_file("stream.bin").unwrap();
 
         let mut writter = MmapStreamWriter::<1>::new_truncate(&file).unwrap();
-        let mut bytes = (0..).into_iter().map(|x| ((x * 7) % 256) as u8);
+        let mut bytes = (0..).map(|x| ((x * 7) % 256) as u8);
 
         let mut total = 0;
 
