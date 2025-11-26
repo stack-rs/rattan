@@ -55,6 +55,3 @@ pub enum RattanLogOp {
 }
 
 pub static LOGGING_TX: OnceCell<UnboundedSender<RattanLogOp>> = OnceCell::new();
-
-pub const META_DATA_CHUNK_SIZE: u64 = mmap::PAGE_SIZE; // 4KiB
-pub const LOG_ENTRY_CHUNK_SIZE: usize = (mmap::PAGE_SIZE as usize) << 8; // 1MiB

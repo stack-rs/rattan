@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{Cursor, Error, ErrorKind, Result},
+    io::{Cursor, Result},
     net::IpAddr,
     path::{Path, PathBuf},
 };
@@ -11,102 +11,13 @@ use memmap2::Mmap;
 
 use crate::{
     log_entry::{
-        entry::{
-            chunk_header::{ChunkEntry, TYPE_LOG_ENTRY, TYPE_LOG_META},
-            flow_entry::FlowEntryVariant,
-        },
-        general_packet::GeneralPacketType,
-        LogEntry, PktAction,
+        entry::flow_entry::FlowEntryVariant, general_packet::GeneralPacketType, LogEntry, PktAction,
     },
     logger::{
         build_pcap::{add_eth, add_ip, get_mock_mac, PacketWriter},
-        mmap::{mmap_file, mmap_segment},
-        LOG_ENTRY_CHUNK_SIZE, META_DATA_CHUNK_SIZE,
+        mmap::mmap_file,
     },
 };
-
-pub fn read_chunk_header<T: AsRef<[u8]>>(
-    cursor: &mut Cursor<T>,
-    expected_type: u8,
-) -> Result<ChunkEntry> {
-    let chunk = if let LogEntry::Chunk(chunk_header) =
-        LogEntry::read(cursor).map_err(|e| Error::new(ErrorKind::InvalidData, e))?
-    {
-        chunk_header.chunk
-    } else {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "Expecting a chunk_headr",
-        ));
-    };
-
-    let log_version = chunk.log_version;
-    if log_version != 0x20251120 {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            format!("Not supported log version {}", log_version),
-        ));
-    }
-
-    if chunk.header.get_type() != expected_type {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "unexpected log entry type",
-        ));
-    }
-
-    Ok(chunk)
-}
-
-pub fn read_metadata_chunk(
-    file: &File,
-    output: &mut Vec<FlowEntryVariant>,
-    mut next_chunk_offset: u64,
-) -> Result<(u64, usize)> {
-    let meta_data_chunk = mmap_segment(file, next_chunk_offset, META_DATA_CHUNK_SIZE as usize)?;
-    let mut chunk_buf = Cursor::new(meta_data_chunk.as_ref());
-
-    let chunk = read_chunk_header(&mut chunk_buf, TYPE_LOG_META)?;
-
-    // Jump to next page. 0 means to exist.
-    next_chunk_offset = chunk.offset;
-
-    let mut entry_count = 0;
-
-    while let Ok(log_entry) = LogEntry::read(&mut chunk_buf) {
-        if let LogEntry::TCPFlow(tcp_flow) = log_entry {
-            entry_count += 1;
-            output.push(tcp_flow.tcp_flow.into());
-        }
-    }
-
-    Ok((next_chunk_offset, entry_count))
-}
-
-pub fn read_log_entry_chunk(
-    file: &File,
-    output: &mut Vec<LogEntry>,
-    mut start_offset: u64,
-) -> Result<(u64, usize, u64)> {
-    let log_entry_chunk = mmap_segment(file, start_offset, LOG_ENTRY_CHUNK_SIZE)?;
-    let mut chunk_buf = Cursor::new(log_entry_chunk.as_ref());
-
-    let chunk = read_chunk_header(&mut chunk_buf, TYPE_LOG_ENTRY)?;
-
-    start_offset += chunk.chunk_size as u64;
-    let mut entry_count = 0;
-
-    while let Ok(log_entry) = LogEntry::read(&mut chunk_buf) {
-        match log_entry {
-            LogEntry::CompactTCP(_) | LogEntry::Raw(_) => {
-                output.push(log_entry);
-                entry_count += 1;
-            }
-            _ => {}
-        }
-    }
-    Ok((start_offset, entry_count, chunk.offset))
-}
 
 type FlowId = u32;
 type FlowIndex = u16;
@@ -171,7 +82,11 @@ pub fn convert_log_to_pcapng(
         output_file
     };
 
-    let file = File::open(&file_path)?;
+    let log_entry_file: Mmap = load_raw_file(&file_path.as_ref().to_path_buf())?;
+
+    let mut flow_file_path = file_path.as_ref().to_path_buf();
+    flow_file_path.set_extension("flow");
+    let flow_file: Mmap = load_raw_file(&flow_file_path)?;
 
     let mut raw_file_path = file_path.as_ref().to_path_buf();
     raw_file_path.set_extension("raw");
@@ -184,23 +99,14 @@ pub fn convert_log_to_pcapng(
 
     let mut flow_entry = vec![];
 
-    let mut meta_chunk_offset = 0;
-
-    let mut end_of_log_entry = None;
-
-    loop {
-        let (next, _added) = read_metadata_chunk(&file, &mut flow_entry, meta_chunk_offset)?;
-        meta_chunk_offset = next;
-        if meta_chunk_offset == 0 {
-            break;
+    let mut flows = Cursor::new(flow_file);
+    while let Ok(entry) = LogEntry::read(&mut flows) {
+        if let LogEntry::TCPFlow(flow) = entry {
+            flow_entry.push(FlowEntryVariant::TCP(flow.tcp_flow));
         }
-        end_of_log_entry.get_or_insert(meta_chunk_offset);
     }
 
     let context = ParseContext::new(flow_entry);
-
-    let start_of_log_entry = META_DATA_CHUNK_SIZE;
-    let end_of_log_entry = end_of_log_entry.unwrap_or(file.metadata()?.len());
 
     let mut writers: HashMap<IpAddr, PacketWriter> = HashMap::new();
 
@@ -212,106 +118,131 @@ pub fn convert_log_to_pcapng(
         }
     }
 
-    let mut log_entry_offset = start_of_log_entry;
-    while log_entry_offset < end_of_log_entry {
-        let mut log_entries = vec![];
+    let mut chunk_offset = None;
+    let mut log_entries = Cursor::new(log_entry_file);
 
-        let (next_offset, _count, chunk_offset) =
-            read_log_entry_chunk(&file, &mut log_entries, log_entry_offset)?;
-        log_entry_offset = next_offset;
+    let mut current_chunk_end: Option<u64> = None;
+    let mut next_chunk_start: Option<u64> = None;
 
-        for log_entry in std::mem::take(&mut log_entries) {
-            match log_entry {
-                LogEntry::CompactTCP(compact_tcp) => {
-                    let flow_id = compact_tcp.tcp_entry.flow_id;
-                    let action = compact_tcp.general_pkt_entry.header.get_pkt_action();
-                    let Some(flow) = context.flows.get(&flow_id) else {
-                        continue;
-                    };
-                    let Some(ip) = get_ip(flow, action) else {
-                        continue;
-                    };
-                    if let (Some(writer), FlowEntryVariant::TCP(flow)) =
-                        (writers.get_mut(&ip), flow)
-                    {
-                        writer.write_tcp_packet(flow, compact_tcp)?;
-                    }
+    loop {
+        let current_position = log_entries.position();
+
+        if let Some(currnet_chunk_end) = current_chunk_end {
+            // If we are reading beyond the range designated by last chunk header
+            if current_position >= currnet_chunk_end {
+                // Make sure there is at most 1 jump for each chunk, thus no infinite loop.
+                if let Some(next_chunk_start) = next_chunk_start.take() {
+                    log_entries.set_position(next_chunk_start);
+                } else {
+                    break;
                 }
-                LogEntry::Raw(raw_entry) => {
-                    let Some(flow_id) = context.flow_index.get(&raw_entry.raw_entry.flow_index)
-                    else {
-                        continue;
-                    };
-                    let Some(flow) = context.flows.get(flow_id) else {
-                        continue;
-                    };
-                    let action = raw_entry.general_pkt_entry.header.get_pkt_action();
-                    let Some(ip) = get_ip(flow, action) else {
-                        continue;
-                    };
+            }
+        }
 
-                    let Some(writer) = writers.get_mut(&ip) else {
-                        continue;
-                    };
+        let Ok(log_entry) = LogEntry::read(&mut log_entries) else {
+            if current_chunk_end.is_none() {
+                // If there is no chunk header
+                break;
+            }
+            continue;
+        };
 
-                    let pointer = raw_entry.raw_entry.pointer;
-                    let len = pointer.get_length() as usize;
-                    let offset = (pointer.get_offset() as u64 + chunk_offset) as usize;
+        match log_entry {
+            LogEntry::CompactTCP(compact_tcp) => {
+                let flow_id = compact_tcp.tcp_entry.flow_id;
+                let action = compact_tcp.general_pkt_entry.header.get_pkt_action();
+                let Some(flow) = context.flows.get(&flow_id) else {
+                    continue;
+                };
+                let Some(ip) = get_ip(flow, action) else {
+                    continue;
+                };
+                if let (Some(writer), FlowEntryVariant::TCP(flow)) = (writers.get_mut(&ip), flow) {
+                    writer.write_tcp_packet(flow, compact_tcp)?;
+                }
+            }
 
-                    let raw = match raw_file {
-                        Some(ref raw) => raw,
-                        None => {
-                            // Would enter here only once, upon the very first raw_entry was being processed.
-                            let loaded = load_raw_file(&raw_file_path)?;
-                            raw_file.insert(loaded)
+            LogEntry::Chunk(chunk) => {
+                chunk_offset = chunk.chunk.offset.into();
+                current_chunk_end = Some(current_position as u64 + chunk.chunk.data_length as u64);
+                next_chunk_start = Some(current_position as u64 + chunk.chunk.chunk_size as u64);
+            }
+            LogEntry::Raw(raw_entry) => {
+                let Some(flow_id) = context.flow_index.get(&raw_entry.raw_entry.flow_index) else {
+                    continue;
+                };
+                let Some(flow) = context.flows.get(flow_id) else {
+                    continue;
+                };
+                let action = raw_entry.general_pkt_entry.header.get_pkt_action();
+                let Some(ip) = get_ip(flow, action) else {
+                    continue;
+                };
+
+                let Some(writer) = writers.get_mut(&ip) else {
+                    continue;
+                };
+
+                let pointer = raw_entry.raw_entry.pointer;
+                let len = pointer.get_length() as usize;
+                let offset =
+                    (pointer.get_offset() as u64 + chunk_offset.unwrap_or_default()) as usize;
+
+                let raw = match raw_file {
+                    Some(ref raw) => raw,
+                    None => {
+                        // Would enter here only once, upon the very first raw_entry was being processed.
+                        let loaded = load_raw_file(&raw_file_path)?;
+                        raw_file.insert(loaded)
+                    }
+                };
+
+                let Some(raw_header) = raw.get(offset..(offset + len)) else {
+                    continue;
+                };
+
+                let (mut packet_header, mock_l3) =
+                    match raw_entry.general_pkt_entry.header.get_type().try_into() {
+                        Ok(GeneralPacketType::RawIP) => {
+                            (Vec::with_capacity(14 + raw_header.len()), false)
+                        }
+                        Ok(GeneralPacketType::RawTCPIP) => {
+                            (Vec::with_capacity(34 + raw_header.len()), true)
+                        }
+                        _ => {
+                            continue;
                         }
                     };
 
-                    let Some(raw_header) = raw.get(offset..(offset + len)) else {
-                        continue;
-                    };
+                let (IpAddr::V4(src_ip), IpAddr::V4(dst_ip)) =
+                    (flow.get_src_ip(), flow.get_dst_ip())
+                else {
+                    continue;
+                };
 
-                    let (mut packet_header, mock_l3) =
-                        match raw_entry.general_pkt_entry.header.get_type().try_into() {
-                            Ok(GeneralPacketType::RawIP) => {
-                                (Vec::with_capacity(14 + raw_header.len()), false)
-                            }
-                            Ok(GeneralPacketType::RawTCPIP) => {
-                                (Vec::with_capacity(34 + raw_header.len()), true)
-                            }
-                            _ => {
-                                continue;
-                            }
-                        };
+                add_eth(
+                    &mut packet_header,
+                    get_mock_mac(dst_ip.to_bits()),
+                    get_mock_mac(src_ip.to_bits()),
+                );
 
-                    let (IpAddr::V4(src_ip), IpAddr::V4(dst_ip)) =
-                        (flow.get_src_ip(), flow.get_dst_ip())
-                    else {
-                        continue;
-                    };
-
-                    add_eth(
+                if mock_l3 {
+                    add_ip(
                         &mut packet_header,
-                        get_mock_mac(dst_ip.to_bits()),
-                        get_mock_mac(src_ip.to_bits()),
+                        src_ip.to_bits(),
+                        dst_ip.to_bits(),
+                        raw_entry.general_pkt_entry.pkt_length,
+                        0,
+                        0,
                     );
-
-                    if mock_l3 {
-                        add_ip(
-                            &mut packet_header,
-                            src_ip.to_bits(),
-                            dst_ip.to_bits(),
-                            raw_entry.general_pkt_entry.pkt_length,
-                            0,
-                            0,
-                        );
-                    }
-
-                    packet_header.extend_from_slice(raw_header);
-                    writer.write_raw_packet(&raw_entry, packet_header, context.base_ts)?
                 }
-                _ => {}
+
+                packet_header.extend_from_slice(raw_header);
+                writer.write_raw_packet(&raw_entry, packet_header, context.base_ts)?
             }
+
+            // Flows are not expected
+            _ => {}
         }
     }
 

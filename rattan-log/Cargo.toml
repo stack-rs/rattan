@@ -10,7 +10,7 @@ repository.workspace = true
 binread = { workspace = true }
 bitfield = { workspace = true }
 clap = { workspace = true }
-derive_more = { workspace = true }
+derive_more.workspace = true
 hex = "0.4.3"
 memmap2 = "0.9.9"
 num_enum = { workspace = true }
@@ -18,9 +18,12 @@ once_cell = { workspace = true }
 pcap-file = { workspace = true }
 plain = { workspace = true }
 static_assertions = "1.1.0"
+test-log = { version = "0.2.18", features = ["trace"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 hex = "0.4.3"
+random = "0.14.1"
+tempfile = "3.23.0"
 test-log = "0.2.18"
