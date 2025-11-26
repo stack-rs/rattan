@@ -25,7 +25,6 @@ async-trait = "0.1.68"
 axum = { version = "0.8.1", optional = true }
 backon = "1.2.0"
 bandwidth = "0.3.0"
-binread = "2.2.0"
 bytesize = "2.0.1"
 camellia = { git = "https://github.com/minhuw/camellia.git", optional = true }
 dyn-clone = "1.0"
@@ -44,7 +43,6 @@ num_enum = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = "0.12.1"
 pcap-file = { workspace = true }
-plain = { workspace = true }
 rand = { workspace = true }
 rand_distr = "0.5"
 regex = "1.7.3"
@@ -60,7 +58,6 @@ tracing = { workspace = true }
 uuid = { version = "1.10.0", features = ["v4"] }
 rattan-log = {path = "../rattan-log"}
 clap = { workspace = true}
-hex = "0.4.3"
 [dev-dependencies]
 anyhow = "1.0.69"
 clap = { version = "4.5.4", features = ["derive"] }
@@ -76,9 +73,7 @@ reqwest = { version = "0.12.9", default-features = false, features = [
   "blocking",
   "json",
 ] }
-test-log = { version = "0.2.12", default-features = false, features = [
-  "trace",
-] }
+test-log = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [features]

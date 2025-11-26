@@ -4,10 +4,7 @@ pub mod blob;
 pub mod log_entry;
 mod logger;
 
-pub use logger::{
-    file_writer::{file_logging_thread, file_logging_thread_raw},
-    FlowDesc, RattanLogOp, LOGGING_TX,
-};
+pub use logger::{file_writer::file_logging_thread, FlowDesc, RattanLogOp, LOGGING_TX};
 
 pub use log_entry::entry::{raw::RawLogEntry, tcp_ip_compact::TCPLogEntry};
 
@@ -32,8 +29,8 @@ use std::path::PathBuf;
 pub struct LogConverterArgs {
     /// Input Rattan Packet Log file path
     pub input: PathBuf,
-    /// Output pcapng file name prefix
-    pub output: PathBuf,
+    /// Output pcapng file name prefix. take the input as default value
+    pub output: Option<PathBuf>,
 }
 
 pub use logger::file_reader::convert_log_to_pcapng;

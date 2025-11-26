@@ -35,15 +35,25 @@ use std::net::{Ipv4Addr, SocketAddr};
 pub static INSTANCE_ID: OnceCell<String> = OnceCell::new();
 pub static BASE_TS: OnceCell<i64> = OnceCell::new();
 
-use rattan_log::{file_logging_thread, file_logging_thread_raw, RattanLogOp, LOGGING_TX};
+use rattan_log::{file_logging_thread, RattanLogOp, LOGGING_TX};
+#[cfg(feature = "serde")]
 #[derive(
-    Clone, Copy, Debug, clap::ValueEnum, serde::Deserialize, serde::Serialize, PartialEq, Eq,
+    Clone, Copy, Debug, clap::ValueEnum, PartialEq, Eq, serde::Deserialize, serde::Serialize,
 )]
 pub enum PacketLogMode {
     CompactTCP,
     RawIP,
     RawTCP,
 }
+
+#[cfg(not(feature = "serde"))]
+#[derive(Clone, Copy, Debug, clap::ValueEnum, PartialEq, Eq)]
+pub enum PacketLogMode {
+    CompactTCP,
+    RawIP,
+    RawTCP,
+}
+
 pub static PKT_LOG_MODE: OnceCell<PacketLogMode> = OnceCell::new();
 
 pub type TaskResult<R> = Result<R, Box<dyn std::error::Error + Send + Sync>>;
@@ -213,12 +223,7 @@ where
 
         let packet_log_path = config.general.packet_log;
 
-        let log_thread_handle = match config.general.packet_log_mode {
-            Some(PacketLogMode::RawIP) | Some(PacketLogMode::RawTCP) => {
-                packet_log_path.map(file_logging_thread_raw)
-            }
-            _ => packet_log_path.map(file_logging_thread),
-        };
+        let log_thread_handle = packet_log_path.map(file_logging_thread);
 
         let mut radix = Self {
             env,

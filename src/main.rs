@@ -351,10 +351,12 @@ fn main() -> ExitCode {
         }
         if let Some(packet_log) = opts.packet_log {
             config.general.packet_log = Some(packet_log);
+            config.general.packet_log_mode = opts
+                .packet_log_mode
+                .unwrap_or(PacketLogMode::CompactTCP)
+                .into();
         }
-        if let Some(packet_log_mode) = opts.packet_log_mode {
-            config.general.packet_log_mode = Some(packet_log_mode)
-        }
+
         tracing::debug!(?config);
 
         // Generate config

@@ -2,7 +2,7 @@ use super::LogEntryHeader;
 use binread::BinRead;
 use plain::Plain;
 
-// The detailed spec of chunk header:
+// The detailed spec of chunk prologue:
 //
 // It is 32Bytes, so that the 32Bytes Log Entries can be 32-byte aligned.
 //

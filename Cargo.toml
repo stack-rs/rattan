@@ -19,11 +19,9 @@ homepage = "https://github.com/stack-rs/rattan"
 repository = "https://github.com/stack-rs/rattan"
 
 [workspace.dependencies]
-binread = "2.2.0"
 bitfield = "0.19.0"
 clap = { version = "4.2.4", features = ["derive"] }
 ctrlc = "3.2.5"
-derive_more = { version = "2.0.1", features = ["deref", "deref_mut"] }
 figment = { version = "0.10", features = ["env", "json", "toml"] }
 futures = "0.3.29"
 human-bandwidth = { version = "0.1.4", features = ["binary-system", "serde"] }
@@ -46,7 +44,6 @@ nix = { version = "0.29.0", features = [
 num_enum = "0.7.5"
 once_cell = "1.19"
 pcap-file = { version = "2.0.0" }
-plain = "0.2.3"
 rand = "0.9.1"
 serde = { version = "1.0.160", features = ["derive"] }
 tokio = { version = "1.26.0", features = [
@@ -60,9 +57,9 @@ tokio = { version = "1.26.0", features = [
 ] }
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+test-log = { version = "0.2.18", features = ["trace"] }
 
 [dependencies]
-binread = "2.2.0"
 clap = { version = "4.2.4", features = ["derive"] }
 # anyhow = "1.0.75"
 # bollard = "0.15.0"
@@ -73,12 +70,10 @@ figment = { workspace = true }
 futures = { workspace = true }
 human-bandwidth = { workspace = true }
 jiff = { workspace = true }
-memmap2 = "0.9.9"
 netem-trace = { workspace = true }
 nix = { workspace = true }
 once_cell = { workspace = true }
 paste = "1.0.14"
-pcap-file = "2.0.0"
 rand = { workspace = true }
 rattan-core = { path = "rattan-core", features = ["serde"] }
 rattan-log = { path = "rattan-log" }

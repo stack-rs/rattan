@@ -7,20 +7,21 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-binread = { workspace = true }
+binread = "2.2.0"
 bitfield = { workspace = true }
 clap = { workspace = true }
-derive_more = { workspace = true }
-hex = "0.4.3"
+derive_more = { version = "2.0.1", features = ["deref", "deref_mut"] }
 memmap2 = "0.9.9"
 num_enum = { workspace = true }
 once_cell = { workspace = true }
 pcap-file = { workspace = true }
-plain = { workspace = true }
+plain = "0.2.3"
 static_assertions = "1.1.0"
 tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+test-log = {workspace = true}
 hex = "0.4.3"
-test-log = "0.2.18"
+random = "0.14.1"
+tempfile = "3.23.0"
