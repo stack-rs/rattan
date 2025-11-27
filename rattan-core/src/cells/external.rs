@@ -168,7 +168,9 @@ where
     D::Sender: Send + Sync,
 {
     fn enqueue(&self, packet: D::Packet) -> Result<(), Error> {
-        log_packet(&self.log_tx, &packet, PktAction::Send, self.base_ts);
+        if let (Some(&log_mode), Some(log_tx)) = (PKT_LOG_MODE.get(), self.log_tx.as_ref()){
+            log_packet(log_tx, &packet, PktAction::Send, self.base_ts, log_mode);
+        }
         Ok(self
             .sender
             .try_send(packet)
@@ -194,7 +196,7 @@ impl FlowMap {
     fn get_id(
         &self,
         desc: FlowDesc,
-        log_tx: Option<&UnboundedSender<RattanLogOp>>,
+        log_tx: &UnboundedSender<RattanLogOp>,
         base_ts: i64,
     ) -> u32 {
         {
@@ -206,10 +208,10 @@ impl FlowMap {
         let mut map = self.map.write();
         let id = self.id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         map.insert(desc.clone(), id);
-        if let Some(tx) = log_tx {
-            let op = RattanLogOp::Flow(id, base_ts, desc);
-            let _ = tx.send(op);
-        }
+        
+        let op = RattanLogOp::Flow(id, base_ts, desc);
+        let _ = log_tx.send(op);
+    
         id
     }
 }
@@ -263,141 +265,146 @@ where
         log_tx: Option<UnboundedSender<RattanLogOp>>,
         base_ts: i64,
     ) {
+        let packet_log_mode = PKT_LOG_MODE.get();
         loop {
             let mut _guard = notify.readable().await.unwrap();
-            match _guard.try_io(|_fd| receiver.receive()) {
-                Ok(packet) => match packet {
-                    Ok(Some(mut p)) => {
-                        if let Some(desc) = p.flow_desc() {
-                            let id = flow_map.get_id(desc, log_tx.as_ref(), base_ts);
-                            p.set_flow_id(id);
-                        }
-                        log_packet(&log_tx, &p, PktAction::Recv, base_ts);
-                        let _ = sender.send(p).await;
-                    }
-                    Err(e) => error!("recv error: {}", e),
-                    _ => {}
-                },
-                Err(_would_block) => continue,
+            
+            let Ok(packet) = _guard.try_io(|_fd| receiver.receive()) else {
+                continue;// would block
+            };
+            
+            let mut packet = match packet {
+                Ok(Some(packet)) => {packet},
+                Ok(None) => {continue;},
+                Err(e) => {error!("recv error: {}", e); continue;},
+            };
+            
+            // Getting `Packet::flow_desc()` is not trial. Avoid doing so when packet log is not enabled.
+            if let (Some(&log_mode), Some(log_tx)) = (packet_log_mode, log_tx.as_ref()){
+                if let Some(desc) = packet.flow_desc() {
+                    let id = flow_map.get_id(desc, log_tx, base_ts);
+                    packet.set_flow_id(id);
+                }
+                log_packet(log_tx, &packet, PktAction::Recv, base_ts, log_mode);
             }
+            
+            let _ = sender.send(packet).await;
         }
     }
 }
 
 fn log_packet<T: Packet>(
-    log_tx: &Option<UnboundedSender<RattanLogOp>>,
+    tx: &UnboundedSender<RattanLogOp>,
     p: &T,
     action: PktAction,
     base_ts: i64,
+    mode: PacketLogMode,
 ) {
-    if let (Some(ref tx), Some(mode)) = (log_tx, PKT_LOG_MODE.get()) {
-        let ts = ((get_clock_ns() - base_ts) / 1000)
-            .max(0)
-            .min(u32::MAX as i64) as u32;
 
-        let pkt_len = p.length() as u16;
+    let ts = ((get_clock_ns() - base_ts) / 1000)
+        .max(0)
+        .min(u32::MAX as i64) as u32;
 
-        match mode {
-            PacketLogMode::CompactTCP => {
-                // Make it simple as only TCP is supported.
-                let mut entry = rattan_log::TCPLogEntry::new();
-                entry.general_pkt_entry.pkt_length = pkt_len;
-                entry.general_pkt_entry.header.set_pkt_action(action as u8);
-                entry.general_pkt_entry.ts = ts;
-                entry.tcp_entry.flow_id = p.get_flow_id();
+    let pkt_len = p.length() as u16;
 
-                // Inspect packet buffer
-                if let Ok(ether_hdr) = etherparse::Ethernet2HeaderSlice::from_slice(p.as_slice()) {
-                    #[allow(clippy::single_match)]
-                    match ether_hdr.ether_type() {
-                        etherparse::EtherType::IPV4 => {
-                            match etherparse::Ipv4HeaderSlice::from_slice(
-                                p.as_slice().get(ether_hdr.slice().len()..).unwrap_or(&[]),
-                            ) {
-                                Ok(ip_hdr) => {
-                                    entry.tcp_entry.ip_id = ip_hdr.identification();
-                                    entry.tcp_entry.ip_frag = unsafe {
-                                        // SAFETY:
-                                        // Safe as the slice length is checked to be at least
-                                        // Ipv4Header::MIN_LEN (20) in the constructor.
-                                        u16::from_be_bytes([
-                                            *ip_hdr.slice().get_unchecked(6),
-                                            *ip_hdr.slice().get_unchecked(7),
-                                        ])
-                                    };
-                                    entry.tcp_entry.checksum = ip_hdr.header_checksum();
-                                    #[allow(clippy::single_match)]
-                                    match ip_hdr.protocol() {
-                                        etherparse::IpNumber::TCP => {
-                                            if let Ok(tcp_hdr) =
-                                                etherparse::TcpHeaderSlice::from_slice(
-                                                    p.as_slice()
-                                                        .get(
-                                                            ether_hdr.slice().len()
-                                                                + ip_hdr.slice().len()..,
-                                                        )
-                                                        .unwrap_or(&[]),
+    match mode {
+        PacketLogMode::CompactTCP => {
+            // Make it simple as only TCP is supported.
+            let mut entry = rattan_log::TCPLogEntry::new();
+            entry.general_pkt_entry.pkt_length = pkt_len;
+            entry.general_pkt_entry.header.set_pkt_action(action as u8);
+            entry.general_pkt_entry.ts = ts;
+            entry.tcp_entry.flow_id = p.get_flow_id();
+
+            // Inspect packet buffer
+            if let Ok(ether_hdr) = etherparse::Ethernet2HeaderSlice::from_slice(p.as_slice()) {
+                #[allow(clippy::single_match)]
+                match ether_hdr.ether_type() {
+                    etherparse::EtherType::IPV4 => {
+                        match etherparse::Ipv4HeaderSlice::from_slice(
+                            p.as_slice().get(ether_hdr.slice().len()..).unwrap_or(&[]),
+                        ) {
+                            Ok(ip_hdr) => {
+                                entry.tcp_entry.ip_id = ip_hdr.identification();
+                                entry.tcp_entry.ip_frag = unsafe {
+                                    // SAFETY:
+                                    // Safe as the slice length is checked to be at least
+                                    // Ipv4Header::MIN_LEN (20) in the constructor.
+                                    u16::from_be_bytes([
+                                        *ip_hdr.slice().get_unchecked(6),
+                                        *ip_hdr.slice().get_unchecked(7),
+                                    ])
+                                };
+                                entry.tcp_entry.checksum = ip_hdr.header_checksum();
+                                #[allow(clippy::single_match)]
+                                match ip_hdr.protocol() {
+                                    etherparse::IpNumber::TCP => {
+                                        if let Ok(tcp_hdr) = etherparse::TcpHeaderSlice::from_slice(
+                                            p.as_slice()
+                                                .get(
+                                                    ether_hdr.slice().len()
+                                                        + ip_hdr.slice().len()..,
                                                 )
-                                            {
-                                                entry.tcp_entry.seq = tcp_hdr.sequence_number();
-                                                entry.tcp_entry.ack =
-                                                    tcp_hdr.acknowledgment_number();
-                                                entry.tcp_entry.flags =
-                                                    *tcp_hdr.slice().get(13).unwrap();
-                                                entry.tcp_entry.dataofs = tcp_hdr.data_offset();
-                                                let entry_bytes = entry.as_bytes().to_owned();
-                                                let _ = tx.send(RattanLogOp::Entry(entry_bytes));
-                                            }
+                                                .unwrap_or(&[]),
+                                        ) {
+                                            entry.tcp_entry.seq = tcp_hdr.sequence_number();
+                                            entry.tcp_entry.ack = tcp_hdr.acknowledgment_number();
+                                            entry.tcp_entry.flags =
+                                                *tcp_hdr.slice().get(13).unwrap();
+                                            entry.tcp_entry.dataofs = tcp_hdr.data_offset();
+                                            let entry_bytes = entry.as_bytes().to_owned();
+                                            let _ = tx.send(RattanLogOp::Entry(entry_bytes));
                                         }
-                                        _ => {}
                                     }
-                                }
-                                Err(e) => {
-                                    tracing::error!("Error parsing IPv4 header: {}", e);
+                                    _ => {}
                                 }
                             }
+                            Err(e) => {
+                                tracing::error!("Error parsing IPv4 header: {}", e);
+                            }
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
-            PacketLogMode::RawIP | PacketLogMode::RawTCP => {
-                let flow_id = p.get_flow_id();
-                let mut entry = if mode == &PacketLogMode::RawIP {
-                    RawLogEntry::new(GeneralPacketType::RawIP)
-                } else {
-                    RawLogEntry::new(GeneralPacketType::RawTCPIP)
-                };
+        }
+        PacketLogMode::RawIP | PacketLogMode::RawTCP => {
+            let flow_id = p.get_flow_id();
 
-                entry.general_pkt_entry.pkt_length = pkt_len;
-                entry.general_pkt_entry.ts = ts;
-                entry.general_pkt_entry.header.set_pkt_action(action as u8);
+            let mut entry = if mode == PacketLogMode::RawIP {
+                RawLogEntry::new(GeneralPacketType::RawIP)
+            } else {
+                RawLogEntry::new(GeneralPacketType::RawTCPIP)
+            };
 
-                if let Ok(headers) = etherparse::PacketHeaders::from_ethernet_slice(p.as_slice()) {
-                    if let (Some(l2), Some(l3), Some(l4)) =
-                        (headers.link, headers.net, headers.transport)
-                    {
-                        let l2_len = l2.header_len();
-                        let l3_len = l3.header_len();
-                        let l4_len = l4.header_len();
+            entry.general_pkt_entry.pkt_length = pkt_len;
+            entry.general_pkt_entry.ts = ts;
+            entry.general_pkt_entry.header.set_pkt_action(action as u8);
 
-                        let (start, end) = if mode == &PacketLogMode::RawIP {
-                            (l2_len, l2_len + l3_len + l4_len)
-                        } else {
-                            (l2_len + l3_len, l2_len + l3_len + l4_len)
-                        };
+            if let Ok(headers) = etherparse::PacketHeaders::from_ethernet_slice(p.as_slice()) {
+                if let (Some(l2), Some(l3), Some(l4)) =
+                    (headers.link, headers.net, headers.transport)
+                {
+                    let l2_len = l2.header_len();
+                    let l3_len = l3.header_len();
+                    let l4_len = l4.header_len();
 
-                        if let Some(raw) = p.as_slice().get(start..end) {
-                            // Ignore error here.
-                            tx.send(RattanLogOp::RawEntry(flow_id, entry, raw.to_vec()))
-                                .ok();
-                        }
+                    let (start, end) = if mode == PacketLogMode::RawIP {
+                        (l2_len, l2_len + l3_len + l4_len)
+                    } else {
+                        (l2_len + l3_len, l2_len + l3_len + l4_len)
+                    };
+
+                    if let Some(raw) = p.as_slice().get(start..end) {
+                        // Ignore error here.
+                        tx.send(RattanLogOp::RawEntry(flow_id, entry, raw.to_vec()))
+                            .ok();
                     }
                 }
             }
         }
-        // tracing::debug!(target: "veth::egress::packet_log", "At {} veth {} recv pkt len {} desc {}", ts, id, p.length(), p.desc());
     }
+    // tracing::debug!(target: "veth::egress::packet_log", "At {} veth {} recv pkt len {} desc {}", ts, id, p.length(), p.desc());
 }
 
 fn get_clock_ns() -> i64 {
