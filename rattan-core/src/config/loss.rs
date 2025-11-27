@@ -39,7 +39,7 @@ pub struct LossReplayCellBuildConfig {
 }
 
 impl LossReplayCellBuildConfig {
-    fn get_trace(&self) -> Result<Box<dyn LossTrace>, Error> {
+    pub fn get_trace(&self) -> Result<Box<dyn LossTrace>, Error> {
         let parsed_trace_path = replace_env_var_in_string(&self.trace);
         let file_path = std::path::Path::new(parsed_trace_path.as_ref());
         if let Some(ext) = file_path.extension() {
