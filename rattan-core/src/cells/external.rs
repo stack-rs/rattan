@@ -168,7 +168,7 @@ where
     D::Sender: Send + Sync,
 {
     fn enqueue(&self, packet: D::Packet) -> Result<(), Error> {
-        if let (Some(&log_mode), Some(log_tx)) = (PKT_LOG_MODE.get(), self.log_tx.as_ref()){
+        if let (Some(&log_mode), Some(log_tx)) = (PKT_LOG_MODE.get(), self.log_tx.as_ref()) {
             log_packet(log_tx, &packet, PktAction::Send, self.base_ts, log_mode);
         }
         Ok(self
@@ -193,12 +193,7 @@ impl FlowMap {
         }
     }
 
-    fn get_id(
-        &self,
-        desc: FlowDesc,
-        log_tx: &UnboundedSender<RattanLogOp>,
-        base_ts: i64,
-    ) -> u32 {
+    fn get_id(&self, desc: FlowDesc, log_tx: &UnboundedSender<RattanLogOp>, base_ts: i64) -> u32 {
         {
             let map = self.map.read();
             if let Some(meta) = map.get(&desc) {
@@ -208,10 +203,10 @@ impl FlowMap {
         let mut map = self.map.write();
         let id = self.id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         map.insert(desc.clone(), id);
-        
+
         let op = RattanLogOp::Flow(id, base_ts, desc);
         let _ = log_tx.send(op);
-    
+
         id
     }
 }
@@ -268,26 +263,31 @@ where
         let packet_log_mode = PKT_LOG_MODE.get();
         loop {
             let mut _guard = notify.readable().await.unwrap();
-            
+
             let Ok(packet) = _guard.try_io(|_fd| receiver.receive()) else {
-                continue;// would block
+                continue; // would block
             };
-            
+
             let mut packet = match packet {
-                Ok(Some(packet)) => {packet},
-                Ok(None) => {continue;},
-                Err(e) => {error!("recv error: {}", e); continue;},
+                Ok(Some(packet)) => packet,
+                Ok(None) => {
+                    continue;
+                }
+                Err(e) => {
+                    error!("recv error: {}", e);
+                    continue;
+                }
             };
-            
+
             // Getting `Packet::flow_desc()` is not trial. Avoid doing so when packet log is not enabled.
-            if let (Some(&log_mode), Some(log_tx)) = (packet_log_mode, log_tx.as_ref()){
+            if let (Some(&log_mode), Some(log_tx)) = (packet_log_mode, log_tx.as_ref()) {
                 if let Some(desc) = packet.flow_desc() {
                     let id = flow_map.get_id(desc, log_tx, base_ts);
                     packet.set_flow_id(id);
                 }
                 log_packet(log_tx, &packet, PktAction::Recv, base_ts, log_mode);
             }
-            
+
             let _ = sender.send(packet).await;
         }
     }
@@ -300,7 +300,6 @@ fn log_packet<T: Packet>(
     base_ts: i64,
     mode: PacketLogMode,
 ) {
-
     let ts = ((get_clock_ns() - base_ts) / 1000)
         .max(0)
         .min(u32::MAX as i64) as u32;
