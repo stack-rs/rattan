@@ -60,7 +60,7 @@ We also contain a install script [scripts/install.sh](https://github.com/stack-r
 We recommend developers to install the following dependencies for better testing and development experience. And you have to install some of the dependencies to build rattan with specific features:
 
 ```bash
-sudo apt install ethtool iputils-ping iperf3 pkg-config m4 clang llvm libelf-dev libpcap-dev gcc-multilib
+sudo apt install ethtool iputils-ping iperf3 pkg-config m4 clang llvm libelf-dev libpcap-dev gcc-multilib libnftnl-dev libmnl-dev
 ```
 
 ### Installing with Cargo

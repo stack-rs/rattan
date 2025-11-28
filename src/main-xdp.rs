@@ -27,6 +27,7 @@ use crate::build::CLAP_LONG_VERSION;
 use shadow_rs::shadow;
 
 mod channel;
+mod nat;
 // mod docker;
 
 // const CONFIG_PORT_BASE: u16 = 8086;
@@ -373,14 +374,16 @@ fn main() -> ExitCode {
                     );
                 }
 
-                let ip_list = radix.right_ip_list();
+                let left_ip_list = radix.left_ip_list();
+                let right_ip_list = radix.right_ip_list();
+                let _nat = nat::Nat::new(left_ip_list[1]);
                 let left_handle = radix.left_spawn(None, move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    ip_list.iter().enumerate().for_each(|(i, ip)| {
+                    right_ip_list.iter().enumerate().for_each(|(i, ip)| {
                         client_handle.env(format!("RATTAN_IP_{i}"), ip.to_string());
                     });
-                    client_handle.env("RATTAN_EXT", ip_list[0].to_string());
-                    client_handle.env("RATTAN_BASE", ip_list[1].to_string());
+                    client_handle.env("RATTAN_EXT", right_ip_list[0].to_string());
+                    client_handle.env("RATTAN_BASE", right_ip_list[1].to_string());
                     if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     } else {
