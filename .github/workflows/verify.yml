@@ -33,7 +33,7 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y iproute2 ethtool iputils-ping iperf3 datamash bc pkg-config m4 libelf-dev libpcap-dev gcc-multilib -y
+      - run: sudo apt-get update && sudo apt-get install -y iproute2 ethtool iputils-ping iperf3 datamash bc pkg-config m4 libelf-dev libpcap-dev gcc-multilib libnftnl-dev libmnl-dev -y
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v2
         with:
