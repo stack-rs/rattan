@@ -97,6 +97,10 @@ pub struct Arguments {
     /// File log path, default to $CACHE_DIR/rattan/core.log
     #[arg(long, value_name = "File", requires = "file_log", global = true)]
     file_log_path: Option<PathBuf>,
+
+    /// Disable NAT in compatible mode
+    #[arg(long, global = true)]
+    no_nat: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -376,7 +380,11 @@ fn main() -> ExitCode {
 
                 let left_ip_list = radix.left_ip_list();
                 let right_ip_list = radix.right_ip_list();
-                let _nat = nat::Nat::new(left_ip_list[1]);
+                let _nat = if !opts.no_nat {
+                    Some(nat::Nat::new(left_ip_list[1]))
+                } else {
+                    None
+                };
                 let left_handle = radix.left_spawn(None, move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
                     right_ip_list.iter().enumerate().for_each(|(i, ip)| {
@@ -433,6 +441,10 @@ fn main() -> ExitCode {
                 }
             }
             StdNetEnvMode::Isolated => {
+                if opts.no_nat {
+                    warn!("--no-nat is only for compatible mode and thus ignored in current isolated mode.");
+                }
+
                 let ip_list = radix.left_ip_list();
                 let right_handle = radix.right_spawn(Some(tx_right), move || {
                     let mut server_handle = std::process::Command::new("/usr/bin/env");
