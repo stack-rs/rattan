@@ -28,6 +28,7 @@ use crate::build::CLAP_LONG_VERSION;
 use shadow_rs::shadow;
 
 mod channel;
+#[cfg(feature = "nat")]
 mod nat;
 // mod docker;
 
@@ -99,6 +100,7 @@ pub struct Arguments {
     #[arg(long, value_name = "File", requires = "file_log", global = true)]
     file_log_path: Option<PathBuf>,
 
+    #[cfg(feature = "nat")]
     /// Disable NAT in compatible mode
     #[arg(long, global = true)]
     no_nat: bool,
@@ -379,13 +381,16 @@ fn main() -> ExitCode {
                     );
                 }
 
+                #[cfg(feature = "nat")]
                 let left_ip_list = radix.left_ip_list();
-                let right_ip_list = radix.right_ip_list();
+                #[cfg(feature = "nat")]
                 let _nat = if !opts.no_nat {
                     Some(nat::Nat::new(left_ip_list[1]))
                 } else {
                     None
                 };
+
+                let right_ip_list = radix.right_ip_list();
                 let left_handle = radix.left_spawn(None, move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
                     right_ip_list.iter().enumerate().for_each(|(i, ip)| {
@@ -442,6 +447,7 @@ fn main() -> ExitCode {
                 }
             }
             StdNetEnvMode::Isolated => {
+                #[cfg(feature = "nat")]
                 if opts.no_nat {
                     warn!("--no-nat is only for compatible mode and thus ignored in current isolated mode.");
                 }
