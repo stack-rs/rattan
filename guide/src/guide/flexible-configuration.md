@@ -93,7 +93,7 @@ right = ["bash", "iperf3_server.sh"]
 ```
 
 This creates 12Mbps bandwidth, 100ms RTT and no loss link between the two network namespaces.
-The only difference of it with the [example of rattan link](guide/predefined-channels.md#an-illustration-example-of-testing) is that now we define a `DropTail` queue in the downlink.
+The only difference of it with the [example of rattan link](predefined-channels.md#an-illustration-example-of-testing) is that now we define a `DropTail` queue in the downlink.
 
 The `commands` section specifies the commands to run in the two network namespaces, in this case, the `iperf3` client and server scripts we defined before.
 
