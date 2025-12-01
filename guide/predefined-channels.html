@@ -231,39 +231,126 @@ You can use these channels through the <code>rattan link</code> subcommand with 
 <p>For now, we only provide a simple bidirectional channel, with each direction comprising three cells: <code>bandwidth</code>, <code>delay</code> and <code>loss</code>.
 This channel is suitable for most common network emulation scenarios.</p>
 <p>You can configure the parameters of each cell by passing the arguments to the subcommand.</p>
+<h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
 <p>For example, to create a channel with 10Mbps bandwidth, infinite queue, 50ms latency and 1% loss rate in both directions, you can run the following command:</p>
-<pre><code class="language-bash">rattan link --uplink-bandwidth 10Mbps --uplink-delay 50ms --uplink-loss 0.1 --downlink-bandwidth 10Mbps --downlink-delay 50ms --downlink-loss 0.1
+<pre><code class="language-bash">rattan link --uplink-bandwidth 10Mbps --uplink-delay 50ms --uplink-loss 0.1 \
+--downlink-bandwidth 10Mbps --downlink-delay 50ms --downlink-loss 0.1
 </code></pre>
 <p>Then you will be prompted to a shell with the network path set up.</p>
+<h3 id="an-illustration-example-of-testing"><a class="header" href="#an-illustration-example-of-testing">An Illustration Example of Testing</a></h3>
+<p>We are going to illustrate a simple example of testing network performance using <code>rattan link</code> and <code>iperf3</code>.
+Before testing, don't remember to disable your firewall to allow <code>iperf3</code> traffic, or allow from <code>10.0.0.0/8</code>,
+as Rattan is using that as the default IP addresses for the emulated network.</p>
+<p>As the <code>rattan link</code> subcommand runs in the <code>Compatible Mode</code> (which is similar to <a href="https://github.com/ravinet/mahimahi">mahimahi</a>),
+we should fist launch an <code>iperf3</code> server in one terminal on the host (outside of rattan):</p>
+<pre><code class="language-bash">iperf3 -s -1
+</code></pre>
+<p>After that, we can launch the <code>rattan link</code> command in another terminal to set up the network path:</p>
+<pre><code class="language-bash">rattan link --uplink-bandwidth 12Mbps --uplink-delay 50ms --downlink-bandwidth 12Mbps --downlink-delay 50ms
+</code></pre>
+<p>In this way, we create a link with 12Mbps bandwidth, 100ms RTT and no loss.</p>
+<p>Now it will prompt you to a shell. If you are using bash or specify the shell to use when invoking rattan with <code>rattan link -s bash</code>,
+you will get the following prompt in your terminal indicating that you are now in the rattan environment:</p>
+<pre><code class="language-bash">[rattan] user@hostname:
+</code></pre>
+<p>Similar to mahimahi, we have an environment variable <code>RATTAN_BASE</code> containing the IP address of the other end of the link.</p>
+<p>So in the shell, we can just run the following iperf3 client command to test the network performance:</p>
+<pre><code class="language-bash">iperf3 -c $RATTAN_BASE -t 10
+</code></pre>
+<h3 id="available-options"><a class="header" href="#available-options">Available Options</a></h3>
 <p>For detailed usage, you can run <code>rattan link --help</code> to see the available cells and options:</p>
 <pre><code class="language-txt">Run a templated channel with command line arguments
 
 Usage: rattan link [OPTIONS] [-- &lt;COMMAND&gt;...]
 
 Arguments:
-  [COMMAND]...  Command to run. Only used when in compatible mode
+  [COMMAND]...
+          Command to run. Only used when in compatible mode
 
 Options:
-      --uplink-loss &lt;Loss&gt;              Uplink packet loss
-      --downlink-loss &lt;Loss&gt;            Downlink packet loss
-      --generate                        Generate config file instead of running a instance
-      --uplink-delay &lt;Delay&gt;            Uplink delay
-      --downlink-delay &lt;Delay&gt;          Downlink delay
-      --generate-path &lt;File&gt;            Generate config file to the specified path instead of stdout
-      --packet-log &lt;File&gt;               The file to store compressed packet log (overwrite config) (default: None)
-      --uplink-bandwidth &lt;Bandwidth&gt;    Uplink bandwidth
-      --file-log                        Enable logging to file
-      --uplink-trace &lt;File&gt;             Uplink trace file
-      --file-log-path &lt;File&gt;            File log path, default to $CACHE_DIR/rattan/core.log
-      --uplink-queue &lt;Queue Type&gt;       Uplink queue type [possible values: infinite, droptail, drophead, codel]
-      --uplink-queue-args &lt;JSON&gt;        Uplink queue arguments
-      --downlink-bandwidth &lt;Bandwidth&gt;  Downlink bandwidth
-      --downlink-trace &lt;File&gt;           Downlink trace file
-      --downlink-queue &lt;Queue Type&gt;     Downlink queue type [possible values: infinite, droptail, drophead, codel]
-      --downlink-queue-args &lt;JSON&gt;      Downlink queue arguments
-  -s, --shell &lt;SHELL&gt;                   Shell used to run if no command is specified. Only used when in compatible mode [default: default] [possible values: default, sh, bash, zsh, fish]
-  -h, --help                            Print help (see more with '--help')
-  -V, --version                         Print version
+      --uplink-loss &lt;Loss&gt;
+          Uplink packet loss
+
+      --downlink-loss &lt;Loss&gt;
+          Downlink packet loss
+
+      --generate
+          Generate config file instead of running a instance
+
+          If this flag is set, the program will only generate the config to stdout and exit.
+
+      --uplink-delay &lt;Delay&gt;
+          Uplink delay
+
+      --downlink-delay &lt;Delay&gt;
+          Downlink delay
+
+      --left-stdout
+          Used in isolated mode only. If set, stdout of left is passed to output of this program
+
+      --right-stdout
+          Used in isolated mode only. If set, stdout of rihgt is passed to output of this program
+
+      --uplink-bandwidth &lt;Bandwidth&gt;
+          Uplink bandwidth
+
+      --left-stderr
+          Used in isolated mode only. If set, stderr of left is passed to output of this program
+
+      --uplink-trace &lt;File&gt;
+          Uplink trace file
+
+      --right-stderr
+          Used in isolated mode only. If set, stderr of right is passed to output of this program
+
+      --uplink-queue &lt;Queue Type&gt;
+          Uplink queue type
+
+          [possible values: infinite, droptail, drophead, codel]
+
+      --generate-path &lt;File&gt;
+          Generate config file to the specified path instead of stdout
+
+      --uplink-queue-args &lt;JSON&gt;
+          Uplink queue arguments
+
+      --downlink-bandwidth &lt;Bandwidth&gt;
+          Downlink bandwidth
+
+      --packet-log &lt;File&gt;
+          The file to store compressed packet log (overwrite config) (default: None)
+
+      --downlink-trace &lt;File&gt;
+          Downlink trace file
+
+      --file-log
+          Enable logging to file
+
+      --downlink-queue &lt;Queue Type&gt;
+          Downlink queue type
+
+          [possible values: infinite, droptail, drophead, codel]
+
+      --file-log-path &lt;File&gt;
+          File log path, default to $CACHE_DIR/rattan/core.log
+
+      --downlink-queue-args &lt;JSON&gt;
+          Downlink queue arguments
+
+      --no-nat
+          Disable NAT in compatible mode
+
+  -s, --shell &lt;SHELL&gt;
+          Shell used to run if no command is specified. Only used when in compatible mode
+
+          [default: default]
+          [possible values: default, sh, bash, zsh, fish]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 </code></pre>
 
                     </main>

@@ -603,39 +603,126 @@ You can use these channels through the <code>rattan link</code> subcommand with 
 <p>For now, we only provide a simple bidirectional channel, with each direction comprising three cells: <code>bandwidth</code>, <code>delay</code> and <code>loss</code>.
 This channel is suitable for most common network emulation scenarios.</p>
 <p>You can configure the parameters of each cell by passing the arguments to the subcommand.</p>
+<h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
 <p>For example, to create a channel with 10Mbps bandwidth, infinite queue, 50ms latency and 1% loss rate in both directions, you can run the following command:</p>
-<pre><code class="language-bash">rattan link --uplink-bandwidth 10Mbps --uplink-delay 50ms --uplink-loss 0.1 --downlink-bandwidth 10Mbps --downlink-delay 50ms --downlink-loss 0.1
+<pre><code class="language-bash">rattan link --uplink-bandwidth 10Mbps --uplink-delay 50ms --uplink-loss 0.1 \
+--downlink-bandwidth 10Mbps --downlink-delay 50ms --downlink-loss 0.1
 </code></pre>
 <p>Then you will be prompted to a shell with the network path set up.</p>
+<h3 id="an-illustration-example-of-testing"><a class="header" href="#an-illustration-example-of-testing">An Illustration Example of Testing</a></h3>
+<p>We are going to illustrate a simple example of testing network performance using <code>rattan link</code> and <code>iperf3</code>.
+Before testing, don't remember to disable your firewall to allow <code>iperf3</code> traffic, or allow from <code>10.0.0.0/8</code>,
+as Rattan is using that as the default IP addresses for the emulated network.</p>
+<p>As the <code>rattan link</code> subcommand runs in the <code>Compatible Mode</code> (which is similar to <a href="https://github.com/ravinet/mahimahi">mahimahi</a>),
+we should fist launch an <code>iperf3</code> server in one terminal on the host (outside of rattan):</p>
+<pre><code class="language-bash">iperf3 -s -1
+</code></pre>
+<p>After that, we can launch the <code>rattan link</code> command in another terminal to set up the network path:</p>
+<pre><code class="language-bash">rattan link --uplink-bandwidth 12Mbps --uplink-delay 50ms --downlink-bandwidth 12Mbps --downlink-delay 50ms
+</code></pre>
+<p>In this way, we create a link with 12Mbps bandwidth, 100ms RTT and no loss.</p>
+<p>Now it will prompt you to a shell. If you are using bash or specify the shell to use when invoking rattan with <code>rattan link -s bash</code>,
+you will get the following prompt in your terminal indicating that you are now in the rattan environment:</p>
+<pre><code class="language-bash">[rattan] user@hostname:
+</code></pre>
+<p>Similar to mahimahi, we have an environment variable <code>RATTAN_BASE</code> containing the IP address of the other end of the link.</p>
+<p>So in the shell, we can just run the following iperf3 client command to test the network performance:</p>
+<pre><code class="language-bash">iperf3 -c $RATTAN_BASE -t 10
+</code></pre>
+<h3 id="available-options"><a class="header" href="#available-options">Available Options</a></h3>
 <p>For detailed usage, you can run <code>rattan link --help</code> to see the available cells and options:</p>
 <pre><code class="language-txt">Run a templated channel with command line arguments
 
 Usage: rattan link [OPTIONS] [-- &lt;COMMAND&gt;...]
 
 Arguments:
-  [COMMAND]...  Command to run. Only used when in compatible mode
+  [COMMAND]...
+          Command to run. Only used when in compatible mode
 
 Options:
-      --uplink-loss &lt;Loss&gt;              Uplink packet loss
-      --downlink-loss &lt;Loss&gt;            Downlink packet loss
-      --generate                        Generate config file instead of running a instance
-      --uplink-delay &lt;Delay&gt;            Uplink delay
-      --downlink-delay &lt;Delay&gt;          Downlink delay
-      --generate-path &lt;File&gt;            Generate config file to the specified path instead of stdout
-      --packet-log &lt;File&gt;               The file to store compressed packet log (overwrite config) (default: None)
-      --uplink-bandwidth &lt;Bandwidth&gt;    Uplink bandwidth
-      --file-log                        Enable logging to file
-      --uplink-trace &lt;File&gt;             Uplink trace file
-      --file-log-path &lt;File&gt;            File log path, default to $CACHE_DIR/rattan/core.log
-      --uplink-queue &lt;Queue Type&gt;       Uplink queue type [possible values: infinite, droptail, drophead, codel]
-      --uplink-queue-args &lt;JSON&gt;        Uplink queue arguments
-      --downlink-bandwidth &lt;Bandwidth&gt;  Downlink bandwidth
-      --downlink-trace &lt;File&gt;           Downlink trace file
-      --downlink-queue &lt;Queue Type&gt;     Downlink queue type [possible values: infinite, droptail, drophead, codel]
-      --downlink-queue-args &lt;JSON&gt;      Downlink queue arguments
-  -s, --shell &lt;SHELL&gt;                   Shell used to run if no command is specified. Only used when in compatible mode [default: default] [possible values: default, sh, bash, zsh, fish]
-  -h, --help                            Print help (see more with '--help')
-  -V, --version                         Print version
+      --uplink-loss &lt;Loss&gt;
+          Uplink packet loss
+
+      --downlink-loss &lt;Loss&gt;
+          Downlink packet loss
+
+      --generate
+          Generate config file instead of running a instance
+
+          If this flag is set, the program will only generate the config to stdout and exit.
+
+      --uplink-delay &lt;Delay&gt;
+          Uplink delay
+
+      --downlink-delay &lt;Delay&gt;
+          Downlink delay
+
+      --left-stdout
+          Used in isolated mode only. If set, stdout of left is passed to output of this program
+
+      --right-stdout
+          Used in isolated mode only. If set, stdout of rihgt is passed to output of this program
+
+      --uplink-bandwidth &lt;Bandwidth&gt;
+          Uplink bandwidth
+
+      --left-stderr
+          Used in isolated mode only. If set, stderr of left is passed to output of this program
+
+      --uplink-trace &lt;File&gt;
+          Uplink trace file
+
+      --right-stderr
+          Used in isolated mode only. If set, stderr of right is passed to output of this program
+
+      --uplink-queue &lt;Queue Type&gt;
+          Uplink queue type
+
+          [possible values: infinite, droptail, drophead, codel]
+
+      --generate-path &lt;File&gt;
+          Generate config file to the specified path instead of stdout
+
+      --uplink-queue-args &lt;JSON&gt;
+          Uplink queue arguments
+
+      --downlink-bandwidth &lt;Bandwidth&gt;
+          Downlink bandwidth
+
+      --packet-log &lt;File&gt;
+          The file to store compressed packet log (overwrite config) (default: None)
+
+      --downlink-trace &lt;File&gt;
+          Downlink trace file
+
+      --file-log
+          Enable logging to file
+
+      --downlink-queue &lt;Queue Type&gt;
+          Downlink queue type
+
+          [possible values: infinite, droptail, drophead, codel]
+
+      --file-log-path &lt;File&gt;
+          File log path, default to $CACHE_DIR/rattan/core.log
+
+      --downlink-queue-args &lt;JSON&gt;
+          Downlink queue arguments
+
+      --no-nat
+          Disable NAT in compatible mode
+
+  -s, --shell &lt;SHELL&gt;
+          Shell used to run if no command is specified. Only used when in compatible mode
+
+          [default: default]
+          [possible values: default, sh, bash, zsh, fish]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><style>
 .mdbook-alerts {
@@ -707,41 +794,159 @@ Options:
 <h1 id="flexible-configuration"><a class="header" href="#flexible-configuration">Flexible Configuration</a></h1>
 <p>Generally, our specialized network emulations necessitate a different number of cells or more complex channels, and they may even require the configuration of routes, such as a multi-path network path with ISP QoS policies. Our CLI tool achieves flexibility and configurability through the use of TOML config files. The configuration file primarily consists of six sections.</p>
 <p>We provide an example config file <a href="https://github.com/stack-rs/rattan/blob/main/config.example.toml">config.example.toml</a> as reference. You can just copy and modify it to suit your needs.</p>
+<h2 id="usage-1"><a class="header" href="#usage-1">Usage</a></h2>
+<p>It is very straightforward to use a config file to run a rattan instance. You can run the following command:</p>
+<pre><code class="language-bash">rattan run -c config.example.toml --left=echo --left=hello
+</code></pre>
+<p>This will just print "hello" in the terminal as the <code>config.example.toml</code> is in <code>Compatible Mode</code>.</p>
+<p>For large scale tests, we recommend you to use the <code>Isolated Mode</code>. Both sides of Rattan (typically one running client and one running server) are isolated to a independent network namespace.</p>
+<h3 id="an-illustration-example-of-testing-1"><a class="header" href="#an-illustration-example-of-testing-1">An Illustration Example of Testing</a></h3>
+<p>We are going to illustrate a simple example of testing network performance using <code>rattan link</code> and <code>iperf3</code> in <code>Isolated Mode</code> with a config file defined.
+Before testing, don't remember to disable your firewall to allow <code>iperf3</code> traffic, or allow from <code>10.0.0.0/8</code>,
+as Rattan is using that as the default IP addresses for the emulated network.</p>
+<p>We should first define two scripts to use in the config file:</p>
+<p>We could create a script <code>iperf3_server.sh</code> as follows:</p>
+<pre><code class="language-bash">#!/bin/bash
+iperf3 -s -1 -J --logfile iperf3_server.log
+</code></pre>
+<p>And a script <code>iperf3_client.sh</code> as follows:</p>
+<pre><code class="language-bash">#!/bin/bash
+sleep 1 # we sleep 1 second to wait for server to be ready
+iperf3 -c $RATTAN_BASE -t 10 -J --logfile iperf3_client.log
+</code></pre>
+<p>We output the client and server results to json log files, as we are running in <code>Isolated Mode</code> and cannot see the terminal output directly.</p>
+<p>After that, we can create a config file <code>iperf3_config.toml</code> as follows:</p>
+<pre><code class="language-toml">[env]
+mode = "Isolated"
+left_veth_count = 1
+right_veth_count = 1
+
+[links]
+left = "up_loss"
+up_loss = "up_bandwidth"
+up_bandwidth = "up_delay"
+up_delay = "right"
+right = "down_loss"
+down_loss = "down_bandwidth"
+down_bandwidth = "down_delay"
+down_delay = "left"
+
+[cells.up_delay]
+type = "Delay"
+delay = "50ms"
+
+[cells.up_bandwidth]
+type = "Bw"
+queue = "Infinite"
+bandwidth = "12Mbps"
+
+[cells.up_loss]
+type = "Loss"
+pattern = []
+
+[cells.down_delay]
+type = "Delay"
+delay = "50ms"
+
+[cells.down_bandwidth]
+type = "Bw"
+queue = "DropTail"
+bandwidth = "12Mbps"
+[cells.down_bandwidth.queue_config]
+byte_limit = 125000
+
+[cells.down_loss]
+type = "Loss"
+pattern = [ 0.0,]
+
+[commands]
+left = ["bash", "iperf3_client.sh"]
+right = ["bash", "iperf3_server.sh"]
+</code></pre>
+<p>This creates 12Mbps bandwidth, 100ms RTT and no loss link between the two network namespaces.
+The only difference of it with the <a href="guide/guide/predefined-channels.html#an-illustration-example-of-testing">example of rattan link</a> is that now we define a <code>DropTail</code> queue in the downlink.</p>
+<p>The <code>commands</code> section specifies the commands to run in the two network namespaces, in this case, the <code>iperf3</code> client and server scripts we defined before.</p>
+<p>Now we can run the rattan instance with the config file:</p>
+<pre><code class="language-bash">rattan run -c iperf3_config.toml
+</code></pre>
+<p>Wait for it to finish, and then we can check the <code>iperf3_client.log</code> and <code>iperf3_server.log</code> files for the results.</p>
+<p>If you want to see the terminal output of both sides, you should first remove the <code>-J --logfile xxx.log</code> part from both client and server side iperf3 scripts.
+Then you can add the <code>--left-stdout</code> and <code>--right-stdout</code> options to <code>rattan run</code> command like this:</p>
+<pre><code class="language-bash">rattan run -c iperf3_config.toml --left-stdout --right-stdout
+</code></pre>
+<h3 id="available-options-1"><a class="header" href="#available-options-1">Available Options</a></h3>
 <p>For detailed usage, you can run <code>rattan config --help</code> to see the available cells and options:</p>
 <pre><code class="language-txt">Run the instance according to the config
 
 Usage: rattan run [OPTIONS] --config &lt;Config File&gt;
 
 Options:
-  -c, --config &lt;Config File&gt;        Use config file to run a instance
-      --left [&lt;LEFT_COMMAND&gt;...]    Command to run in left ns. Can be used in compatible and isolated mode
-      --generate                    Generate config file instead of running a instance
-      --right [&lt;RIGHT_COMMAND&gt;...]  Command to run in right ns. Only used in isolated mode
-      --generate-path &lt;File&gt;        Generate config file to the specified path instead of stdout
-      --packet-log &lt;File&gt;           The file to store compressed packet log (overwrite config) (default: None)
-      --file-log                    Enable logging to file
-      --file-log-path &lt;File&gt;        File log path, default to $CACHE_DIR/rattan/core.log
-  -h, --help                        Print help (see more with '--help')
-  -V, --version                     Print version
+  -c, --config &lt;Config File&gt;
+          Use config file to run a instance
+
+      --left [&lt;LEFT_COMMAND&gt;...]
+          Command to run in left ns. Can be used in compatible and isolated mode
+
+      --generate
+          Generate config file instead of running a instance
+
+          If this flag is set, the program will only generate the config to stdout and exit.
+
+      --right [&lt;RIGHT_COMMAND&gt;...]
+          Command to run in right ns. Only used in isolated mode
+
+      --left-stdout
+          Used in isolated mode only. If set, stdout of left is passed to output of this program
+
+      --right-stdout
+          Used in isolated mode only. If set, stdout of rihgt is passed to output of this program
+
+      --left-stderr
+          Used in isolated mode only. If set, stderr of left is passed to output of this program
+
+      --right-stderr
+          Used in isolated mode only. If set, stderr of right is passed to output of this program
+
+      --generate-path &lt;File&gt;
+          Generate config file to the specified path instead of stdout
+
+      --packet-log &lt;File&gt;
+          The file to store compressed packet log (overwrite config) (default: None)
+
+      --file-log
+          Enable logging to file
+
+      --file-log-path &lt;File&gt;
+          File log path, default to $CACHE_DIR/rattan/core.log
+
+      --no-nat
+          Disable NAT in compatible mode
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 </code></pre>
-<h2 id="general-section"><a class="header" href="#general-section">General Section</a></h2>
+<h2 id="explanation-of-config-sections"><a class="header" href="#explanation-of-config-sections">Explanation of Config Sections</a></h2>
+<h3 id="general-section"><a class="header" href="#general-section">General Section</a></h3>
 <p>This section determines how to run the rattan itself in general.</p>
 <ul>
 <li><code>packet_log</code>. Now we only have this option in the section, which is used to enable compressed packet log and specify the file to store the records. The meta data of flows will be stored in the file of name <code>packet_log</code>.flows</li>
 </ul>
-<h2 id="environment-section"><a class="header" href="#environment-section">Environment Section</a></h2>
+<h3 id="environment-section"><a class="header" href="#environment-section">Environment Section</a></h3>
 <p>This section determines how to build the environment.</p>
 <ul>
 <li><code>mode</code>. You can configure rattan to function in <code>Compatible</code> mode or <code>Isolated</code> mode. The <code>ns-left</code> side is always a new network namespace. The difference of the two modes lies in whether <code>ns-right</code> side is the host network namespace (the namespace run rattan) or a new network namespace. The default is <code>Compatible</code>.</li>
 <li><code>left_veth_count</code> and <code>right_veth_count</code>. You can configure the number of veth pairs to create in the <code>ns-left</code> (i.e., between <code>ns-left</code> and <code>ns-rattan</code>) and <code>ns-right</code> (i.e., between <code>ns-right</code> and <code>ns-rattan</code>) network namespaces. The default is 1.</li>
 </ul>
-<h2 id="http-section"><a class="header" href="#http-section">HTTP Section</a></h2>
+<h3 id="http-section"><a class="header" href="#http-section">HTTP Section</a></h3>
 <p>This section configures Rattan's HTTP control server.</p>
 <ul>
 <li><code>enable</code>. You can enable or disable the HTTP control server. The default is <code>false</code>.</li>
 <li><code>port</code>. You can configure the port number of the HTTP control server. The default is 8086.</li>
 </ul>
-<h2 id="cells-section"><a class="header" href="#cells-section">Cells Section</a></h2>
+<h3 id="cells-section"><a class="header" href="#cells-section">Cells Section</a></h3>
 <p>This section describes the emulation cells. It is a table of cells, where each cell has a unique string ID, defined like <code>[cells.&lt;ID&gt;]</code>.</p>
 <p>Each cell <strong>MUST</strong> have a "type" field, which determines the cell type and cell configuration fields.
 Possible cell types:</p>
@@ -763,7 +968,7 @@ queue = "DropTail"
 queue_config = { packet_limit = 60 }
 </code></pre>
 <p>For detailed parameters, you can check the <a href="https://docs.rs/rattan-core/latest/rattan-core">documentation of <code>rattan-core</code></a> or the example config file <a href="https://github.com/stack-rs/rattan/blob/main/config.example.toml">config.example.toml</a>.</p>
-<h2 id="links-section"><a class="header" href="#links-section">Links Section</a></h2>
+<h3 id="links-section"><a class="header" href="#links-section">Links Section</a></h3>
 <p>This section describes how to link the cells.</p>
 <p>"left" and "right" are preserved cell IDs, which respectively represent
 the <code>ns-left</code> side veth (named <code>vL1-R</code>) and the <code>ns-right</code> side veth (named <code>vR1-L</code>).
@@ -791,13 +996,13 @@ down_1 = "down_2"
 down_2 = "router"
 # We do not need to link the Router Cell to other cells anymore, as we should do it in Cells Section
 </code></pre>
-<h2 id="resource-section"><a class="header" href="#resource-section">Resource Section</a></h2>
+<h3 id="resource-section"><a class="header" href="#resource-section">Resource Section</a></h3>
 <p>This section describes how rattan use system resource</p>
 <p>The section is preserved for future use but not used now.</p>
 <ul>
 <li><code>cores</code>. The CPU cores that rattan is allowed to use.</li>
 </ul>
-<h2 id="commands-section"><a class="header" href="#commands-section">Commands Section</a></h2>
+<h3 id="commands-section"><a class="header" href="#commands-section">Commands Section</a></h3>
 <p>This section describes the commands to run in rattan.</p>
 <p>When in <code>Compatible</code> mode, only the <code>left</code> and <code>shell</code> options are used,
 and the commands will run in the <code>ns-left</code> network namespace.</p>
@@ -1761,7 +1966,7 @@ cargo run --example channel-xdp --release --features="camellia" # AF_XDP version
 </style>
 <h1 id="packet-log"><a class="header" href="#packet-log">Packet Log</a></h1>
 <p>The packet log contains a binary file that contains a compressed record of all packets processed by Rattan and a flow description file. It is designed to store what happened during the experiment with low overhead, enabling post-analysis and debugging.</p>
-<h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
+<h2 id="usage-2"><a class="header" href="#usage-2">Usage</a></h2>
 <p>Using the <code>--packet-log</code> option in the CLI will enable the packet log feature and specify the file to store the records. The flow description file will be stored in the same directory with the name <code>&lt;packet_log&gt;.flows</code>, where <code>&lt;packet_log&gt;</code> is the name of the packet log file.</p>
 <p>For example, you can run the following command to enable packet logging:</p>
 <pre><code class="language-bash">rattan link --packet-log packet.log
