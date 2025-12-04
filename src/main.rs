@@ -21,7 +21,10 @@ use rattan_core::env::StdNetEnvMode;
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
 
-use crate::{build::CLAP_LONG_VERSION, combined_trace::write_combined_trace};
+use crate::{
+    build::CLAP_LONG_VERSION,
+    visualized_trace::{write_visualized_trace, OutputMode},
+};
 use rattan_core::radix::PacketLogMode;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
 use rattan_log::{convert_log_to_pcapng, LogConverterArgs};
@@ -32,7 +35,7 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod channel;
-mod combined_trace;
+mod visualized_trace;
 // mod log_converter;
 // mod docker;
 
@@ -67,19 +70,40 @@ pub struct Arguments {
     #[arg(long, global = true)]
     generate: bool,
 
-    /// Generate combined trace until `combined_trace` since the trace starts
+    /// Generate visualized trace until `visualized_trace` since the trace starts
     ///
     /// If this is set, the program will only generate the csv to stdout and exit.
+    ///
+    /// Two output modes are supported:  CSV for human and Parquet for scripts.
     #[arg(
         long,
         global = true,
-        value_parser = parse_duration
+        value_parser = parse_duration,
+        value_name = "End Time"
     )]
-    combined_trace: Option<Duration>,
+    visualized_trace: Option<Duration>,
 
-    /// Generate combined trace csv file to the specified path instead of stdout
-    #[arg(long, requires = "combined_trace", global = true, value_name = "File")]
-    combined_trace_path: Option<PathBuf>,
+    /// Start time of visualized trace, 0s as default.
+    #[arg(long, requires = "visualized_trace", global = true, value_name = "Start Time", value_parser = parse_duration)]
+    visualize_trace_start: Option<Duration>,
+
+    /// Path to output the visualized_trace
+    #[arg(
+        long,
+        requires = "visualized_trace",
+        global = true,
+        value_name = "File"
+    )]
+    visualized_trace_path: Option<PathBuf>,
+
+    /// Mode to output the visualied_trace.
+    #[arg(
+        long,
+        requires = "visualized_trace",
+        global = true,
+        value_name = "Mode"
+    )]
+    visualized_trace_mode: Option<OutputMode>,
 
     /// Used in isolated mode only. If set, stdout of left is passed to output of this program.
     #[arg(long, global = true)]
@@ -377,18 +401,26 @@ fn main() -> ExitCode {
             return Ok(());
         }
 
-        if let Some(combined_trace_length) = opts.combined_trace {
-            if let Some(output_path) = opts.combined_trace_path {
-                return write_combined_trace(
+        if let Some(visualized_trace_length) = opts.visualized_trace {
+            let mode = opts.visualized_trace_mode.unwrap_or_default();
+
+            if let Some(mut output_path) = opts.visualized_trace_path {
+                output_path.set_extension(mode.get_extension_name());
+
+                return write_visualized_trace(
+                    mode,
                     File::create(output_path)?,
                     config.cells,
-                    combined_trace_length,
+                    opts.visualize_trace_start,
+                    visualized_trace_length,
                 );
             } else {
-                return write_combined_trace(
+                return write_visualized_trace(
+                    mode,
                     std::io::stdout(),
                     config.cells,
-                    combined_trace_length,
+                    opts.visualize_trace_start,
+                    visualized_trace_length,
                 );
             }
         }
