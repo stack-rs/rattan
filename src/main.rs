@@ -27,7 +27,7 @@ use crate::{
 };
 use rattan_core::radix::PacketLogMode;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
-use rattan_log::{convert_log_to_pcapng, LogConverterArgs};
+use rattan_log::convert_log_to_pcapng;
 use serde::{Deserialize, Serialize};
 use shadow_rs::shadow;
 use tracing::warn;
@@ -87,7 +87,8 @@ pub struct Arguments {
     #[arg(long, requires = "visualized_trace", global = true, value_name = "Start Time", value_parser = parse_duration)]
     visualize_trace_start: Option<Duration>,
 
-    /// Path to output the visualized_trace
+    /// Path to output the visualized_trace. If not set, output to stdout.
+    /// The extension name would be changed automatically according to `visualized_trace_mode`
     #[arg(
         long,
         requires = "visualized_trace",
@@ -101,9 +102,10 @@ pub struct Arguments {
         long,
         requires = "visualized_trace",
         global = true,
-        value_name = "Mode"
+        value_name = "Mode",
+        default_value = "tsv"
     )]
-    visualized_trace_mode: Option<OutputMode>,
+    visualized_trace_mode: OutputMode,
 
     /// Used in isolated mode only. If set, stdout of left is passed to output of this program.
     #[arg(long, global = true)]
@@ -139,8 +141,14 @@ pub struct Arguments {
     packet_log: Option<PathBuf>,
 
     /// If this flag is set, raw packet header would be recorded for packet_log.
-    #[arg(long, value_name = "Mode", global = true)]
-    packet_log_mode: Option<PacketLogMode>,
+    #[arg(
+        long,
+        requires = "packet_log",
+        value_name = "Mode",
+        global = true,
+        default_value = "compact-tcp"
+    )]
+    packet_log_mode: PacketLogMode,
 
     /// Enable logging to file
     #[arg(long, global = true)]
@@ -167,6 +175,16 @@ pub struct DisplayTaskCommands {
     pub commands: TaskCommands,
 }
 
+/// Convert Rattan Packet Log file to pcapng file for each end
+#[derive(Args, Debug, Default, Clone)]
+#[command(rename_all = "kebab-case")]
+pub struct ConvertLogArgs {
+    /// Input Rattan Packet Log file path
+    pub input: PathBuf,
+    /// Output pcapng file name prefix. take the input as default value
+    pub output: Option<PathBuf>,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 enum CliCommand {
     /// Run a templated channel with command line arguments.
@@ -174,7 +192,7 @@ enum CliCommand {
     /// Run the instance according to the config.
     Run(RunArgs),
     /// Convert Rattan packet log into .pcapng file.
-    Convert(LogConverterArgs),
+    Convert(ConvertLogArgs),
 }
 
 #[derive(Args, Debug, Default, Clone)]
@@ -375,10 +393,7 @@ fn main() -> ExitCode {
         }
         if let Some(packet_log) = opts.packet_log {
             config.general.packet_log = Some(packet_log);
-            config.general.packet_log_mode = opts
-                .packet_log_mode
-                .unwrap_or(PacketLogMode::CompactTCP)
-                .into();
+            config.general.packet_log_mode = opts.packet_log_mode.into();
         }
 
         tracing::debug!(?config);
@@ -402,8 +417,7 @@ fn main() -> ExitCode {
         }
 
         if let Some(visualized_trace_length) = opts.visualized_trace {
-            let mode = opts.visualized_trace_mode.unwrap_or_default();
-
+            let mode = opts.visualized_trace_mode;
             if let Some(mut output_path) = opts.visualized_trace_path {
                 output_path.set_extension(mode.get_extension_name());
 

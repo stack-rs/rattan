@@ -20,17 +20,4 @@ pub trait PlainBytes: Plain + Sized {
 }
 impl<T: Plain + Sized> PlainBytes for T {}
 
-use clap::{command, Args};
-use std::path::PathBuf;
-
-/// Convert Rattan Packet Log file to pcapng file for each end
-#[derive(Args, Debug, Default, Clone)]
-#[command(rename_all = "kebab-case")]
-pub struct LogConverterArgs {
-    /// Input Rattan Packet Log file path
-    pub input: PathBuf,
-    /// Output pcapng file name prefix. take the input as default value
-    pub output: Option<PathBuf>,
-}
-
 pub use logger::file_reader::convert_log_to_pcapng;
