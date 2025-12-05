@@ -72,6 +72,9 @@ pub fn convert_log_to_pcapng(
     file_path: impl AsRef<Path>,
     output_file: Option<impl AsRef<Path>>,
 ) -> Result<()> {
+    fn load_file_with_mmap(path: impl AsRef<Path>) -> Result<Mmap> {
+        mmap_file(&File::open(path)?)
+    }
     let output_file = if let Some(output_file) = output_file {
         output_file.as_ref().to_path_buf()
     } else {
@@ -88,20 +91,17 @@ pub fn convert_log_to_pcapng(
         output_file
     };
 
-    let log_entry_file: Mmap = load_raw_file(&file_path.as_ref().to_path_buf())?;
+    let log_entry_file: Mmap = load_file_with_mmap(file_path.as_ref())?;
 
     let mut flow_file_path = file_path.as_ref().to_path_buf();
     flow_file_path.set_extension("flow");
-    let flow_file: Mmap = load_raw_file(&flow_file_path)?;
+    let flow_file: Mmap = load_file_with_mmap(&flow_file_path)?;
 
     let mut raw_file_path = file_path.as_ref().to_path_buf();
     raw_file_path.set_extension("raw");
 
     // Unused if the log is not in raw format.
     let mut raw_file: Option<Mmap> = None;
-    fn load_raw_file(path: &PathBuf) -> Result<Mmap> {
-        mmap_file(&File::open(path)?)
-    }
 
     let mut flow_entry = vec![];
 
@@ -198,7 +198,7 @@ pub fn convert_log_to_pcapng(
                     Some(ref raw) => raw,
                     None => {
                         // Would enter here only once, upon the very first raw_entry was being processed.
-                        let loaded = load_raw_file(&raw_file_path)?;
+                        let loaded = load_file_with_mmap(&raw_file_path)?;
                         raw_file.insert(loaded)
                     }
                 };
