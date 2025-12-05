@@ -21,6 +21,7 @@ pub struct TCPProtocolEntry {
 }
 
 unsafe impl Plain for TCPProtocolEntry {}
+static_assertions::assert_eq_size!(TCPProtocolEntry, [u8; 22]);
 
 // The detailed spec of this log entry:
 //
@@ -51,6 +52,8 @@ pub struct TCPLogEntry {
     pub tcp_entry: TCPProtocolEntry,
 }
 unsafe impl Plain for TCPLogEntry {}
+static_assertions::assert_eq_size!(TCPLogEntry, [u8; 32]);
+
 impl TCPLogEntry {
     pub fn new() -> Self {
         let mut entry = Self::default();

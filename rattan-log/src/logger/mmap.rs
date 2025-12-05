@@ -185,7 +185,7 @@ where
             return;
         }
         let header = (self.prologue_maker)(current_chunk_len, &self.prologue_info);
-        assert_eq!(header.len(), self.prologue_len);
+        debug_assert_eq!(header.len(), self.prologue_len);
         tracing::trace!(
             "Finishing current logic trunc at {} + [{},{}). chunk len {}",
             self.writer.chunk_start,
@@ -193,7 +193,7 @@ where
             self.current_chunk_offset + current_chunk_len,
             current_chunk_len
         );
-        assert_eq!(
+        debug_assert_eq!(
             self.prologue_len,
             self.writer
                 .chunk
@@ -243,6 +243,8 @@ where
         self.logical_chunk_len - (self.writer.offset_in_chunk() - self.current_chunk_offset)
     }
 
+    // Call `remain()` first, and make sure the slice can fit into that.
+    // If not, `renew_chunk` should be called.
     fn record_slice(&mut self, slice: &[u8], info: Option<C>) {
         if let Some(info) = info {
             let _ = self.prologue_info.insert(info);
@@ -251,7 +253,7 @@ where
         let start_offset = self.writer.offset_in_chunk();
 
         // Make sure `remain` is larger than slice.len to avoid panic
-        assert_eq!(slice.len(), self.writer.chunk.append(slice));
+        debug_assert_eq!(slice.len(), self.writer.chunk.append(slice));
 
         tracing::trace!(
             "Recorded at  {} + [{}, {})",
@@ -267,8 +269,8 @@ where
         prologue_len: usize,
         logical_chunk_len: usize,
     ) -> Result<Self> {
-        assert_eq!(MmapWriter::<P>::page() % logical_chunk_len, 0);
-        assert!(prologue_len < logical_chunk_len);
+        debug_assert_eq!(MmapWriter::<P>::page() % logical_chunk_len, 0);
+        debug_assert!(prologue_len < logical_chunk_len);
 
         let writer = MmapWriter::new_truncate(path)?;
         Ok(Self {

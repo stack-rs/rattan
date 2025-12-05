@@ -56,7 +56,6 @@ impl TCPFlowEntry {
 }
 
 unsafe impl Plain for TCPFlowEntry {}
-
 static_assertions::assert_eq_size!(TCPFlowEntry, [u8; 72]);
 
 #[derive(Debug, Clone, Copy, BinRead)]

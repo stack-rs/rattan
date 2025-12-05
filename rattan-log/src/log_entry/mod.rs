@@ -41,6 +41,7 @@ impl LogEntryHeader {
 }
 
 unsafe impl Plain for LogEntryHeader {}
+static_assertions::assert_eq_size!(LogEntryHeader, [u8; 2]);
 
 impl Default for LogEntryHeader {
     fn default() -> Self {

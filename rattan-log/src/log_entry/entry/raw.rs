@@ -17,6 +17,7 @@ pub struct RawEntry {
 }
 
 unsafe impl Plain for RawEntry {}
+static_assertions::assert_eq_size!(RawEntry, [u8; 6]);
 // The detailed spec of this log entry:
 //
 // 0                   1                   2                   3
@@ -40,6 +41,7 @@ pub struct RawLogEntry {
 }
 
 unsafe impl Plain for RawLogEntry {}
+static_assertions::assert_eq_size!(RawLogEntry, [u8; 16]);
 
 impl RawLogEntry {
     pub fn new(pkt_type: GeneralPacketType) -> Self {

@@ -18,6 +18,7 @@ pub struct GeneralPktEntry {
 }
 
 unsafe impl Plain for GeneralPktEntry {}
+static_assertions::assert_eq_size!(GeneralPktEntry, [u8; 8]);
 
 #[derive(Debug, Clone, Copy, TryFromPrimitive)]
 #[repr(u8)]
@@ -72,7 +73,7 @@ impl GeneralPktHeader {
 }
 
 unsafe impl Plain for GeneralPktHeader {}
-
+static_assertions::assert_eq_size!(GeneralPktHeader, [u8; 2]);
 impl Default for GeneralPktHeader {
     fn default() -> Self {
         Self::new()
