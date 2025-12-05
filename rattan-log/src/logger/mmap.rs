@@ -94,7 +94,7 @@ impl<const P: usize> Drop for MmapWritter<P> {
     fn drop(&mut self) {
         let file_last_write = self.offset();
         let _ = self.file.set_len(file_last_write);
-        tracing::info!(
+        tracing::debug!(
             "Written {} Bytes into {:?}",
             file_last_write,
             self.path.display()
@@ -121,7 +121,7 @@ impl<const P: usize> MmapWritter<P> {
         let new_file_size = new_chunk_start + Self::page() as u64;
 
         self.file.set_len(new_file_size)?;
-        tracing::debug!("New chunk at [{}, {})", new_chunk_start, new_file_size);
+        tracing::trace!("New chunk at [{}, {})", new_chunk_start, new_file_size);
         self.chunk = MmapChunk::new(&self.file, new_chunk_start, Self::page())?;
         self.chunk_start = new_chunk_start;
         Ok(())
@@ -167,7 +167,7 @@ where
 {
     fn drop(&mut self) {
         self.finish_chunk(true);
-        tracing::info!("Mmap total size: {:?}", self.writer.offset());
+        tracing::debug!("Mmap total size: {:?}", self.writer.offset());
     }
 }
 
@@ -186,7 +186,7 @@ where
         }
         let header = (self.prologue_maker)(current_chunk_len, &self.prologue_info);
         assert_eq!(header.len(), self.prologue_len);
-        tracing::debug!(
+        tracing::trace!(
             "Finishing current logic trunc at {} + [{},{}). chunk len {}",
             self.writer.chunk_start,
             self.current_chunk_offset,
@@ -220,7 +220,7 @@ where
             self.current_chunk_offset = 0;
         }
 
-        tracing::info!(
+        tracing::trace!(
             "Start recording at {} + [{}, {})",
             self.writer.chunk_start,
             self.current_chunk_offset,
@@ -351,7 +351,7 @@ impl<const P: usize> MmapStreamWriter<P> {
 
         let mut written = 0;
 
-        tracing::debug!("Trying to write [{}, {})", offset, offset + len as u64);
+        tracing::trace!("Trying to write [{}, {})", offset, offset + len as u64);
         while !slice.is_empty() {
             let remain = self.chunk.remain();
             let (to_write, remained) = slice.split_at(remain.min(slice.len()));
@@ -404,7 +404,7 @@ mod test {
             total += write_len as u64;
         }
 
-        tracing::info!("{} Bytes are expect to be written", total);
+        tracing::debug!("{} Bytes are expect to be written", total);
         assert_eq!(writter.offset(), total);
         drop(writter);
         let mut file = OpenOptions::new().read(true).open(file).unwrap();
@@ -452,12 +452,12 @@ mod test {
             header[0..8].copy_from_slice(&chunk_len.to_be_bytes());
             header[8..12].copy_from_slice(&header_id.to_be_bytes());
             header_id += 1;
-            tracing::info!(
+            tracing::debug!(
                 "[{}]Logical chunk prologue created. {} ",
                 header_id,
                 chunk_len
             );
-            tracing::info!(
+            tracing::debug!(
                 "This header is build for logs start form  {:?}",
                 run_time_data
             );

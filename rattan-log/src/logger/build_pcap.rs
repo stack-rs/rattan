@@ -182,7 +182,7 @@ impl PacketWriter {
         Ok(())
     }
     pub fn finalize(mut self) -> Result<()> {
-        eprintln!("Writing into {}", self.path.display());
+        tracing::info!("Writing .pcapng into {}", self.path.display());
         let mut file_out = File::create(&self.path)?;
         file_out.write_all(self.writer.get_mut())
     }

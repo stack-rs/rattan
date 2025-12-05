@@ -140,7 +140,7 @@ fn build_chunk_prologue(data_length: usize, time_offset: &Option<u64>) -> Vec<u8
 fn writting(path: PathBuf, mut log_rx: UnboundedReceiver<RattanLogOp>) -> Result<()> {
     let _span = tracing::span!(tracing::Level::DEBUG, "writting thread").entered();
 
-    tracing::info!("writing thread started");
+    tracing::info!("Packet logging thread started");
 
     let mut entry_writer = EntryWriter::new(path);
 
@@ -148,7 +148,6 @@ fn writting(path: PathBuf, mut log_rx: UnboundedReceiver<RattanLogOp>) -> Result
     while let Some(entry) = log_rx.blocking_recv() {
         match entry {
             RattanLogOp::Entry(entry) => entry_writer.add_log_entry(entry.as_slice())?,
-
             RattanLogOp::Flow(flow_id, base_ts, flow_desc) => {
                 let flow_index = 1 + flows.len();
                 flows.entry(flow_id).or_insert(flow_index as u16);
@@ -163,12 +162,12 @@ fn writting(path: PathBuf, mut log_rx: UnboundedReceiver<RattanLogOp>) -> Result
                 entry_writer.add_raw_log_entry(entry, offset, size, build_chunk_prologue)?;
             }
             RattanLogOp::End => {
-                tracing::debug!("Logging thread exit");
                 break;
             }
         }
     }
 
+    tracing::info!("Packet logging thread exited");
     Ok(())
 }
 
