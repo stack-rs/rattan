@@ -65,7 +65,9 @@ where
                     LOGICAL_CHUNK_SIZE_1M as usize * PAGE_SIZE as usize,
                 )?;
                 self.log_entry_file = Some(file);
-                self.log_entry_file.as_mut().unwrap()
+                self.log_entry_file
+                    .as_mut()
+                    .expect("unreachable. Just set to some")
             }
         };
 
@@ -118,7 +120,9 @@ where
                 self.base_path.set_extension("oldrtl");
                 let file = MmapStreamWriter::new_truncate(&self.base_path)?;
                 let _ = self.old_log_entry_file.insert(file);
-                self.old_log_entry_file.as_mut().unwrap()
+                self.old_log_entry_file
+                    .as_mut()
+                    .expect("unreachable. Just set to Some")
             }
         }
         .extend_from_slice(entry)?;
@@ -131,7 +135,9 @@ where
                 self.base_path.set_extension("flow");
                 let file = MmapStreamWriter::new_truncate(&self.base_path)?;
                 let _ = self.flow_file.insert(file);
-                self.flow_file.as_mut().unwrap()
+                self.flow_file
+                    .as_mut()
+                    .expect("unreachable. Just set to Some")
             }
         }
         .extend_from_slice(entry)?;
@@ -144,7 +150,9 @@ where
                 self.base_path.set_extension("raw");
                 let file = MmapStreamWriter::new_truncate(&self.base_path)?;
                 let _ = self.raw_file.insert(file);
-                self.raw_file.as_mut().unwrap()
+                self.raw_file
+                    .as_mut()
+                    .expect("unreachable. Just set to Some")
             }
         }
         .extend_from_slice(header)
@@ -196,6 +204,8 @@ fn writing(path: PathBuf, mut log_rx: UnboundedReceiver<RattanLogOp>) -> Result<
 
 pub fn file_logging_thread(log_path: PathBuf) -> std::thread::JoinHandle<Result<()>> {
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
-    LOGGING_TX.set(log_tx).unwrap();
+    LOGGING_TX
+        .set(log_tx)
+        .expect("LOGGING_TX should only be set here");
     std::thread::spawn(move || writing(log_path, log_rx))
 }
