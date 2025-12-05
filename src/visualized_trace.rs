@@ -14,7 +14,7 @@ use netem_trace::{
 use rattan_core::{
     cells::Packet,
     config::{BwCellBuildConfig, BwReplayCellBuildConfig, CellBuildConfig},
-    error::{Error::Custom, Result},
+    error::{Result, VisualizedTraceError as Error},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{to_value, to_writer, to_writer_pretty, Map, Value};
@@ -148,7 +148,7 @@ impl VisualizedTraceBuilder {
                     .chain(iter::once(DURATION_TIME))
                     .chain(self.inner.cell_names.iter().map(String::as_str)),
             )
-            .map_err(|e| Custom(format!("{:?}", e)))?;
+            .map_err(Error::CsvError)?;
 
         loop {
             // Write by rows
@@ -164,9 +164,7 @@ impl VisualizedTraceBuilder {
                     .map(|trace| trace.as_ref().map(TracePoint::display).unwrap_or_default()),
             );
 
-            csv_writer
-                .write_record(row)
-                .map_err(|e| Custom(format!("{:?}", e)))?;
+            csv_writer.write_record(row).map_err(Error::CsvError)?;
         }
     }
 
