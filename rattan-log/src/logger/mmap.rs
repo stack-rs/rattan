@@ -129,7 +129,7 @@ impl<const P: usize> MmapWriter<P> {
 
     pub fn new_truncate(path: &PathBuf) -> Result<Self> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
+            std::fs::create_dir_all(parent)?;
         }
         let file = OpenOptions::new()
             .create(true)
@@ -364,7 +364,6 @@ impl<const P: usize> MmapStreamWriter<P> {
                     break;
                 }
                 (true, false) => self.renew_chunk()?,
-                // Safety of `unwrap`:  if self.chunk is None, `remain` would be 0 and `to_write` is always empty.
                 (false, _) => written += self.chunk.append(to_write),
             }
         }

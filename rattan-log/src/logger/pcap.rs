@@ -115,7 +115,7 @@ pub(crate) fn get_mock_mac(addr: u32) -> [u8; 6] {
 
 impl PacketWriter {
     pub fn new(path: PathBuf, ip: &IpAddr) -> Self {
-        let mut writer = PcapNgWriter::new(vec![]).unwrap();
+        let mut writer = PcapNgWriter::new(vec![]).expect("A vector can always be written to.");
         let interface = InterfaceDescriptionBlock {
             linktype: DataLink::ETHERNET,
             snaplen: 0xFFFF,
@@ -131,7 +131,7 @@ impl PacketWriter {
         };
         writer
             .write_block(&InterfaceDescription(interface))
-            .unwrap();
+            .expect("A vector can always be written to.");
 
         Self { path, writer }
     }

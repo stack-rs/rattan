@@ -118,6 +118,7 @@ mod test {
         let mut cursor = Cursor::new(data);
 
         if let LogEntry::CompactTCP(entry) = cursor.read_le::<LogEntry>().unwrap() {
+            //test code
             assert_eq!(entry.header.get_length(), 32);
             assert_eq!(entry.header.get_type(), 0);
 
@@ -152,6 +153,7 @@ mod test {
         let mut cursor = Cursor::new(data);
 
         if let LogEntry::Raw(entry) = cursor.read_le::<LogEntry>().unwrap() {
+            //test code
             assert_eq!(entry.header.get_length(), 16);
             assert_eq!(entry.header.get_type(), 0);
 

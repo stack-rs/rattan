@@ -64,10 +64,7 @@ where
                     size_of::<ChunkPrologue>(),
                     LOGICAL_CHUNK_SIZE_1M as usize * PAGE_SIZE as usize,
                 )?;
-                self.log_entry_file = Some(file);
-                self.log_entry_file
-                    .as_mut()
-                    .expect("unreachable. Just set to some")
+                self.log_entry_file.insert(file)
             }
         };
 
@@ -119,10 +116,7 @@ where
             None => {
                 self.base_path.set_extension("oldrtl");
                 let file = MmapStreamWriter::new_truncate(&self.base_path)?;
-                let _ = self.old_log_entry_file.insert(file);
-                self.old_log_entry_file
-                    .as_mut()
-                    .expect("unreachable. Just set to Some")
+                self.old_log_entry_file.insert(file)
             }
         }
         .extend_from_slice(entry)?;
@@ -134,10 +128,7 @@ where
             None => {
                 self.base_path.set_extension("flow");
                 let file = MmapStreamWriter::new_truncate(&self.base_path)?;
-                let _ = self.flow_file.insert(file);
-                self.flow_file
-                    .as_mut()
-                    .expect("unreachable. Just set to Some")
+                self.flow_file.insert(file)
             }
         }
         .extend_from_slice(entry)?;
@@ -149,10 +140,7 @@ where
             None => {
                 self.base_path.set_extension("raw");
                 let file = MmapStreamWriter::new_truncate(&self.base_path)?;
-                let _ = self.raw_file.insert(file);
-                self.raw_file
-                    .as_mut()
-                    .expect("unreachable. Just set to Some")
+                self.raw_file.insert(file)
             }
         }
         .extend_from_slice(header)
@@ -171,7 +159,7 @@ fn build_chunk_prologue(data_length: usize, time_offset: &Option<u64>) -> Vec<u8
 fn writing(path: PathBuf, mut log_rx: UnboundedReceiver<RattanLogOp>) -> Result<()> {
     let _span = tracing::span!(tracing::Level::DEBUG, "writing thread").entered();
 
-    tracing::info!("Packet logging thread started");
+    tracing::debug!("Packet logging thread started");
 
     let mut entry_writer = EntryWriter::new(path);
 
@@ -198,7 +186,7 @@ fn writing(path: PathBuf, mut log_rx: UnboundedReceiver<RattanLogOp>) -> Result<
         }
     }
 
-    tracing::info!("Packet logging thread exited");
+    tracing::debug!("Packet logging thread exited");
     Ok(())
 }
 
