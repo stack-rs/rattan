@@ -8,10 +8,10 @@ use crate::RawLogEntry;
 
 pub static LOGGING_TX: OnceCell<UnboundedSender<RattanLogOp>> = OnceCell::new();
 
-pub mod build_pcap;
-pub mod file_reader;
-pub mod file_writer;
 pub(crate) mod mmap;
+pub mod pcap;
+pub mod reader;
+pub mod writer;
 
 #[derive(Debug, Clone, Eq)]
 pub enum FlowDesc {

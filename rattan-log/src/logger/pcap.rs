@@ -105,7 +105,10 @@ pub struct PacketWriter {
     writer: PcapNgWriter<Vec<u8>>,
 }
 
-pub fn get_mock_mac(addr: u32) -> [u8; 6] {
+// Used for converting Packet logs.
+// In all current supported packet log modes, L2 info is ommited. Thus we need
+// a "mock" mac address to build the L2 headers.
+pub(crate) fn get_mock_mac(addr: u32) -> [u8; 6] {
     let ip = addr.to_be_bytes();
     [0x38, 0x7e, 0x58, ip[1], ip[2], ip[3]]
 }

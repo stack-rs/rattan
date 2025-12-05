@@ -137,8 +137,8 @@ fn build_chunk_prologue(data_length: usize, time_offset: &Option<u64>) -> Vec<u8
     header.as_bytes().to_owned()
 }
 
-fn writting(path: PathBuf, mut log_rx: UnboundedReceiver<RattanLogOp>) -> Result<()> {
-    let _span = tracing::span!(tracing::Level::DEBUG, "writting thread").entered();
+fn writing(path: PathBuf, mut log_rx: UnboundedReceiver<RattanLogOp>) -> Result<()> {
+    let _span = tracing::span!(tracing::Level::DEBUG, "writing thread").entered();
 
     tracing::info!("Packet logging thread started");
 
@@ -174,5 +174,5 @@ fn writting(path: PathBuf, mut log_rx: UnboundedReceiver<RattanLogOp>) -> Result
 pub fn file_logging_thread(log_path: PathBuf) -> std::thread::JoinHandle<Result<()>> {
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
     LOGGING_TX.set(log_tx).unwrap();
-    std::thread::spawn(move || writting(log_path, log_rx))
+    std::thread::spawn(move || writing(log_path, log_rx))
 }

@@ -83,14 +83,14 @@ impl MmapChunk {
     }
 }
 
-pub struct MmapWritter<const P: usize> {
+pub struct MmapWriter<const P: usize> {
     file: File,
     path: PathBuf,
     chunk_start: u64,
     chunk: MmapChunk,
 }
 
-impl<const P: usize> Drop for MmapWritter<P> {
+impl<const P: usize> Drop for MmapWriter<P> {
     fn drop(&mut self) {
         let file_last_write = self.offset();
         let _ = self.file.set_len(file_last_write);
@@ -102,7 +102,7 @@ impl<const P: usize> Drop for MmapWritter<P> {
     }
 }
 
-impl<const P: usize> MmapWritter<P> {
+impl<const P: usize> MmapWriter<P> {
     #[inline(always)]
     fn page() -> usize {
         P * PAGE_SIZE as usize
@@ -152,7 +152,7 @@ pub struct MmapChunkWriter<const P: usize, H, C>
 where
     H: FnMut(usize, &Option<C>) -> Vec<u8>,
 {
-    writer: MmapWritter<P>,
+    writer: MmapWriter<P>,
     prologue_maker: H,
     prologue_info: Option<C>,
     prologue_len: usize,
@@ -215,7 +215,7 @@ where
         self.init = true;
         self.finish_chunk(false);
 
-        if self.current_chunk_offset >= MmapWritter::<P>::page() {
+        if self.current_chunk_offset >= MmapWriter::<P>::page() {
             self.writer.renew_chunk()?;
             self.current_chunk_offset = 0;
         }
@@ -267,10 +267,10 @@ where
         prologue_len: usize,
         logical_chunk_len: usize,
     ) -> Result<Self> {
-        assert_eq!(MmapWritter::<P>::page() % logical_chunk_len, 0);
+        assert_eq!(MmapWriter::<P>::page() % logical_chunk_len, 0);
         assert!(prologue_len < logical_chunk_len);
 
-        let writer = MmapWritter::new_truncate(path)?;
+        let writer = MmapWriter::new_truncate(path)?;
         Ok(Self {
             writer,
             prologue_maker: header_maker,
@@ -333,13 +333,13 @@ where
 /// discarding any remaining allocated but unused space in the last chunk.
 #[derive(Deref, DerefMut)]
 pub struct MmapStreamWriter<const P: usize> {
-    inner: MmapWritter<P>,
+    inner: MmapWriter<P>,
 }
 
 impl<const P: usize> MmapStreamWriter<P> {
     pub fn new_truncate(path: &PathBuf) -> Result<Self> {
         Ok(Self {
-            inner: MmapWritter::new_truncate(path)?,
+            inner: MmapWriter::new_truncate(path)?,
         })
     }
 
@@ -387,10 +387,10 @@ mod test {
         Ok(dir.path().join(name))
     }
 
-    fn stream_writting(pattern: impl Iterator<Item = usize>) {
+    fn stream_writing(pattern: impl Iterator<Item = usize>) {
         let file = new_file("stream.bin").unwrap();
 
-        let mut writter = MmapStreamWriter::<1>::new_truncate(&file).unwrap();
+        let mut writer = MmapStreamWriter::<1>::new_truncate(&file).unwrap();
         let mut bytes = (0..).map(|x| ((x * 7) % 256) as u8);
 
         let mut total = 0;
@@ -398,15 +398,15 @@ mod test {
         for write_len in pattern {
             let mut slice = Vec::with_capacity(write_len);
             slice.resize_with(write_len, || bytes.next().unwrap());
-            let (write_at, len) = writter.extend_from_slice(&slice).unwrap();
+            let (write_at, len) = writer.extend_from_slice(&slice).unwrap();
             assert_eq!(write_at, total);
             assert_eq!(len, write_len);
             total += write_len as u64;
         }
 
         tracing::debug!("{} Bytes are expect to be written", total);
-        assert_eq!(writter.offset(), total);
-        drop(writter);
+        assert_eq!(writer.offset(), total);
+        drop(writer);
         let mut file = OpenOptions::new().read(true).open(file).unwrap();
         assert_eq!(file.metadata().unwrap().len(), total);
 
@@ -422,22 +422,22 @@ mod test {
     }
 
     #[test_log::test]
-    fn streamed_writting() {
+    fn streamed_writing() {
         let mut rng = random::default(80233);
 
         // Random length
-        stream_writting(std::iter::from_fn(|| Some((rng.read_u64() % 16 + 32) as usize)).take(128));
-        stream_writting(
+        stream_writing(std::iter::from_fn(|| Some((rng.read_u64() % 16 + 32) as usize)).take(128));
+        stream_writing(
             std::iter::from_fn(|| Some((rng.read_u64() % 2048 + 4096) as usize)).take(128),
         );
-        stream_writting(
+        stream_writing(
             std::iter::from_fn(|| Some((rng.read_u64() % 16384 + 32768) as usize)).take(128),
         );
 
         // Aligned length
-        stream_writting(std::iter::once(16).cycle().take(1024));
-        stream_writting(std::iter::once(32).cycle().take(1024));
-        stream_writting(std::iter::once(64).cycle().take(1024));
+        stream_writing(std::iter::once(16).cycle().take(1024));
+        stream_writing(std::iter::once(32).cycle().take(1024));
+        stream_writing(std::iter::once(64).cycle().take(1024));
     }
 
     #[test_log::test]
@@ -464,14 +464,14 @@ mod test {
             header
         };
 
-        let mut writter =
+        let mut writer =
             MmapChunkWriter::<8, _, usize>::new_truncate(&file, new_header, PROLOGUE_LENGTH, 8192)
                 .unwrap();
 
         for i in 0..100 {
             let mut slice = Vec::new();
             slice.resize(1000, 2);
-            let (new, allocation) = writter.allocate(slice.len()).unwrap();
+            let (new, allocation) = writer.allocate(slice.len()).unwrap();
             if new {
                 allocation.consume(&slice, i.into());
             } else {

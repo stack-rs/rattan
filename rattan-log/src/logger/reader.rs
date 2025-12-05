@@ -14,8 +14,8 @@ use crate::{
         entry::flow_entry::FlowEntryVariant, general_packet::GeneralPacketType, LogEntry, PktAction,
     },
     logger::{
-        build_pcap::{add_eth, add_ip, get_mock_mac, PacketWriter},
         mmap::mmap_file,
+        pcap::{add_eth, add_ip, get_mock_mac, PacketWriter},
     },
 };
 
