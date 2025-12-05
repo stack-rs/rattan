@@ -1,3 +1,10 @@
+use std::{
+    collections::{BTreeMap, HashMap},
+    io::Write,
+    iter,
+    time::Duration,
+};
+
 use human_bandwidth::format_bandwidth;
 use human_time::human_time;
 use netem_trace::{
@@ -9,18 +16,9 @@ use rattan_core::{
     config::{BwCellBuildConfig, BwReplayCellBuildConfig, CellBuildConfig},
     error::{Error::Custom, Result},
 };
-use std::{
-    collections::{BTreeMap, HashMap},
-    io::Write,
-    iter,
-    time::Duration,
-};
-
-use tracing::warn;
-
 use serde::{Deserialize, Serialize};
-
 use serde_json::{to_value, to_writer, to_writer_pretty, Map, Value};
+use tracing::warn;
 
 // Define output format of the trace logical timestamp in the .csv file here
 fn express_time(time: Duration) -> String {

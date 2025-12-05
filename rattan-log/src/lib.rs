@@ -4,9 +4,11 @@ pub mod blob;
 pub mod log_entry;
 mod logger;
 
-pub use logger::{file_writer::file_logging_thread, FlowDesc, RattanLogOp, LOGGING_TX};
-
-pub use log_entry::entry::{raw::RawLogEntry, tcp_ip_compact::TCPLogEntry};
+pub use log_entry::entry::{flow_entry::TCPFlow, raw::RawLogEntry, tcp_ip_compact::TCPLogEntry};
+pub use logger::{
+    file_reader::convert_log_to_pcapng, file_writer::file_logging_thread, FlowDesc, RattanLogOp,
+    LOGGING_TX,
+};
 
 pub trait PlainBytes: Plain + Sized {
     fn as_bytes(&self) -> &[u8] {
@@ -19,5 +21,3 @@ pub trait PlainBytes: Plain + Sized {
     }
 }
 impl<T: Plain + Sized> PlainBytes for T {}
-
-pub use logger::file_reader::convert_log_to_pcapng;

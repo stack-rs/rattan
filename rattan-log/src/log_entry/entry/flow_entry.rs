@@ -1,9 +1,10 @@
-use crate::{FlowDesc, PlainBytes};
+use std::net::{IpAddr, Ipv4Addr};
 
-use super::{LogEntry, LogEntryHeader};
 use binread::BinRead;
 use plain::Plain;
-use std::net::{IpAddr, Ipv4Addr};
+
+use super::{LogEntry, LogEntryHeader};
+use crate::{FlowDesc, PlainBytes};
 
 // The detailed spec of TCP flow entry
 //

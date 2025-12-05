@@ -1,7 +1,25 @@
 /// External cells are all cells not created by Rattan.
 /// Network interfaces, physical or virtual, are examples of external cells.
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    sync::{atomic::AtomicU32, Arc},
+};
+
+use async_trait::async_trait;
+use bitfield::{BitRange, BitRangeMut};
+use parking_lot::RwLock;
+use rattan_log::{
+    log_entry::general_packet::GeneralPacketType, log_entry::PktAction, FlowDesc, PlainBytes,
+    RattanLogOp, RawLogEntry, LOGGING_TX,
+};
+#[cfg(feature = "serde")]
+use serde::Deserialize;
+use tokio::{io::unix::AsyncFd, sync::mpsc::UnboundedSender};
+use tracing::{debug, error, instrument};
+
 use crate::{
-    cells::{Cell, Packet},
+    cells::{Cell, ControlInterface, Egress, Ingress, Packet},
     error::{Error, TokioRuntimeError},
     metal::{
         io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender},
@@ -9,27 +27,6 @@ use crate::{
     },
     radix::{PacketLogMode, BASE_TS, PKT_LOG_MODE},
 };
-use std::{
-    collections::HashMap,
-    fmt::Display,
-    sync::{atomic::AtomicU32, Arc},
-};
-
-use rattan_log::{
-    log_entry::general_packet::GeneralPacketType, FlowDesc, PlainBytes, RattanLogOp, RawLogEntry,
-    LOGGING_TX,
-};
-
-use async_trait::async_trait;
-use bitfield::{BitRange, BitRangeMut};
-use parking_lot::RwLock;
-#[cfg(feature = "serde")]
-use serde::Deserialize;
-use tokio::{io::unix::AsyncFd, sync::mpsc::UnboundedSender};
-use tracing::{debug, error, instrument};
-
-use super::{ControlInterface, Egress, Ingress};
-use rattan_log::log_entry::PktAction;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(transparent)]

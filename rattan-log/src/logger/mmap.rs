@@ -1,10 +1,9 @@
-use derive_more::{Deref, DerefMut};
-use memmap2::{Mmap, MmapMut, MmapOptions};
-
 use std::fs::{File, OpenOptions};
 use std::io::{Error, ErrorKind, Result};
-
 use std::path::PathBuf;
+
+use derive_more::{Deref, DerefMut};
+use memmap2::{Mmap, MmapMut, MmapOptions};
 
 pub const PAGE_SIZE: u64 = 1 << 12;
 

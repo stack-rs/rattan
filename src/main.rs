@@ -15,17 +15,11 @@ use figment::{
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
-
 use rattan_core::cells::StdPacket;
 use rattan_core::env::StdNetEnvMode;
 use rattan_core::metal::io::af_packet::AfPacketDriver;
-use rattan_core::radix::RattanRadix;
-
-use crate::{
-    build::CLAP_LONG_VERSION,
-    visualized_trace::{write_visualized_trace, OutputMode},
-};
 use rattan_core::radix::PacketLogMode;
+use rattan_core::radix::RattanRadix;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
 use rattan_log::convert_log_to_pcapng;
 use serde::{Deserialize, Serialize};
@@ -33,6 +27,11 @@ use shadow_rs::shadow;
 use tracing::warn;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use crate::{
+    build::CLAP_LONG_VERSION,
+    visualized_trace::{write_visualized_trace, OutputMode},
+};
 
 mod channel;
 mod visualized_trace;

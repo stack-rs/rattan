@@ -1,14 +1,13 @@
-pub mod chunk_header;
-pub mod flow_entry;
-pub mod raw;
-pub mod tcp_ip_compact;
-
-use super::{LogEntry, LogEntryHeader};
-
 use binread::BinRead;
 use num_enum::TryFromPrimitive;
 use tcp_ip_compact::TCPProtocolEntry;
 
+use super::{LogEntry, LogEntryHeader};
+
+pub mod chunk_header;
+pub mod flow_entry;
+pub mod raw;
+pub mod tcp_ip_compact;
 pub type ProtocolHeader = LogEntryHeader;
 
 #[derive(Debug, Clone, Copy, TryFromPrimitive, PartialEq, Eq)]
@@ -46,13 +45,13 @@ impl BinRead for ProtocolEntryVariant {
 
 #[cfg(test)]
 mod test {
-    use crate::{log_entry::entry::Protocol, PlainBytes};
     use binread::BinRead;
     use std::io::Cursor;
 
     use crate::log_entry::entry::{
-        tcp_ip_compact::TCPProtocolEntry, ProtocolEntryVariant, ProtocolHeader,
+        tcp_ip_compact::TCPProtocolEntry, Protocol, ProtocolEntryVariant, ProtocolHeader,
     };
+    use crate::PlainBytes;
 
     #[test]
     pub fn parse_compact_entry() {

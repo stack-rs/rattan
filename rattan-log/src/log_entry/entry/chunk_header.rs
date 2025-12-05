@@ -1,6 +1,7 @@
-use super::LogEntryHeader;
 use binread::BinRead;
 use plain::Plain;
+
+use super::LogEntryHeader;
 
 // The detailed spec of chunk prologue:
 //

@@ -1,11 +1,12 @@
-use super::entry::{raw::RawLogEntry, tcp_ip_compact::TCPLogEntry};
-use super::{LogEntry, LogEntryHeader};
-use crate::log_entry::entry::raw::RawEntry;
-use crate::log_entry::entry::ProtocolEntryVariant;
 use binread::BinRead;
 use bitfield::{BitRange, BitRangeMut};
 use num_enum::TryFromPrimitive;
 use plain::Plain;
+
+use super::entry::{raw::RawLogEntry, tcp_ip_compact::TCPLogEntry};
+use super::{LogEntry, LogEntryHeader};
+use crate::log_entry::entry::raw::RawEntry;
+use crate::log_entry::entry::ProtocolEntryVariant;
 
 #[derive(Debug, Clone, Copy, BinRead, Default)]
 #[repr(C, packed(2))]

@@ -1,17 +1,19 @@
-use once_cell::sync::OnceCell;
-use tokio::sync::mpsc::UnboundedSender;
-
 use std::hash::Hash;
 use std::net::Ipv4Addr;
 
+use once_cell::sync::OnceCell;
+use tokio::sync::mpsc::UnboundedSender;
+
 use crate::RawLogEntry;
+
+pub static LOGGING_TX: OnceCell<UnboundedSender<RattanLogOp>> = OnceCell::new();
 
 pub mod build_pcap;
 pub mod file_reader;
 pub mod file_writer;
 pub(crate) mod mmap;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq)]
 pub enum FlowDesc {
     // src.ip dst.ip src.port dst.port option
     TCP(Ipv4Addr, Ipv4Addr, u16, u16, Option<Vec<u8>>),
@@ -44,8 +46,6 @@ impl PartialEq for FlowDesc {
     }
 }
 
-impl Eq for FlowDesc {}
-
 #[derive(Clone)]
 pub enum RattanLogOp {
     Entry(Vec<u8>),
@@ -53,5 +53,3 @@ pub enum RattanLogOp {
     Flow(u32, i64, FlowDesc),
     End,
 }
-
-pub static LOGGING_TX: OnceCell<UnboundedSender<RattanLogOp>> = OnceCell::new();

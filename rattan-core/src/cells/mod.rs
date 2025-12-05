@@ -1,11 +1,14 @@
-use crate::error::Error;
+use std::{fmt::Debug, sync::Arc};
+
 use async_trait::async_trait;
 use etherparse::{Ethernet2Header, Ipv4Header};
 use rattan_log::FlowDesc;
 #[cfg(feature = "serde")]
 use serde::Deserialize;
-use std::{fmt::Debug, sync::Arc};
 use tokio::time::Instant;
+
+use crate::error::Error;
+
 pub mod bandwidth;
 pub mod delay;
 pub mod external;

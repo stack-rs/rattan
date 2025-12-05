@@ -6,13 +6,14 @@ use std::{
 
 use backon::{BlockingRetryable, ExponentialBuilder};
 use once_cell::sync::OnceCell;
+use rattan_log::{file_logging_thread, RattanLogOp, LOGGING_TX};
+use tokio::runtime::Runtime;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, span, warn, Level};
 // use nix::{
 //     sched::{sched_setaffinity, CpuSet},
 //     unistd::Pid,
 // };
-use tokio::runtime::Runtime;
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, span, warn, Level};
 
 use crate::{
     cells::{
@@ -35,19 +36,8 @@ use std::net::{Ipv4Addr, SocketAddr};
 pub static INSTANCE_ID: OnceCell<String> = OnceCell::new();
 pub static BASE_TS: OnceCell<i64> = OnceCell::new();
 
-use rattan_log::{file_logging_thread, RattanLogOp, LOGGING_TX};
-#[cfg(feature = "serde")]
-#[derive(
-    Clone, Copy, Debug, clap::ValueEnum, PartialEq, Eq, serde::Deserialize, serde::Serialize,
-)]
-pub enum PacketLogMode {
-    CompactTCP,
-    RawIP,
-    RawTCP,
-}
-
-#[cfg(not(feature = "serde"))]
 #[derive(Clone, Copy, Debug, clap::ValueEnum, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PacketLogMode {
     CompactTCP,
     RawIP,

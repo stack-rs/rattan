@@ -1,5 +1,6 @@
 use binread::BinRead;
 use bitfield::{BitRange, BitRangeMut};
+
 #[derive(Debug, Clone, Copy, BinRead, PartialEq, Eq, Default)]
 #[repr(transparent)]
 pub struct RelativePointer(u32);

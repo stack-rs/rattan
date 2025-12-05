@@ -1,22 +1,19 @@
+use std::collections::HashMap;
+use std::io::Result;
+use std::path::PathBuf;
+
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::mmap::*;
 use super::LOGGING_TX;
-
 use crate::blob::RelativePointer;
 use crate::log_entry::entry::chunk_header::ChunkPrologue;
 use crate::log_entry::entry::{
     chunk_header::new_log_entry_chunk_prologue, flow_entry::FlowEntryVariant,
 };
-
 use crate::PlainBytes;
 use crate::RattanLogOp;
 use crate::RawLogEntry;
-use std::collections::HashMap;
-
-use std::io::Result;
-
-use std::path::PathBuf;
 
 const MMAP_CHUNK_SIZE_16M: usize = 4096;
 const MMAP_CHUNK_SIZE_4K: usize = 1;

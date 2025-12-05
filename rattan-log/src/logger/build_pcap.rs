@@ -1,4 +1,9 @@
-use crate::{log_entry::entry::flow_entry::TCPFlow, RawLogEntry, TCPLogEntry};
+use std::borrow::Cow;
+use std::fs::File;
+use std::io::{Result, Write};
+use std::net::IpAddr;
+use std::path::PathBuf;
+use std::time::Duration;
 
 use pcap_file::{
     pcapng::{
@@ -12,13 +17,7 @@ use pcap_file::{
     DataLink,
 };
 
-use std::borrow::Cow;
-
-use std::fs::File;
-use std::io::{Result, Write};
-use std::net::IpAddr;
-use std::path::PathBuf;
-use std::time::Duration;
+use crate::{RawLogEntry, TCPFlow, TCPLogEntry};
 
 pub fn add_eth(buf: &mut Vec<u8>, dst_mac: [u8; 6], src_mac: [u8; 6]) {
     buf.extend_from_slice(&dst_mac);
