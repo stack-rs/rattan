@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Error;
 use std::io::Result;
 use std::path::PathBuf;
 
@@ -73,14 +74,36 @@ where
         if is_first {
             self.log_ref_offset = Some(offset);
         }
-        let log_ref_offset = self.log_ref_offset.unwrap();
+        let log_ref_offset = self.log_ref_offset.unwrap_or_default();
 
         let mut blob_pointer = RelativePointer::new();
         blob_pointer.set_length(length as u8);
         let relative_offset = offset - log_ref_offset;
         blob_pointer.set_offset(relative_offset as u32);
-        assert!(length <= 256);
-        assert!(relative_offset <= 1 << 24);
+
+        if length > 256 {
+            return Err(Error::new(
+                std::io::ErrorKind::Unsupported,
+                "Raw headers shall not longer than 256B ",
+            ));
+        }
+
+        if relative_offset > (1 << 24) {
+            // This shall never be exceed in the following setting:
+            // - Each chunk is 1048576 (1 << 20) bytes in size,
+            // - Each raw log entry is 16 (1 << 4) bytes in size,
+            // - Each raw header is no longer than 256 (1 << 8) bytes in size.
+            // - Raw headers are wirtten continuously.
+            //
+            // The max relative offset ever possible is ((1 << 20) / (1 << 4) - 1) * (1 << 8),
+            // which is 16,776,960 B, smaller than (1 << 24)B, or 16,777,216 B.
+            return Err(Error::new(
+                std::io::ErrorKind::Unsupported,
+                "All raw log entries in the same chunk should contain at most 16MiB bytes of raw headers. \
+                If this is violated, try use smaller chunk size.
+                ",
+            ));
+        }
 
         entry.raw_entry.pointer = blob_pointer;
 
