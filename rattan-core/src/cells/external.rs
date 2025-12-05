@@ -276,7 +276,8 @@ where
                 }
             };
 
-            // Getting `Packet::flow_desc()` is not trial. Avoid doing so when packet log is not enabled.
+            // Getting `Packet::flow_desc()` is not trial (including inspection of the headers in the payload).
+            // Avoid doing so when packet log is not enabled.
             if let (Some(&log_mode), Some(log_tx)) = (packet_log_mode, log_tx.as_ref()) {
                 if let Some(desc) = packet.flow_desc() {
                     let id = flow_map.get_id(desc, log_tx, base_ts);

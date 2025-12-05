@@ -48,8 +48,17 @@ impl PartialEq for FlowDesc {
 
 #[derive(Clone)]
 pub enum RattanLogOp {
+    // An encoded entry, which can be directly written into log entry file.
     Entry(Vec<u8>),
-    RawEntry(u32, RawLogEntry, Vec<u8>), // Entry, Raw header
+    // A partical built raw log entry.
+    // 3 parts: (flow_id, raw_entry, raw_header)
+    // Raw header shall be written to the `.raw` file.
+    // After that, the flow_id, and the (offset, len) in the `.raw` where the raw_header was written shall
+    // be used to build the raw log entry.
+    RawEntry(u32, RawLogEntry, Vec<u8>),
+    // A flow.
+    // 3 parts: (flow_id , base_time_ns, flow_desc)
     Flow(u32, i64, FlowDesc),
+    // End of Log
     End,
 }
