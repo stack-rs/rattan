@@ -3,6 +3,9 @@ use plain::Plain;
 
 use super::LogEntryHeader;
 
+pub const TYPE_LOG_ENTRY: u8 = 0;
+pub const TYPE_LOG_META: u8 = 1;
+
 // The detailed spec of chunk prologue:
 //
 // It is 32Bytes, so that the 32Bytes Log Entries can be 32-byte aligned.
@@ -26,7 +29,6 @@ use super::LogEntryHeader;
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |                          reserved                             |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
 #[derive(Debug, Clone, Copy, BinRead, Default)]
 #[br(import(header: LogEntryHeader))]
 #[repr(C, packed(2))]
@@ -53,9 +55,6 @@ pub struct ChunkEntry {
     pub offset: u64,
     pub _reserved: u64,
 }
-
-pub const TYPE_LOG_ENTRY: u8 = 0;
-pub const TYPE_LOG_META: u8 = 1;
 
 pub fn new_log_entry_chunk_prologue(
     ref_offset: u64,

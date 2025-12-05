@@ -4,25 +4,6 @@ use plain::Plain;
 use super::{Protocol, ProtocolHeader};
 use crate::log_entry::{general_packet::GeneralPktEntry, LogEntryHeader};
 
-#[derive(Debug, Clone, Copy, BinRead, PartialEq, Eq, Default)]
-#[br(import(header: ProtocolHeader))]
-#[repr(C, packed(2))]
-pub struct TCPProtocolEntry {
-    #[br(calc = header)]
-    pub header: ProtocolHeader,
-    pub flow_id: u32,
-    pub seq: u32,
-    pub ack: u32,
-    pub ip_id: u16,
-    pub ip_frag: u16,
-    pub checksum: u16,
-    pub flags: u8,
-    pub dataofs: u8,
-}
-
-unsafe impl Plain for TCPProtocolEntry {}
-static_assertions::assert_eq_size!(TCPProtocolEntry, [u8; 22]);
-
 // The detailed spec of this log entry:
 //
 // 0                   1                   2                   3
@@ -73,3 +54,22 @@ impl TCPLogEntry {
         entry
     }
 }
+
+#[derive(Debug, Clone, Copy, BinRead, PartialEq, Eq, Default)]
+#[br(import(header: ProtocolHeader))]
+#[repr(C, packed(2))]
+pub struct TCPProtocolEntry {
+    #[br(calc = header)]
+    pub header: ProtocolHeader,
+    pub flow_id: u32,
+    pub seq: u32,
+    pub ack: u32,
+    pub ip_id: u16,
+    pub ip_frag: u16,
+    pub checksum: u16,
+    pub flags: u8,
+    pub dataofs: u8,
+}
+
+unsafe impl Plain for TCPProtocolEntry {}
+static_assertions::assert_eq_size!(TCPProtocolEntry, [u8; 22]);

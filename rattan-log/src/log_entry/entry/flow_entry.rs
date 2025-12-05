@@ -36,11 +36,9 @@ use crate::{FlowDesc, PlainBytes};
 // |                                                               |
 // |                                                               |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-//
 
 pub type FlowEntryHeader = LogEntryHeader;
 #[derive(Debug, Clone, Copy)]
-
 pub struct TCPFlowEntry {
     pub header: LogEntryHeader,
     pub tcp_flow: TCPFlow,
@@ -82,11 +80,11 @@ static_assertions::assert_eq_size!(TCPFlow, [u8; 70]);
 pub struct TCPOption {
     pub options: [u8; 40],
 }
+
 // As the TCP header can be at most 15 * 4 = 60Bytes in length, the options can be at most 40Bytes long.
 //
 // Also, since a `0x00` is a valid tcp option, which means termination of the options, we can just spare
 // 40 Bytes, write from start, and leave unused part to be filled with 0.
-//
 impl BinRead for TCPOption {
     type Args = ();
     fn read_options<R: std::io::Read + std::io::Seek>(

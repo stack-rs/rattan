@@ -9,15 +9,6 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone, Copy, BinRead, PartialEq, Eq, Default)]
-#[repr(C, packed(2))]
-pub struct RawEntry {
-    pub flow_index: u16,
-    pub pointer: RelativePointer,
-}
-
-unsafe impl Plain for RawEntry {}
-static_assertions::assert_eq_size!(RawEntry, [u8; 6]);
 // The detailed spec of this log entry:
 //
 // 0                   1                   2                   3
@@ -56,3 +47,13 @@ impl RawLogEntry {
         entry
     }
 }
+
+#[derive(Debug, Clone, Copy, BinRead, PartialEq, Eq, Default)]
+#[repr(C, packed(2))]
+pub struct RawEntry {
+    pub flow_index: u16,
+    pub pointer: RelativePointer,
+}
+
+unsafe impl Plain for RawEntry {}
+static_assertions::assert_eq_size!(RawEntry, [u8; 6]);
