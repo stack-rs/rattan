@@ -193,6 +193,7 @@ impl axum::response::IntoResponse for Error {
             #[cfg(feature = "http")]
             Error::HttpServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::PcapError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::VisualizedTraceError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::Custom(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
