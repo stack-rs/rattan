@@ -11,18 +11,17 @@ use crate::{
 
 // The detailed spec of this log entry:
 //
-// 0                   1                   2                   3
-// 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+//  0                   1                   2                   3
+//  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |       LH.length       | LH.ty.|   GPH.length  |GPH.ac.|GPH.ty.|
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |                          GP.timestamp                         |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |           GP.length           |          flow index           |
+// |           GP.length           |           Flow Index          |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-// |           Relative Offset to Chunk            |   Record.len  |
+// |            Relative Offset to Chunk           |   Record.len  |
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-
 #[derive(Debug, Clone, Copy, Default)]
 #[repr(C)]
 pub struct RawLogEntry {

@@ -6,8 +6,8 @@ use crate::log_entry::{general_packet::GeneralPktEntry, LogEntryHeader};
 
 // The detailed spec of this log entry:
 //
-// 0                   1                   2                   3
-// 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+//  0                   1                   2                   3
+//  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 // |       LH.length       | LH.ty.|   GPH.length  |GPH.ac.|GPH.ty.|
 // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
