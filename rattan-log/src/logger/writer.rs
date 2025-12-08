@@ -114,7 +114,7 @@ where
         match self.old_log_entry_file {
             Some(ref mut f) => f,
             None => {
-                self.base_path.set_extension("oldrtl");
+                self.base_path.set_extension("rtl");
                 let file = MmapStreamWriter::new_truncate(&self.base_path)?;
                 self.old_log_entry_file.insert(file)
             }
