@@ -57,7 +57,7 @@ pub struct TCPFlowEntry {
 impl TCPFlowEntry {
     pub fn new(tcp_flow: TCPFlow) -> Self {
         let mut header = LogEntryHeader::new();
-        header.set_length(32);
+        header.set_length(72);
         header.set_type(2);
         Self { header, tcp_flow }
     }

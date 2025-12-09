@@ -84,7 +84,7 @@ pub fn convert_log_to_pcapng(
     let get_output_path = |ip: &IpAddr| -> PathBuf {
         let mut output_file = output_file.to_path_buf();
         let file_name = match output_file.file_name().map(|n| n.to_string_lossy()) {
-            Some(prefix) => format!("{}_{:?}.pcapng", prefix, ip),
+            Some(prefix) => format!("{}_{}.pcapng", prefix, ip.to_string().replace(".", "_")),
             _ => format!("{:?}.pcapng", ip),
         };
         output_file.set_file_name(file_name);
@@ -239,7 +239,7 @@ pub fn convert_log_to_pcapng(
                         dst_ip.to_bits(),
                         raw_entry.general_pkt_entry.pkt_length,
                         0,
-                        0,
+                        0x4000, // Don't Fragment
                     );
                 }
 

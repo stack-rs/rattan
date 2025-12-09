@@ -1,0 +1,47 @@
+version = 1
+revision = 3
+requires-python = ">=3.11"
+
+[[package]]
+name = "pcapng"
+version = "0.1.25"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/a5/6dd93b7137e67ac4e2483c10dca3c731b96ecd0ed50386d9436c15d8dca1/pcapng-0.1.25.tar.gz", hash = "sha256:ff152abc32f24e4c6da099b4ffea8040622f3acccbd6645f8d5184f79f5f3d5e", size = 32255, upload-time = "2020-09-10T00:35:18.262Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bf/b7/f07887e306aeead6262c552ede0fa3c62fe81209583c1f22c71b19ef7367/pcapng-0.1.25-py3-none-any.whl", hash = "sha256:c0e108a188ce1be2ff8cbb2c64370cb8ba03f4f4541e3f698771257fcbd55d2d", size = 39967, upload-time = "2020-09-10T00:35:16.948Z" },
+]
+
+[[package]]
+name = "python-pcapng"
+version = "2.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3c/2f/72534730a81205cd3ca32d65b4760c927e6ffc69a3d06ff3d1edda64ae3e/python-pcapng-2.1.1.tar.gz", hash = "sha256:6477e72513165954e56d5836ebbd43ac7f8d28c4640f78d63d6506d1692ddc74", size = 82317, upload-time = "2022-08-23T18:59:11.266Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c6/a4/141a5fbb51c8e3dee10445d02785d44f8a66a150af6916b4e1776e5065c6/python_pcapng-2.1.1-py3-none-any.whl", hash = "sha256:2c83e9f9f60d61cbb6c86f80fa9e3d722f1bb606a59a64a96d6ba0179d97ffcf", size = 33503, upload-time = "2022-08-23T18:59:08.754Z" },
+]
+
+[[package]]
+name = "scapy"
+version = "2.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/df/2f/035d3888f26d999e9680af8c7ddb7ce4ea0fd8d0e01c000de634c22dcf13/scapy-2.6.1.tar.gz", hash = "sha256:7600d7e2383c853e5c3a6e05d37e17643beebf2b3e10d7914dffcc3bc3c6e6c5", size = 2247754, upload-time = "2024-11-05T08:43:23.488Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4b/34/8695b43af99d0c796e4b7933a0d7df8925f43a8abdd0ff0f6297beb4de3a/scapy-2.6.1-py3-none-any.whl", hash = "sha256:88a998572049b511a1f3e44f4aa7c62dd39c6ea2aa1bb58434f503956641789d", size = 2420670, upload-time = "2024-11-05T08:43:21.285Z" },
+]
+
+[[package]]
+name = "scripts"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "pcapng" },
+    { name = "python-pcapng" },
+    { name = "scapy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pcapng", specifier = ">=0.1.25" },
+    { name = "python-pcapng", specifier = ">=2.1.1" },
+    { name = "scapy", specifier = ">=2.6.1" },
+]

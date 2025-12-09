@@ -9,7 +9,8 @@ The packet log contains the following binary files:
 It is designed to store what happened during the experiment with low overhead, enabling post-analysis and debugging.
 
 **Notice**:
-Rattan only records TCP flows on Ipv4 only. Any other packets that is not recognized as a TCP flow on Ipv4 is ignored when recording a rattan packet log, while they are normally processed and forwarded by
+Rattan only records TCP flows on Ipv4 only. Any other packets that is not recognized as a TCP flow on Ipv4 is ignored
+when recording a rattan packet log, while they are normally processed and forwarded by
 rattan (e.g., Udp flows).
 
 ## Usage
@@ -29,38 +30,76 @@ The possible values for `--packet-log-mode` are :
 - `raw-ip`. In this mode, the raw L3 and L4 headers are recorded.
 - `raw-tcp`. In this mode, the raw L4 headers are recorded.
 
-This will create a file named `packet.rtl` in the current directory, which will contain the compressed packet log. The flow description file will be named `packet.flows`. Also, if any raw headers are recorded, a `packet.raw` will be created.
+This will create a file named `packet.rtl` in the current directory, which will contain the compressed packet log.
+The flow description file will be named `packet.flows`. Also, if any raw headers are recorded, a `packet.raw` will be created.
 
 ### Convert a Rattan packet log
 
 **Rust subcommand**
 
-To convert a rattan packet log to `.pcapng` file, which can be viewed with Wireshark or other tools, we provide a subcommand `convert`.
+To convert a rattan packet log to `.pcapng` file, which can be viewed with Wireshark or other tools, we provide
+a subcommand `convert`.
 
 Example usage:
 
 ```bash
-rattan convert ./packet.rtl [./output.pcapng]
+rattan convert ./packet.rtl [./output]
 ```
 
-Notice that the `.flows` file and `.raw` file is always expected to be stored in the same directory
-as the `.rtl` file, and the file names differ only in extension names.
+This expects the following files exist, as input:
 
-If the output path is not specified, the default output path for `/xxx/yyy/zzz.rtl` is `/xxx/yyy/zzz.rtl_IP.pcapng`, where `IP` is the ipv4 addr for one of the endpoints.
+- `./packet.rtl`
+- `./packet.flows`
+- `./packet.raw` (optional, only if the packet log was recorded in `raw-tcp` or `raw-ip` mode).
 
-Note that, in `compact-tcp` mode, some fields are artificially constructed in the pcapng file, as the compressed packet log only stores partial information. Artificial fields include:
+And it will Generated the following files, as output, if the address of the two ends of the emulated link
+of Rattan was `10.1.1.1` and `10.2.1.1`"
+
+- `./output_10_1_1_1.pcapng`
+- `./output_10_2_1_1.pcapng`
+
+If the second argumnet was not provided(the output prefix), the default value for it is the first argument (the path
+to the `.rtl` file).
+
+Note that, in `compact-tcp` mode, some fields are artificially constructed in the pcapng file, as the compressed
+packet log only stores partial information. Artificial fields include:
 
 - `Window`: The TCP window size is set to `65535` for all packets.
 - `Checksum`: The TCP checksum is set to `0` for all packets.
 - `Urgent Pointer`: The TCP urgent pointer is set to `0` for all packets.
 - `Options`: The TCP header length is real, but option content is set to `0` for all packets.
 
+Besides, in `raw-tcp` mode, some fields are artifically constructed in the pcapng file, since per-packet
+info in IP headers are not recorded at all. Artificial fields include:
+
+- `Identification`: Set to `0`.
+- `Flags` : Set to `Don't Fragment`.
+- `Checksum` : Set to `0`, or disabled.
+
+**Python subcommand**
+
+We do provide a python script (scripts/log_converter.py), that provide basically the same function of
+transforming a Rattan packet log to `.pcapng` files. It is slower than the rust subcommand for one to
+two orders of magnitude when processing large log files.
+
+Example usage:
+
+```bash
+python scripts/log_converter.py ./packet.rtl ./output
+```
+
+The path to input and output files are the same as those for `rattan convert`.
+
+The behaviour of the python script is basically the same as `rattan convert`, except for that the output path prefix
+is not optional.
+
 ## Specification
 
 ### Raw file
 
 A `.raw` file is an unstructed binary file.
-Currently, the headers recorded in `raw-tcp` and `raw-ip` modes are directly written into the `.raw` file continuously, without any padding, header or index.
+Currently, the headers recorded in `raw-tcp` and `raw-ip` modes are directly written into the `.raw` file continuously,
+without any padding, header or index.
 The file is considered as a byte buffer, that a slice in it can be indexed by the
 pair (`offset`, `length`).
 
@@ -76,7 +115,8 @@ Now we have 2 kinds of log entry files:
 Above mentioned log entry types are described as follows.
 
 Every log entry file consists of `Log Enties`.
-Those log entries are stored in system endianness (little-endian in most cases and in our tests). The specification for a log entry is as follows:
+Those log entries are stored in system endianness (little-endian in most cases and in our tests). The specification
+for a log entry is as follows:
 
 ```text
 0                   1                   2                   3
