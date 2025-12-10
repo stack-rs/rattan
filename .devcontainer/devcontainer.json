@@ -4,7 +4,7 @@
   "features": {
     "ghcr.io/devcontainers/features/rust:1": {},
     "ghcr.io/rocker-org/devcontainer-features/apt-packages:1": {
-      "packages": "ethtool,iputils-ping,iperf,iperf3,pkg-config,m4,clang,llvm,libelf-dev,libpcap-dev,gcc-multilib"
+      "packages": "ethtool,iputils-ping,iperf,iperf3,pkg-config,m4,clang,llvm,libelf-dev,libpcap-dev,gcc-multilib,libnftnl-dev,libmnl-dev"
     },
     "ghcr.io/devcontainers/features/nix:1": {
       "extraNixConfig": "experimental-features = nix-command flakes"

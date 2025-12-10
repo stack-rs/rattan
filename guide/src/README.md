@@ -9,7 +9,7 @@
 
 # Introduction
 
-**Rattan** is a extensible and scalable Internet path emulator framework.
+**Rattan** is an extensible and scalable Internet path emulator framework.
 
 We provide a simple and easy-to-use API to create and manage network emulations. Rattan is designed to be used in a wide range of scenarios, from testing network applications to debugging complex network performance issues.
 

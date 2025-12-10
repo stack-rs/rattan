@@ -36,6 +36,8 @@ use crate::{
 mod channel;
 mod visualized_trace;
 // mod log_converter;
+#[cfg(feature = "nat")]
+mod nat;
 // mod docker;
 
 // const CONFIG_PORT_BASE: u16 = 8086;
@@ -157,6 +159,11 @@ pub struct Arguments {
     /// File log path, default to $CACHE_DIR/rattan/core.log
     #[arg(long, value_name = "File", requires = "file_log", global = true)]
     file_log_path: Option<PathBuf>,
+
+    #[cfg(feature = "nat")]
+    /// Disable NAT in compatible mode
+    #[arg(long, global = true)]
+    no_nat: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -475,14 +482,23 @@ fn main() -> ExitCode {
                     );
                 }
 
-                let ip_list = radix.right_ip_list();
+                #[cfg(feature = "nat")]
+                let left_ip_list = radix.left_ip_list();
+                #[cfg(feature = "nat")]
+                let _nat = if !opts.no_nat {
+                    Some(nat::Nat::new(left_ip_list[1]))
+                } else {
+                    None
+                };
+
+                let right_ip_list = radix.right_ip_list();
                 let left_handle = radix.left_spawn(None, move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    ip_list.iter().enumerate().for_each(|(i, ip)| {
+                    right_ip_list.iter().enumerate().for_each(|(i, ip)| {
                         client_handle.env(format!("RATTAN_IP_{i}"), ip.to_string());
                     });
-                    client_handle.env("RATTAN_EXT", ip_list[0].to_string());
-                    client_handle.env("RATTAN_BASE", ip_list[1].to_string());
+                    client_handle.env("RATTAN_EXT", right_ip_list[0].to_string());
+                    client_handle.env("RATTAN_BASE", right_ip_list[1].to_string());
                     if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     } else {
@@ -532,6 +548,11 @@ fn main() -> ExitCode {
                 }
             }
             StdNetEnvMode::Isolated => {
+                #[cfg(feature = "nat")]
+                if opts.no_nat {
+                    warn!("--no-nat is only for compatible mode and thus ignored in current isolated mode.");
+                }
+
                 let ip_list = radix.left_ip_list();
                 let right_handle = radix.right_spawn(Some(tx_right), move || {
                     let mut server_handle = std::process::Command::new("/usr/bin/env");
