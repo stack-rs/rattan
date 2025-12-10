@@ -136,7 +136,7 @@ impl VisualizedTraceBuilder {
             .map(|(&next_start, _)| next_start)
     }
 
-    pub fn write_as_csv(
+    fn write_as_csv(
         mut self,
         end_time: Duration,
         mut csv_writer: csv::Writer<impl Write>,
@@ -168,7 +168,7 @@ impl VisualizedTraceBuilder {
         }
     }
 
-    pub fn write_as_json(mut self, end_time: Duration, human_readable: bool) -> Result<Value> {
+    fn write_as_json(mut self, end_time: Duration, human_readable: bool) -> Result<Value> {
         let mut data = vec![];
 
         loop {
@@ -201,8 +201,31 @@ impl VisualizedTraceBuilder {
             }
             data.push(Value::Object(row));
         }
-
         Ok(Value::Array(data))
+    }
+
+    pub fn write(self, output: impl Write, mode: OutputMode, end_time: Duration) -> Result<()> {
+        match mode {
+            OutputMode::Csv => {
+                let writer = csv::Writer::from_writer(output);
+                self.write_as_csv(end_time, writer)?;
+            }
+            OutputMode::Tsv => {
+                let writer = csv::WriterBuilder::new()
+                    .delimiter(b'\t')
+                    .from_writer(output);
+                self.write_as_csv(end_time, writer)?;
+            }
+            OutputMode::Json => {
+                let value = self.write_as_json(end_time, false)?;
+                to_writer(output, &value)?
+            }
+            OutputMode::JsonHumanReadable => {
+                let value = self.write_as_json(end_time, true)?;
+                to_writer_pretty(output, &value)?
+            }
+        }
+        Ok(())
     }
 }
 
@@ -211,7 +234,7 @@ pub fn write_visualized_trace<P: Packet>(
     output: impl Write,
     cells: HashMap<String, CellBuildConfig<P>>,
     start: Option<Duration>,
-    end: Duration,
+    end_time: Duration,
 ) -> Result<()> {
     let start = start.unwrap_or_default();
 
@@ -246,7 +269,7 @@ pub fn write_visualized_trace<P: Packet>(
 
             CellBuildConfig::LossReplay(config) => {
                 let mut trace = config.get_trace()?;
-                let trace_points = expand_loss_trace(trace.as_mut(), start, end)
+                let trace_points = expand_loss_trace(trace.as_mut(), start, end_time)
                     .into_iter()
                     .map(|point| (point.start_time, TracePoint::Loss(point.value)));
                 trace_record.add_cell(name, LOSS_TRACE_SUFFIX, trace_points);
@@ -254,7 +277,7 @@ pub fn write_visualized_trace<P: Packet>(
 
             CellBuildConfig::DelayReplay(config) => {
                 let mut trace = config.get_trace()?;
-                let trace_points = expand_delay_trace(trace.as_mut(), start, end)
+                let trace_points = expand_delay_trace(trace.as_mut(), start, end_time)
                     .into_iter()
                     .map(|point| (point.start_time, TracePoint::Delay(point.value)));
                 trace_record.add_cell(name, DELAY_TRACE_SUFFIX, trace_points);
@@ -268,7 +291,7 @@ pub fn write_visualized_trace<P: Packet>(
                     BwReplayCellBuildConfig::Infinite(config) => config.get_trace(),
                 }?;
 
-                let trace_points = expand_bw_trace(trace.as_mut(), start, end)
+                let trace_points = expand_bw_trace(trace.as_mut(), start, end_time)
                     .into_iter()
                     .map(|point| (point.start_time, TracePoint::Bandwidth(point.value)));
                 trace_record.add_cell(name, BW_TRACE_SUFFIX, trace_points);
@@ -280,19 +303,5 @@ pub fn write_visualized_trace<P: Packet>(
         };
     }
 
-    let trace = VisualizedTraceBuilder::new(trace_record);
-
-    match output_mode {
-        OutputMode::Csv => trace.write_as_csv(end, csv::Writer::from_writer(output)),
-        OutputMode::Tsv => trace.write_as_csv(
-            end,
-            csv::WriterBuilder::new()
-                .delimiter(b'\t')
-                .from_writer(output),
-        ),
-        OutputMode::Json => Ok(to_writer(output, &trace.write_as_json(end, false)?)?),
-        OutputMode::JsonHumanReadable => {
-            Ok(to_writer_pretty(output, &trace.write_as_json(end, true)?)?)
-        }
-    }
+    VisualizedTraceBuilder::new(trace_record).write(output, output_mode, end_time)
 }
