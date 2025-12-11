@@ -100,6 +100,9 @@ impl TraceRecord {
         let cell_id = self.cell_names.len();
         name.push_str(suffix);
         self.cell_names.push(name);
+        // XXX: For very long traces or high-frequency changes, this might consume a significant amount
+        // of memory. If this becomes an issue, a streaming approach (using a k-way merge of iterators
+        // from the traces of different cells) could be considered.
         for (start_time, point) in changes {
             self.change_points
                 .entry(start_time)
