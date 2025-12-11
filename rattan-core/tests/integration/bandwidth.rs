@@ -757,17 +757,17 @@ fn test_replay() {
         },
         ..Default::default()
     };
-    config
-        .cells
-        .insert("up_bw".to_string(), CellBuildConfig::Custom);
     config.cells.insert(
-        "down_bw".to_string(),
+        "up_bw".to_string(),
         CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
             None,
             InfiniteQueueConfig::new(),
             None,
         ))),
     );
+    config
+        .cells
+        .insert("down_bw".to_string(), CellBuildConfig::Custom);
     config.links = HashMap::from([
         ("left".to_string(), "up_bw".to_string()),
         ("up_bw".to_string(), "right".to_string()),
@@ -776,7 +776,7 @@ fn test_replay() {
     ]);
     let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
     let control_interface = radix
-        .build_cell("up_bw".to_string(), |handle| {
+        .build_cell("down_bw".to_string(), |handle| {
             let _guard = handle.enter();
             let trace = RepeatedBwPatternConfig::new()
                 .pattern(vec![Box::new(StaticBwConfig {
@@ -831,7 +831,8 @@ fn test_replay() {
             .left_spawn(None, move || {
                 let client_handle = std::process::Command::new("iperf3")
                     .args([
-                        "-c", &right_ip, "-p", "9000", "--cport", "10000", "-t", "10", "-J",
+                        "-c", &right_ip, "-p", "9000", "--cport", "10000", "-t", "10", "-J", "-R",
+                        "-C", "reno",
                     ])
                     .stdout(std::process::Stdio::piped())
                     .spawn()
