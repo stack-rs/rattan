@@ -1,12 +1,12 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::{cells::Packet, env::StdNetEnvConfig};
-
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "http")]
 use crate::control::http::HttpConfig;
+use crate::radix::PacketLogMode;
+use crate::{cells::Packet, env::StdNetEnvConfig};
 
 mod bandwidth;
 mod delay;
@@ -89,6 +89,7 @@ impl RattanResourceConfig {
 pub struct RattanGeneralConfig {
     #[cfg_attr(feature = "serde", serde(default))]
     pub packet_log: Option<PathBuf>,
+    pub packet_log_mode: Option<PacketLogMode>,
 }
 
 impl RattanGeneralConfig {

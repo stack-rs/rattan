@@ -1,5 +1,4 @@
 use std::{
-    io::Write,
     net::IpAddr,
     sync::{mpsc, Arc},
     thread,
@@ -7,13 +6,14 @@ use std::{
 
 use backon::{BlockingRetryable, ExponentialBuilder};
 use once_cell::sync::OnceCell;
+use rattan_log::{file_logging_thread, RattanLogOp, LOGGING_TX};
+use tokio::runtime::Runtime;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, span, warn, Level};
 // use nix::{
 //     sched::{sched_setaffinity, CpuSet},
 //     unistd::Pid,
 // };
-use tokio::{runtime::Runtime, sync::mpsc::UnboundedSender};
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, span, warn, Level};
 
 use crate::{
     cells::{
@@ -33,13 +33,18 @@ use crate::{control::http::HttpControlEndpoint, error::HttpServerError};
 #[cfg(feature = "http")]
 use std::net::{Ipv4Addr, SocketAddr};
 
-pub mod log;
-
-pub use log::RattanLogOp;
-
 pub static INSTANCE_ID: OnceCell<String> = OnceCell::new();
-pub static LOGGING_TX: OnceCell<UnboundedSender<RattanLogOp>> = OnceCell::new();
 pub static BASE_TS: OnceCell<i64> = OnceCell::new();
+
+#[derive(Clone, Copy, Debug, clap::ValueEnum, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum PacketLogMode {
+    CompactTCP,
+    RawIP,
+    RawTCP,
+}
+
+pub static PKT_LOG_MODE: OnceCell<PacketLogMode> = OnceCell::new();
 
 pub type TaskResult<R> = Result<R, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -64,7 +69,7 @@ where
     mode: StdNetEnvMode,
     cancel_token: CancellationToken,
     rattan_thread_handle: Option<thread::JoinHandle<()>>, // Use option to allow take ownership in drop
-    log_thread_handle: Option<thread::JoinHandle<()>>,
+    log_thread_handle: Option<thread::JoinHandle<std::io::Result<()>>>,
     _rattan_runtime: Arc<Runtime>,
     rattan: RattanCore<D>,
     #[cfg(feature = "http")]
@@ -199,65 +204,16 @@ where
             info!("HTTP server disabled");
             None
         };
-        let log_thread_handle = if let Some(path) = config.general.packet_log {
-            let (log_tx, mut log_rx) = tokio::sync::mpsc::unbounded_channel();
-            LOGGING_TX.set(log_tx).unwrap();
-            Some(std::thread::spawn(move || {
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).unwrap();
-                }
-                let file = std::fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(&path)
-                    .unwrap();
-                let flow_map_file = std::fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(format!("{}.flows", path.display()))
-                    .unwrap();
-                let mut file = std::io::BufWriter::new(file);
-                let mut flow_map_file = std::io::BufWriter::new(flow_map_file);
-                while let Some(entry) = log_rx.blocking_recv() {
-                    match entry {
-                        RattanLogOp::Entry(entry) => {
-                            file.write_all(&entry).unwrap();
-                        }
-                        RattanLogOp::Flow(flow_id, base_ts, flow_desc) => {
-                            let flow_entry = log::FlowEntry {
-                                flow_id,
-                                base_ts,
-                                flow_desc,
-                            };
-                            #[cfg(feature = "serde")]
-                            {
-                                let _ = serde_json::to_writer(&mut flow_map_file, &flow_entry)
-                                    .inspect_err(|e| {
-                                        error!("Failed to write flow desc: {:?}", e);
-                                    });
-                            }
-                            #[cfg(not(feature = "serde"))]
-                            {
-                                flow_map_file
-                                    .write_fmt(format_args!("{:?}", flow_entry))
-                                    .unwrap();
-                            }
-                            flow_map_file.write_all(b"\n").unwrap();
-                        }
-                        RattanLogOp::End => {
-                            tracing::debug!("Logging thread exit");
-                            file.flush().unwrap();
-                            flow_map_file.flush().unwrap();
-                            break;
-                        }
-                    }
-                }
-            }))
-        } else {
-            None
-        };
+
+        let mode = config
+            .general
+            .packet_log_mode
+            .unwrap_or(PacketLogMode::CompactTCP);
+        PKT_LOG_MODE.set(mode).ok();
+
+        let packet_log_path = config.general.packet_log;
+
+        let log_thread_handle = packet_log_path.map(file_logging_thread);
 
         let mut radix = Self {
             env,
@@ -596,7 +552,9 @@ where
         if let Some(log_thread_handle) = self.log_thread_handle.take() {
             if let Some(tx) = LOGGING_TX.get() {
                 tx.send(RattanLogOp::End).unwrap();
-                log_thread_handle.join().unwrap();
+                if let Err(e) = log_thread_handle.join().unwrap() {
+                    tracing::error!("Error from logging thread {:?}", e);
+                }
             }
         }
         info!("RattanRadix dropped");

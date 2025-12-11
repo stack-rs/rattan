@@ -1,0 +1,27 @@
+[package]
+name = "rattan-log"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+binread = "2.2.0"
+bitfield = { workspace = true }
+clap = { workspace = true }
+derive_more = { version = "2.0.1", features = ["deref", "deref_mut"] }
+memmap2 = "0.9.9"
+num_enum = { workspace = true }
+once_cell = { workspace = true }
+pcap-file = { workspace = true }
+plain = "0.2.3"
+static_assertions = "1.1.0"
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+hex = "0.4.3"
+random = "0.14.1"
+tempfile = "3.23.0"
+test-log = { workspace = true }
