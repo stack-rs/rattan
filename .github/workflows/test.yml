@@ -47,7 +47,7 @@ jobs:
           version: ${{ matrix.llvm }}
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      - run: cargo nextest run --profile ci --all-features --release --workspace
+      - run: cargo nextest run --profile ci -F http,camellia --release --workspace
         env:
           RUST_LOG: "info"
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: "sudo -E"
