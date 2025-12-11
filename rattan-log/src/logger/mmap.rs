@@ -252,8 +252,13 @@ where
 
         let start_offset = self.writer.offset_in_chunk();
 
-        // Make sure `remain` is larger than slice.len to avoid panic
-        debug_assert_eq!(slice.len(), self.writer.chunk.append(slice));
+        let append_len = self.writer.chunk.append(slice);
+        // append_len could be either
+        //  (a) slice.len(), if the slice was successfully wirtten into, or
+        //  (b) 0, if there is not enough space to write the slice and nothing was written.
+        //
+        // If `remain()` was checked in advance to make sure that there is enough space, (a) always happens.
+        debug_assert_eq!(slice.len(), append_len);
 
         tracing::trace!(
             "Recorded at  {} + [{}, {})",
@@ -478,7 +483,6 @@ mod test {
             } else {
                 allocation.consume(&slice, None);
             }
-
             assert_eq!(i % 8 == 0, new);
         }
     }
