@@ -308,4 +308,12 @@ impl Packet for XDPPacket {
     fn set_timestamp(&mut self, timestamp: Instant) {
         self.timestamp = timestamp;
     }
+
+    fn delay_by(&mut self, delay: Duration) {
+        self.timestamp += delay;
+    }
+
+    fn delay_until(&mut self, timestamp: Instant) {
+        self.timestamp = timestamp;
+    }
 }

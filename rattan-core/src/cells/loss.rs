@@ -1,20 +1,22 @@
-use super::TRACE_START_INSTANT;
-use crate::cells::{Cell, Packet};
-use crate::error::Error;
-use crate::metal::timer::Timer;
-use crate::utils::sync::AtomicRawCell;
+use std::fmt::Debug;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use netem_trace::model::LossTraceConfig;
 use netem_trace::{LossPattern, LossTrace};
 use rand::Rng;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
-use std::sync::atomic::AtomicI32;
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tracing::{debug, info};
+
+use super::TRACE_START_INSTANT;
+use crate::cells::config_timestamp::CurrentConfig;
+use crate::cells::{AtomicCellState, Cell, CellState, Packet};
+use crate::error::Error;
+use crate::metal::timer::Timer;
+use crate::utils::sync::AtomicRawCell;
 
 use super::{ControlInterface, Egress, Ingress};
 
@@ -40,8 +42,7 @@ impl<P> Ingress<P> for LossCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.set_timestamp(Instant::now());
+    fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -60,7 +61,7 @@ where
     /// How many packets have been lost consecutively
     prev_loss: usize,
     rng: R,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
 }
@@ -79,15 +80,7 @@ where
             Some(packet) => packet,
             None => return None,
         };
-        match self.state.load(std::sync::atomic::Ordering::Acquire) {
-            0 => {
-                return None;
-            }
-            1 => {
-                return Some(packet);
-            }
-            _ => {}
-        }
+        let packet = crate::check_cell_state!(self.state, packet);
         if let Some(pattern) = self.pattern.swap_null() {
             self.inner_pattern = pattern;
             debug!(?self.inner_pattern, "Set inner pattern:");
@@ -106,7 +99,7 @@ where
         }
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -202,7 +195,7 @@ where
                 inner_pattern: Box::default(),
                 prev_loss: 0,
                 rng,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
             },
@@ -220,14 +213,14 @@ where
 {
     egress: mpsc::UnboundedReceiver<P>,
     trace: Box<dyn LossTrace>,
-    current_loss_pattern: LossPattern,
+    current_loss_pattern: CurrentConfig<LossPattern>,
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<LossReplayCellConfig>,
     change_timer: Timer,
     /// How many packets have been lost consecutively
     prev_loss: usize,
     rng: R,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
 }
@@ -248,7 +241,7 @@ where
             after = ?loss,
             "Set inner loss pattern:"
         );
-        self.current_loss_pattern = loss;
+        self.current_loss_pattern.update(loss, change_time);
     }
 
     fn set_config(&mut self, config: LossReplayCellConfig) {
@@ -258,8 +251,8 @@ where
         if self.next_change(now).is_none() {
             tracing::warn!("Setting null trace");
             self.next_change = now;
-            // set state to 0 to indicate the trace goes to end and the cell will drop all packets
-            self.change_state(0);
+            // set state to Drop to indicate the trace goes to end and the cell will drop all packets
+            self.change_state(CellState::Drop);
         }
     }
 
@@ -305,19 +298,22 @@ where
                 packet = self.egress.recv() => if let Some(packet) = packet { break packet }
             }
         };
-        match self.state.load(std::sync::atomic::Ordering::Acquire) {
-            0 => {
-                return None;
+        let packet = crate::check_cell_state!(self.state, packet);
+
+        let current_loss_pattern = self
+            .current_loss_pattern
+            .get_current(packet.get_timestamp());
+
+        // Notice that if the trace has gone to an end, the last value will be used.
+        let loss_rate = if let Some(current_loss_pattern) = current_loss_pattern {
+            match current_loss_pattern.get(self.prev_loss) {
+                Some(&loss_rate) => loss_rate,
+                None => current_loss_pattern.last().cloned().unwrap_or_default(),
             }
-            1 => {
-                return Some(packet);
-            }
-            _ => {}
-        }
-        let loss_rate = match self.current_loss_pattern.get(self.prev_loss) {
-            Some(&loss_rate) => loss_rate,
-            None => *self.current_loss_pattern.last().unwrap_or(&0.0),
+        } else {
+            0.0
         };
+
         let rand_num = self.rng.random_range(0.0..1.0);
         if rand_num < loss_rate {
             self.prev_loss += 1;
@@ -333,7 +329,7 @@ where
         self.next_change = *TRACE_START_INSTANT.get_or_init(Instant::now);
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -423,19 +419,18 @@ where
     pub fn new(trace: Box<dyn LossTrace>, rng: R) -> Result<LossReplayCell<P, R>, Error> {
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
-        let current_loss_pattern = vec![1.0];
         Ok(LossReplayCell {
             ingress: Arc::new(LossReplayCellIngress { ingress: rx }),
             egress: LossReplayCellEgress {
                 egress: tx,
                 trace,
-                current_loss_pattern,
+                current_loss_pattern: CurrentConfig::default(),
                 next_change: Instant::now(),
                 config_rx,
                 change_timer: Timer::new()?,
                 prev_loss: 0,
                 rng,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
             },
@@ -453,7 +448,7 @@ mod tests {
     use std::time::Duration;
     use tracing::{span, Level};
 
-    use crate::cells::StdPacket;
+    use crate::cells::{StdPacket, TestPacket};
 
     use super::*;
 
@@ -489,16 +484,16 @@ mod tests {
         let _guard = rt.enter();
         let pattern_len = pattern.len();
 
-        let mut cell: LossCell<StdPacket, StdRng> =
+        let mut cell: LossCell<TestPacket<StdPacket>, StdRng> =
             LossCell::new(pattern, StdRng::seed_from_u64(rng_seed))?;
         let mut received_packets: Vec<bool> = Vec::with_capacity(100 * pattern_len);
         let ingress = cell.sender();
         let egress = cell.receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         for _ in 0..(100 * pattern_len) {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
             received_packets.push(received.is_some());
@@ -519,19 +514,20 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         info!("Testing loss for loss cell of loss [0.1]");
         let mut statistics = PacketStatistics::new();
 
         for _ in 0..100 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
 
             match received {
                 Some(content) => {
-                    assert!(content.length() == 256);
+                    assert_eq!(content.length(), 256);
+                    assert_eq!(content.delay(), Duration::ZERO);
                     statistics.recv_normal_packet();
                 }
                 None => statistics.recv_loss_packet(),
@@ -588,10 +584,10 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         info!("Sending a packet to transfer to second state");
-        ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+        ingress.enqueue(TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]))?;
         let received = rt.block_on(async { egress.dequeue().await });
         assert!(received.is_none());
 
@@ -602,7 +598,7 @@ mod tests {
         // The packet should always be lost
 
         for _ in 0..100 {
-            ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+            ingress.enqueue(TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]))?;
             let received = rt.block_on(async { egress.dequeue().await });
 
             assert!(received.is_none());
@@ -625,11 +621,11 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         info!("Sending 2 packet to transfer to 3rd state");
         for _ in 0..2 {
-            ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+            ingress.enqueue(TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]))?;
             let received = rt.block_on(async { egress.dequeue().await });
             assert!(received.is_none());
         }
@@ -639,7 +635,7 @@ mod tests {
 
         // Now the loss rate should fall back to the last available, 1.0
         for _ in 0..100 {
-            ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+            ingress.enqueue(TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]))?;
             let received = rt.block_on(async { egress.dequeue().await });
             assert!(received.is_none());
         }
@@ -649,7 +645,7 @@ mod tests {
 
         // Now the lost packet is well over 3, thus the loss rate would still be 1
         for _ in 0..100 {
-            ingress.enqueue(StdPacket::from_raw_buffer(&[0; 256]))?;
+            ingress.enqueue(TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]))?;
             let received = rt.block_on(async { egress.dequeue().await });
             assert!(received.is_none());
         }
@@ -681,7 +677,7 @@ mod tests {
             as Box<dyn LossTraceConfig>;
         let loss_trace = loss_trace_config.into_model();
 
-        let cell: LossReplayCell<StdPacket, StdRng> =
+        let cell: LossReplayCell<TestPacket<StdPacket>, StdRng> =
             LossReplayCell::new(loss_trace, StdRng::seed_from_u64(42))?;
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
@@ -689,25 +685,27 @@ mod tests {
         let start_time = tokio::time::Instant::now();
 
         for _ in 0..100 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
             // Should drop all packets
             assert!(received.is_none());
         }
-        egress.change_state(1);
+        egress.change_state(CellState::PassThrough);
         rt.block_on(async {
             tokio::time::sleep_until(start_time + Duration::from_millis(10)).await;
         });
         for _ in 0..100 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
             // Should never loss packet
             assert!(received.is_some());
-            assert!(received.unwrap().length() == 256)
+            let received = received.unwrap();
+            assert_eq!(received.length(), 256);
+            assert_eq!(received.delay(), Duration::ZERO);
         }
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         for (interval, calibrated_loss_rate) in [(1100, 0.5), (2100, 0.0)] {
             rt.block_on(async {
@@ -716,13 +714,16 @@ mod tests {
             let mut statistics = PacketStatistics::new();
 
             for _ in 0..100 {
-                let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+                let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
 
                 statistics.total += 1;
                 match received {
-                    Some(content) => assert!(content.length() == 256),
+                    Some(content) => {
+                        assert_eq!(content.length(), 256);
+                        assert_eq!(content.delay(), Duration::ZERO)
+                    }
                     None => statistics.lost += 1,
                 }
             }

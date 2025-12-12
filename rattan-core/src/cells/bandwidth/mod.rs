@@ -1,6 +1,6 @@
-use super::TRACE_START_INSTANT;
-use crate::cells::bandwidth::queue::PacketQueue;
-use crate::cells::{Cell, Packet};
+use super::{
+    AtomicCellState, Cell, CellState, CurrentConfig, Packet, LARGE_DURATION, TRACE_START_INSTANT,
+};
 use crate::error::Error;
 use crate::metal::timer::Timer;
 use async_trait::async_trait;
@@ -8,19 +8,18 @@ use netem_trace::{model::BwTraceConfig, Bandwidth, BwTrace, Delay};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::time::{Duration, Instant};
+use tokio::time::Instant;
 use tracing::{debug, info, trace};
 
 use super::{ControlInterface, Egress, Ingress};
 
 pub mod queue;
 
-pub const MAX_BANDWIDTH: Bandwidth = Bandwidth::from_bps(u64::MAX);
-pub const LARGE_DURATION: Duration = Duration::from_secs(10 * 365 * 24 * 60 * 60);
+use queue::PacketQueue;
 
+pub const MAX_BANDWIDTH: Bandwidth = Bandwidth::from_bps(u64::MAX);
 // Length should be the network layer length, not the link layer length
 // Requires the bandwidth to be less than 2^64 bps
 fn transfer_time(length: usize, bandwidth: Bandwidth, bw_type: BwType) -> Delay {
@@ -74,8 +73,7 @@ impl<P> Ingress<P> for BwCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.set_timestamp(Instant::now());
+    fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -95,7 +93,7 @@ where
     next_available: Instant,
     config_rx: mpsc::UnboundedReceiver<BwCellConfig<P, Q>>,
     timer: Timer,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
 }
@@ -160,17 +158,8 @@ where
                 recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                                0 => {
-                                    return None;
-                                }
-                                1 => {
-                                    return Some(new_packet);
-                                }
-                                _ => {
-                                    self.packet_queue.enqueue(new_packet);
-                                }
-                            }
+                            let new_packet = crate::check_cell_state!(self.state, new_packet);
+                            self.packet_queue.enqueue(new_packet);
                         }
                         None => {
                             // channel closed
@@ -195,18 +184,9 @@ where
                 recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                                0 => {
-                                    return None;
-                                }
-                                1 => {
-                                    return Some(new_packet);
-                                }
-                                _ => {
-                                    self.packet_queue.enqueue(new_packet);
-                                    packet = self.packet_queue.dequeue();
-                                }
-                            }
+                            let new_packet = crate::check_cell_state!(self.state, new_packet);
+                            self.packet_queue.enqueue(new_packet);
+                            packet = self.packet_queue.dequeue();
                         }
                         None => {
                             // channel closed
@@ -218,19 +198,20 @@ where
         }
 
         // send the packet
-        let packet = packet.unwrap();
+        let mut packet = packet.unwrap();
         let transfer_time = transfer_time(packet.l3_length(), self.bandwidth, self.bw_type);
         if packet.get_timestamp() >= self.next_available {
             // the packet arrives after next_available
             self.next_available = packet.get_timestamp() + transfer_time;
         } else {
             // the packet arrives before next_available and now >= self.next_available
+            packet.delay_until(self.next_available);
             self.next_available += transfer_time;
         }
         Some(packet)
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -391,7 +372,7 @@ where
                 next_available: Instant::now(),
                 config_rx,
                 timer: Timer::new()?,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
             },
@@ -411,13 +392,13 @@ where
     bw_type: BwType,
     trace: Box<dyn BwTrace>,
     packet_queue: Q,
-    current_bandwidth: Bandwidth,
+    current_bandwidth: CurrentConfig<Bandwidth>,
     next_available: Instant,
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<BwReplayCellConfig<P, Q>>,
     send_timer: Timer,
     change_timer: Timer,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
 }
@@ -428,32 +409,34 @@ where
     Q: PacketQueue<P>,
 {
     fn change_bandwidth(&mut self, bandwidth: Bandwidth, change_time: Instant) {
+        let last_bandwidth = self
+            .current_bandwidth
+            .update_get_last(bandwidth, change_time);
+
         trace!(
-            "Changing bandwidth to {:?} (should at {:?} ago)",
+            "Changing bandwidth from{:?} to {:?} (should at {:?} ago)",
+            last_bandwidth,
             bandwidth,
             change_time.elapsed()
         );
+
+        let last_bandwidth = last_bandwidth.unwrap_or(&bandwidth);
         trace!(
             "Previous next_available distance: {:?}",
             self.next_available - change_time
         );
+
         self.next_available = if bandwidth == Bandwidth::from_bps(0) {
             Instant::now() + LARGE_DURATION
         } else {
             change_time
                 + (self.next_available - change_time)
-                    .mul_f64(self.current_bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64)
+                    .mul_f64(last_bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64)
         };
-        trace!(
-            before = ?self.current_bandwidth,
-            after = ?bandwidth,
-            "Set inner bandwidth:"
-        );
         trace!(
             "Now next_available distance: {:?}",
             self.next_available - change_time
         );
-        self.current_bandwidth = bandwidth;
     }
 
     fn set_config(&mut self, config: BwReplayCellConfig<P, Q>) {
@@ -466,7 +449,7 @@ where
                 tracing::warn!("Setting null trace");
                 self.next_change = now;
                 // set state to 0 to indicate the trace goes to end and the cell will drop all packets
-                self.change_state(0);
+                self.change_state(CellState::Drop);
             }
         }
         if let Some(queue_config) = config.queue_config {
@@ -524,17 +507,8 @@ where
                recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                                0 => {
-                                    return None;
-                                }
-                                1 => {
-                                    return Some(new_packet);
-                                }
-                                _ => {
-                                    self.packet_queue.enqueue(new_packet);
-                                }
-                            }
+                            let new_packet = crate::check_cell_state!(self.state, new_packet);
+                            self.packet_queue.enqueue(new_packet);
                         }
                         None => {
                             // channel closed
@@ -549,6 +523,7 @@ where
         }
 
         let mut packet = self.packet_queue.dequeue();
+
         while packet.is_none() {
             // the queue is empty, wait for the next packet
             tokio::select! {
@@ -566,18 +541,9 @@ where
                 recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                                0 => {
-                                    return None;
-                                }
-                                1 => {
-                                    return Some(new_packet);
-                                }
-                                _ => {
-                                    self.packet_queue.enqueue(new_packet);
-                                    packet = self.packet_queue.dequeue();
-                                }
-                            }
+                            let new_packet = crate::check_cell_state!(self.state, new_packet);
+                            self.packet_queue.enqueue(new_packet);
+                            packet = self.packet_queue.dequeue();
                         }
                         None => {
                             // channel closed
@@ -589,13 +555,21 @@ where
         }
 
         // send the packet
-        let packet = packet.unwrap();
-        let transfer_time = transfer_time(packet.l3_length(), self.current_bandwidth, self.bw_type);
+        let mut packet = packet.unwrap();
+        let transfer_time = self
+            .current_bandwidth
+            .get_current(packet.get_timestamp())
+            .map(|bw| transfer_time(packet.l3_length(), *bw, self.bw_type));
+
+        // release the packet immediately (aka infinity bandwidth) when no avaiable bandwidth has been set.
+        let transfer_time = transfer_time.unwrap_or_default();
+
         if packet.get_timestamp() >= self.next_available {
             // the packet arrives after next_available
             self.next_available = packet.get_timestamp() + transfer_time;
         } else {
             // the packet arrives before next_available and now >= self.next_available
+            packet.delay_until(self.next_available);
             self.next_available += transfer_time;
         }
         Some(packet)
@@ -607,7 +581,7 @@ where
         self.next_change = *TRACE_START_INSTANT.get_or_init(Instant::now);
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -770,13 +744,13 @@ where
                 bw_type: bw_type.into().unwrap_or_default(),
                 trace,
                 packet_queue,
-                current_bandwidth: Bandwidth::from_bps(0),
+                current_bandwidth: CurrentConfig::default(),
                 next_available: Instant::now(),
                 next_change: Instant::now(),
                 config_rx,
                 send_timer: Timer::new()?,
                 change_timer: Timer::new()?,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
             },

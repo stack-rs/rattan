@@ -1,20 +1,19 @@
-use super::TRACE_START_INSTANT;
-use crate::cells::{Cell, Packet};
-use crate::error::Error;
-use crate::metal::timer::Timer;
+use std::{fmt::Debug, sync::Arc};
+
 use async_trait::async_trait;
-use netem_trace::model::DelayTraceConfig;
-use netem_trace::{Delay, DelayTrace};
+use netem_trace::{model::DelayTraceConfig, Delay, DelayTrace};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
-use std::sync::atomic::AtomicI32;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use tokio::time::Instant;
-use tracing::{debug, info};
+use tokio::{sync::mpsc, time::Instant};
+use tracing::{debug, error, info};
 
-use super::{ControlInterface, Egress, Ingress};
+use super::{CurrentConfig, LARGE_DURATION, TRACE_START_INSTANT};
+#[cfg(test)]
+use crate::cells::relative_time;
+use crate::cells::{AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, Packet};
+use crate::core::CALIBRATED_START_INSTANT;
+use crate::error::Error;
+use crate::metal::timer::Timer;
 
 pub struct DelayCellIngress<P>
 where
@@ -38,8 +37,7 @@ impl<P> Ingress<P> for DelayCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.set_timestamp(Instant::now());
+    fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -55,9 +53,10 @@ where
     delay: Delay,
     config_rx: mpsc::UnboundedReceiver<DelayCellConfig>,
     timer: Timer,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
+    latest_egress_timestamp: Instant,
 }
 
 impl<P> DelayCellEgress<P>
@@ -65,11 +64,6 @@ where
     P: Packet + Send + Sync,
 {
     fn set_config(&mut self, config: DelayCellConfig) {
-        debug!(
-            before = ?self.delay,
-            after = ?config.delay,
-            "Set inner delay:"
-        );
         self.delay = config.delay;
     }
 }
@@ -87,30 +81,32 @@ where
             Some(packet) => packet,
             None => return None,
         };
-        match self.state.load(std::sync::atomic::Ordering::Acquire) {
-            0 => {
-                return None;
-            }
-            1 => {
-                return Some(packet);
-            }
-            _ => {}
-        }
-        loop {
+
+        let mut packet = crate::check_cell_state!(self.state, packet);
+
+        // Logical timestamps are considered non-decreasing.
+        let timestamp = packet.get_timestamp();
+
+        let send_time = loop {
+            let logical_send_time = (timestamp + self.delay).max(self.latest_egress_timestamp);
+
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                _ = self.timer.sleep(packet.get_timestamp() + self.delay - Instant::now()) => {
-                    break;
+                _ = self.timer.sleep_until(logical_send_time) => {
+                    self.latest_egress_timestamp = logical_send_time;
+                    break logical_send_time;
                 }
             }
-        }
+        };
+
+        packet.delay_until(send_time);
         Some(packet)
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -194,6 +190,8 @@ where
         debug!(?delay, "New DelayCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
+
+        let logical_time = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
         Ok(DelayCell {
             ingress: Arc::new(DelayCellIngress { ingress: rx }),
             egress: DelayCellEgress {
@@ -201,9 +199,10 @@ where
                 delay,
                 config_rx,
                 timer: Timer::new()?,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
+                latest_egress_timestamp: logical_time,
             },
             control_interface: Arc::new(DelayCellControlInterface { config_tx }),
         })
@@ -218,69 +217,41 @@ where
 {
     egress: mpsc::UnboundedReceiver<P>,
     trace: Box<dyn DelayTrace>,
-    current_delay: Delay,
-    next_available: Instant,
+    delays: CurrentConfig<Delay>,
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<DelayReplayCellConfig>,
     send_timer: Timer,
     change_timer: Timer,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
+    latest_egress_timestamp: Instant,
 }
 
 impl<P> DelayReplayCellEgress<P>
 where
     P: Packet + Send + Sync,
 {
-    fn change_delay(&mut self, delay: Delay, change_time: Instant) {
-        tracing::trace!(
-            "Changing delay to {:?} (should at {:?} ago)",
-            delay,
-            change_time.elapsed()
-        );
-        tracing::trace!(
-            "Previous next_available distance: {:?}",
-            self.next_available - change_time
-        );
-        self.next_available += delay;
-        self.next_available -= self.current_delay;
-        tracing::trace!(
-            before = ?self.current_delay,
-            after = ?delay,
-            "Set inner delay:"
-        );
-        tracing::trace!(
-            "Now next_available distance: {:?}",
-            self.next_available - change_time,
-        );
-        self.current_delay = delay;
-    }
-
     fn set_config(&mut self, config: DelayReplayCellConfig) {
         tracing::debug!("Set inner trace config");
         self.trace = config.trace_config.into_model();
-        let now = Instant::now();
-        if self.next_change(now).is_none() {
-            // handle null trace outside this function
-            tracing::warn!("Setting null trace");
-            self.next_change = now;
-            // set state to 0 to indicate the trace goes to end and the cell will drop all packets
-            self.change_state(0);
-        }
     }
 
-    // Return the next change time or **None** if the trace goes to end
-    fn next_change(&mut self, change_time: Instant) -> Option<()> {
-        self.trace.next_delay().map(|(delay, duration)| {
-            self.change_delay(delay, change_time);
-            self.next_change = change_time + duration;
-            tracing::trace!(
-                "Delay changed to {:?}, next change after {:?}",
-                delay,
-                self.next_change - Instant::now()
+    fn update_delay(&mut self, timestamp: Instant) {
+        if let Some((current_delay, duration)) = self.trace.next_delay() {
+            #[cfg(test)]
+            debug!(
+                "Setting {:?} delay valid from {:?} till {:?}",
+                current_delay,
+                relative_time(timestamp),
+                relative_time(timestamp + duration),
             );
-        })
+            self.delays.update(current_delay, timestamp);
+            self.next_change = timestamp + duration;
+        } else {
+            debug!("Trace goes to end");
+            self.next_change = timestamp + LARGE_DURATION
+        }
     }
 }
 
@@ -302,54 +273,79 @@ where
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
-                    if self.next_change(self.next_change).is_none() {
-                        debug!("Trace goes to end");
-                        self.egress.close();
-                        return None;
+                change_time = self.change_timer.sleep_until(self.next_change) => {
+                    match change_time {
+                        Ok(change_time) => {
+                            self.update_delay(change_time);
+                        },
+                        Err(e) => {
+                            error!("Error on change timer: {:?}", e);
+                        }
                     }
                 }
+
                 packet = self.egress.recv() => if let Some(packet) = packet { break packet }
             }
         };
-        match self.state.load(std::sync::atomic::Ordering::Acquire) {
-            0 => {
-                return None;
-            }
-            1 => {
-                return Some(packet);
-            }
-            _ => {}
+
+        let mut packet = crate::check_cell_state!(self.state, packet);
+
+        let timestamp = packet.get_timestamp();
+
+        // make sure change_time > timestamp, so that the config is appliable for the packet given the timestamp
+        while self.next_change <= timestamp {
+            self.update_delay(self.next_change);
         }
-        self.next_available = packet.get_timestamp() + self.current_delay;
-        loop {
+
+        let send_time = loop {
+            // `get_current` returns None if and only if `self.delays` has never been updated
+            // since last reset.
+
+            let logical_send_time = if let Some(delay_time) = self.delays.get_current(timestamp) {
+                (timestamp + *delay_time).max(self.latest_egress_timestamp)
+            } else {
+                timestamp.max(self.latest_egress_timestamp)
+            };
+
             tokio::select! {
-                biased;
-                Some(config) = self.config_rx.recv() => {
-                    self.set_config(config);
-                }
-                _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
-                    if self.next_change(self.next_change).is_none() {
-                        debug!("Trace goes to end");
-                        self.egress.close();
-                        return None;
+            biased;
+            Some(config) = self.config_rx.recv() => {
+                self.set_config(config);
+            }
+            // In case there is a config change during this loop. Otherwise, this should never be triggered.
+            change_time = self.change_timer.sleep_until(self.next_change) => {
+                match change_time {
+                    Ok(change_time) => {
+                        self.update_delay(change_time);
+                    },
+                    Err(e) => {
+                        error!("Error on change timer: {:?}", e);
                     }
                 }
-                _ = self.send_timer.sleep(self.next_available - Instant::now()) => {
-                    break;
-                }
             }
-        }
+            send_time = self.send_timer.sleep_until(logical_send_time) => {
+                self.latest_egress_timestamp = logical_send_time;
+                break send_time.ok()?;
+            }}
+        };
+
+        packet.delay_until(send_time);
         Some(packet)
     }
 
     // This must be called before any dequeue
     fn reset(&mut self) {
-        self.next_available = *TRACE_START_INSTANT.get_or_init(Instant::now);
         self.next_change = *TRACE_START_INSTANT.get_or_init(Instant::now);
+        tracing::debug!(
+            "calculate next delay for logical trace change time {:?} (reset)",
+            self.next_change
+        );
+        self.delays.reset();
+        self.update_delay(self.next_change);
+        self.latest_egress_timestamp = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -443,13 +439,13 @@ where
             egress: DelayReplayCellEgress {
                 egress: tx,
                 trace,
-                current_delay: Delay::ZERO,
-                next_available: Instant::now(),
+                delays: CurrentConfig::default(),
                 next_change: Instant::now(),
                 config_rx,
                 send_timer: Timer::new()?,
                 change_timer: Timer::new()?,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
+                latest_egress_timestamp: *CALIBRATED_START_INSTANT.get_or_init(Instant::now),
                 notify_rx: None,
                 started: false,
             },
@@ -460,11 +456,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
     use netem_trace::model::{RepeatedDelayPatternConfig, StaticDelayConfig};
-    use std::time::{Duration, Instant};
-    use tracing::{span, Level};
+    use std::time::Duration;
+    use tokio::time::Instant;
+    use tracing::{span, warn, Level};
 
-    use crate::cells::StdPacket;
+    use crate::cells::{StdPacket, TestPacket};
 
     use super::*;
 
@@ -488,14 +486,14 @@ mod tests {
             let ingress = cell.sender();
             let mut egress = cell.into_receiver();
             egress.reset();
-            egress.change_state(2);
+            egress.change_state(CellState::Normal);
 
             info!("Testing delay time for {}ms delay cell", testing_delay);
             let mut delays: Vec<f64> = Vec::new();
 
             for _ in 0..10 {
-                let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
                 let start = Instant::now();
+                let test_packet = TestPacket::<StdPacket>::with_timestamp(&[0; 256], start);
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
 
@@ -511,6 +509,8 @@ mod tests {
 
                 // The length should be correct
                 assert!(received.length() == 256);
+
+                assert_eq!(received.delay(), Duration::from_millis(testing_delay));
             }
 
             info!(
@@ -523,10 +523,10 @@ mod tests {
             info!(
                 "Average delay: {:.3}ms, error {:.1}ms",
                 average_delay,
-                (average_delay - testing_delay as f64).abs()
+                (average_delay - testing_delay as f64)
             );
             // Check the delay time
-            assert!((average_delay - testing_delay as f64) <= DELAY_ACCURACY_TOLERANCE);
+            assert!((average_delay - testing_delay as f64).abs() <= DELAY_ACCURACY_TOLERANCE);
         }
 
         Ok(())
@@ -547,12 +547,12 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         //Test whether the packet will wait longer if the config is updated
-        let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
-
         let start = Instant::now();
+        let test_packet = TestPacket::<StdPacket>::with_timestamp(&[0; 256], start);
+
         ingress.enqueue(test_packet)?;
 
         // Wait for 5ms, then change the config to let the delay be longer
@@ -569,18 +569,20 @@ mod tests {
         let received = received.unwrap();
         assert!(received.length() == 256);
 
+        assert_eq!(received.delay(), Duration::from_millis(20));
         assert!((duration - 20.0).abs() <= DELAY_ACCURACY_TOLERANCE);
 
-        // Test whether the packet will be returned immediately when the new delay is less than the already passed time
-        let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
-
         let start = Instant::now();
+        let test_packet = TestPacket::<StdPacket>::with_timestamp(&[0; 256], start);
+
         ingress.enqueue(test_packet)?;
 
         // Wait for 15ms, then change the config back to 10ms
         std::thread::sleep(Duration::from_millis(15));
         config_changer.set_config(DelayCellConfig::new(Duration::from_millis(10)))?;
 
+        // The expected behavior is that, the packet exits the cell almost immediately
+        // after the config change.
         let received = rt.block_on(async { egress.dequeue().await });
 
         let duration = start.elapsed().as_micros() as f64 / 1000.0;
@@ -590,7 +592,7 @@ mod tests {
         assert!(received.is_some());
         let received = received.unwrap();
         assert!(received.length() == 256);
-
+        assert_eq!(received.delay(), Duration::from_millis(10));
         assert!((duration - 15.0).abs() <= DELAY_ACCURACY_TOLERANCE);
 
         Ok(())
@@ -625,13 +627,15 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
         let start_time = tokio::time::Instant::now();
         let mut delays: Vec<f64> = Vec::new();
+        let mut real_delays: Vec<Duration> = Vec::new();
         for interval in [1100, 2100, 3100, 0] {
             for _ in 0..10 {
-                let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
                 let start = Instant::now();
+                let test_packet = TestPacket::<StdPacket>::with_timestamp(&[0; 256], start);
+
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
 
@@ -647,29 +651,44 @@ mod tests {
 
                 // The length should be correct
                 assert!(received.length() == 256);
+
+                real_delays.push(received.delay());
             }
             rt.block_on(async {
                 tokio::time::sleep_until(start_time + Duration::from_millis(interval)).await;
             })
         }
         assert_eq!(delays.len(), 40);
+        assert_eq!(real_delays.len(), 40);
+
         for (idx, calibrated_delay) in vec![10, 50, 10, 50].into_iter().enumerate() {
-            let average_delay = delays[(idx * 10)..(10 + idx * 10)].iter().sum::<f64>() / 10.0;
-            debug!("Delays: {:?}", delays);
+            debug!("Expected delay {}ms", calibrated_delay);
+            let range = (idx * 10)..(10 + idx * 10);
+
+            let average_delay = delays[range.clone()].iter().sum::<f64>() / 10.0;
+            debug!("Delays: {:?}", delays[range.clone()].iter().collect_vec());
+            debug!(
+                "Real Delays: {:?}",
+                real_delays[range.clone()].iter().collect_vec()
+            );
             info!(
                 "Average delay: {:.3}ms, error {:.1}ms",
                 average_delay,
-                (average_delay - calibrated_delay as f64).abs()
+                (average_delay - calibrated_delay as f64)
             );
             // Check the delay time
-            assert!((average_delay - calibrated_delay as f64) <= DELAY_ACCURACY_TOLERANCE);
+            assert!((average_delay - calibrated_delay as f64).abs() <= DELAY_ACCURACY_TOLERANCE);
+
+            for delay in real_delays[range.clone()].iter() {
+                assert_eq!(delay, &Duration::from_millis(calibrated_delay));
+            }
         }
         Ok(())
     }
 
     #[test_log::test]
     fn test_replay_delay_cell_change_state() -> Result<(), Error> {
-        let _span = span!(Level::INFO, "test_replay_delay_cell").entered();
+        let _span = span!(Level::INFO, "test_replay_delay_cell_change_state").entered();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -698,19 +717,21 @@ mod tests {
         egress.reset();
         let start_time = tokio::time::Instant::now();
         for _ in 0..10 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
             // Should drop all packets
             assert!(received.is_none());
         }
-        egress.change_state(1);
+        egress.change_state(CellState::PassThrough);
         let mut delays: Vec<f64> = Vec::new();
+        let mut real_delays: Vec<_> = Vec::new();
         rt.block_on(async {
             tokio::time::sleep_until(start_time + Duration::from_millis(1100)).await;
         });
+        warn!("Start pass through {:?}", relative_time(Instant::now()));
         for _ in 0..10 {
-            let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
             let start = Instant::now();
             ingress.enqueue(test_packet)?;
             let received = rt.block_on(async { egress.dequeue().await });
@@ -727,13 +748,19 @@ mod tests {
 
             // The length should be correct
             assert!(received.length() == 256);
+
+            real_delays.push(received.delay());
         }
+        egress.change_state(CellState::Normal);
         for interval in [2100, 3100] {
             rt.block_on(async {
                 tokio::time::sleep_until(start_time + Duration::from_millis(interval)).await;
             });
+
+            warn!("Begin test at {:?}", relative_time(Instant::now()));
+
             for _ in 0..10 {
-                let test_packet = StdPacket::from_raw_buffer(&[0; 256]);
+                let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
                 let start = Instant::now();
                 ingress.enqueue(test_packet)?;
                 let received = rt.block_on(async { egress.dequeue().await });
@@ -750,6 +777,8 @@ mod tests {
 
                 // The length should be correct
                 assert!(received.length() == 256);
+
+                real_delays.push(received.delay());
             }
         }
         assert_eq!(delays.len(), 30);
@@ -759,10 +788,14 @@ mod tests {
             info!(
                 "Average delay: {:.3}ms, error {:.1}ms",
                 average_delay,
-                (average_delay - calibrated_delay as f64).abs()
+                (average_delay - calibrated_delay as f64)
             );
             // Check the delay time
-            assert!((average_delay - calibrated_delay as f64) <= DELAY_ACCURACY_TOLERANCE);
+            assert!((average_delay - calibrated_delay as f64).abs() <= DELAY_ACCURACY_TOLERANCE);
+
+            for delay in real_delays[(idx * 10)..(10 + idx * 10)].iter() {
+                assert_eq!(delay, &Duration::from_millis(calibrated_delay));
+            }
         }
         Ok(())
     }

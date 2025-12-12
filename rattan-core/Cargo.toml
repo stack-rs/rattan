@@ -30,6 +30,7 @@ bytesize = "2.0.1"
 camellia = { git = "https://github.com/minhuw/camellia.git", optional = true }
 clap = { workspace = true }
 csv = { workspace = true }
+derive_more = { workspace = true}
 dyn-clone = "1.0"
 etherparse = "0.18.0"
 figment = { workspace = true }

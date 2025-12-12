@@ -1,12 +1,13 @@
-use crate::cells::Packet;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fmt::Debug;
+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use tokio::time::{Duration, Instant};
 use tracing::{debug, trace};
 
 use super::BwType;
+use crate::cells::Packet;
 
 #[cfg(feature = "serde")]
 fn serde_default<T: Default + PartialEq>(t: &T) -> bool {
@@ -30,6 +31,19 @@ where
     fn dequeue(&mut self) -> Option<P>;
 
     fn is_empty(&self) -> bool;
+
+    // How this queue measures the size of a packet. I
+    // Should return 0 if it measures the size of a packet based on its L3 size.
+    // Should return 14 if it measures that based on its L2 size. (L3 size + 14B L2 Head)
+    fn get_extra_length(&self) -> usize {
+        0
+    }
+
+    // How this queue measures the size of a packet;
+    #[inline(always)]
+    fn get_packet_size(&self, packet: &P) -> usize {
+        packet.l3_length() + self.get_extra_length()
+    }
 
     // If the queue is empty, return `None`
     fn get_front_size(&self) -> Option<usize>;
@@ -99,8 +113,15 @@ where
         self.queue.is_empty()
     }
 
+    #[inline(always)]
+    fn get_extra_length(&self) -> usize {
+        0
+    }
+
     fn get_front_size(&self) -> Option<usize> {
-        self.queue.front().map(|packet| packet.l3_length())
+        self.queue
+            .front()
+            .map(|packet| self.get_packet_size(packet))
     }
 
     fn length(&self) -> usize {
@@ -169,10 +190,6 @@ impl<P> DropTailQueue<P> {
             now_bytes: 0,
         }
     }
-
-    pub fn get_extra_length(&self) -> usize {
-        self.bw_type.extra_length()
-    }
 }
 
 impl<P> Default for DropTailQueue<P> {
@@ -227,10 +244,15 @@ where
         self.queue.is_empty()
     }
 
+    #[inline(always)]
+    fn get_extra_length(&self) -> usize {
+        self.bw_type.extra_length()
+    }
+
     fn get_front_size(&self) -> Option<usize> {
         self.queue
             .front()
-            .map(|packet| packet.l3_length() + self.bw_type.extra_length())
+            .map(|packet| self.get_packet_size(packet))
     }
 
     fn length(&self) -> usize {
@@ -351,10 +373,15 @@ where
         self.queue.is_empty()
     }
 
+    #[inline(always)]
+    fn get_extra_length(&self) -> usize {
+        self.bw_type.extra_length()
+    }
+
     fn get_front_size(&self) -> Option<usize> {
         self.queue
             .front()
-            .map(|packet| packet.l3_length() + self.bw_type.extra_length())
+            .map(|packet| self.get_packet_size(packet))
     }
 
     fn length(&self) -> usize {
@@ -639,10 +666,15 @@ where
         self.queue.is_empty()
     }
 
+    #[inline(always)]
+    fn get_extra_length(&self) -> usize {
+        self.config.bw_type.extra_length()
+    }
+
     fn get_front_size(&self) -> Option<usize> {
         self.queue
             .front()
-            .map(|packet| packet.l3_length() + self.config.bw_type.extra_length())
+            .map(|packet| self.get_packet_size(packet))
     }
 
     fn length(&self) -> usize {
