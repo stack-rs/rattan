@@ -1965,26 +1965,185 @@ cargo run --example channel-xdp --release --features="camellia" # AF_XDP version
 
 </style>
 <h1 id="packet-log"><a class="header" href="#packet-log">Packet Log</a></h1>
-<p>The packet log contains a binary file that contains a compressed record of all packets processed by Rattan and a flow description file. It is designed to store what happened during the experiment with low overhead, enabling post-analysis and debugging.</p>
+<p>The Rattan packet log contains the following binary files:</p>
+<ul>
+<li>A <code>.flow</code> file, which contains a basic description of all (recognized) flows processed by Rattan.</li>
+<li>A <code>.rtl</code> file, which contains a compressed record of the packets in those flows.</li>
+<li>Optionally, a <code>.raw</code> file, which contains the protocol headers of those packets.</li>
+</ul>
+<p>It is designed to store what happened during the experiment with low overhead, enabling post-analysis and debugging.</p>
+<p><strong>Notice</strong>:
+Rattan currently records TCP flows on IPv4 only. Any other packets that are not recognized as a TCP flow on IPv4 are ignored
+when recording a Rattan packet log, while they are normally processed and forwarded by
+Rattan (e.g., UDP flows).</p>
 <h2 id="usage-2"><a class="header" href="#usage-2">Usage</a></h2>
-<p>Using the <code>--packet-log</code> option in the CLI will enable the packet log feature and specify the file to store the records. The flow description file will be stored in the same directory with the name <code>&lt;packet_log&gt;.flows</code>, where <code>&lt;packet_log&gt;</code> is the name of the packet log file.</p>
-<p>For example, you can run the following command to enable packet logging:</p>
-<pre><code class="language-bash">rattan link --packet-log packet.log
+<h3 id="record-a-rattan-packet-log"><a class="header" href="#record-a-rattan-packet-log">Record a Rattan packet Log</a></h3>
+<p>Two options are involved: <code>--packet-log</code> and <code>--packet-log-mode</code> . Example usages are:</p>
+<pre><code class="language-bash">rattan link --packet-log packet.rtl --packet-log-mode compact-tcp
+rattan run --config config.toml --packet-log packet.rtl --packet-log-mode raw-ip
 </code></pre>
-<p>This will create a file named <code>packet.log</code> in the current directory, which will contain the compressed packet log. The flow description file will be named <code>packet.log.flows</code>.</p>
-<p>We also provide a python script <a href="https://github.com/stack-rs/rattan/blob/main/scripts/log_converter.py">scripts/log_converter.py</a> to convert the packet log file (along with the flow description file) to some pcapng files, which can be viewed with Wireshark or other tools. You can run the script like this:</p>
-<pre><code class="language-bash">python3 scripts/log_converter.py packet.log converted.pcapng
+<p>The possible values for <code>--packet-log-mode</code> are:</p>
+<ul>
+<li><code>compact-tcp</code> (as default, if not specified). In this mode, some fields from TCP and IP headers are recorded.</li>
+<li><code>raw-ip</code>. In this mode, the raw L3 and L4 headers are recorded.</li>
+<li><code>raw-tcp</code>. In this mode, the raw L4 headers are recorded.</li>
+</ul>
+<p>This will create a file named <code>packet.rtl</code> in the current directory, which will contain the compressed packet log.
+The flow description file will be named <code>packet.flows</code>. Also, if any raw headers are recorded, a <code>packet.raw</code> will be created.</p>
+<h3 id="convert-a-rattan-packet-log"><a class="header" href="#convert-a-rattan-packet-log">Convert a Rattan packet log</a></h3>
+<h4 id="rust-subcommand"><a class="header" href="#rust-subcommand">Rust subcommand</a></h4>
+<p>To convert a Rattan packet log to a <code>.pcapng</code> file, which can be viewed with Wireshark or other tools, we provide
+a subcommand <code>convert</code>.</p>
+<p>Example usage:</p>
+<pre><code class="language-bash">rattan convert ./packet.rtl [path/to/output]
 </code></pre>
-<p>This will read <code>packet.log</code> and <code>packet.log.flows</code>, and generate a pcapng file for each end of Rattan (identified by IP address), with the name <code>converted_&lt;ip&gt;.pcapng</code> (e.g. <code>converted_10_1_1_1.pcapng</code>).</p>
-<p>Note that some fields are artificially constructed in the pcapng file, as the compressed packet log only stores partial information. Artificial fields include:</p>
+<p>This expects the following files exist, as input:</p>
+<ul>
+<li><code>./packet.rtl</code></li>
+<li><code>./packet.flows</code></li>
+<li><code>./packet.raw</code> (optional, only if the packet log was recorded in <code>raw-tcp</code> or <code>raw-ip</code> mode).</li>
+</ul>
+<p>And it will generate the following files, as output, if the address of the two ends of the emulated link
+of Rattan was <code>10.1.1.1</code> and <code>10.2.1.1</code>":</p>
+<ul>
+<li><code>path/to/output_10_1_1_1.pcapng</code></li>
+<li><code>path/to/output_10_2_1_1.pcapng</code></li>
+</ul>
+<p>If the second argument was not provided (the output prefix), the default value for it is the first argument (the path
+to the <code>.rtl</code> file).</p>
+<p>Note that, in <code>compact-tcp</code> mode, some fields are artificially constructed in the pcapng file, as the compressed
+packet log only stores partial information. Artificial fields include:</p>
 <ul>
 <li><code>Window</code>: The TCP window size is set to <code>65535</code> for all packets.</li>
 <li><code>Checksum</code>: The TCP checksum is set to <code>0</code> for all packets.</li>
 <li><code>Urgent Pointer</code>: The TCP urgent pointer is set to <code>0</code> for all packets.</li>
 <li><code>Options</code>: The TCP header length is real, but option content is set to <code>0</code> for all packets.</li>
 </ul>
+<p>Besides, in <code>raw-tcp</code> mode, some fields are artificially constructed in the pcapng file, since per-packet
+info in IP headers are not recorded at all. Artificial fields include:</p>
+<ul>
+<li><code>Identification</code>: Set to <code>0</code>.</li>
+<li><code>Flags</code> : Set to <code>Don't Fragment</code>.</li>
+<li><code>Checksum</code> : Set to <code>0</code>, or disabled.</li>
+</ul>
+<h4 id="python-script"><a class="header" href="#python-script">Python script</a></h4>
+<p>We provide a python script (<a href="https://github.com/stack-rs/rattan/blob/main/scripts/log_converter.py">scripts/log_converter.py</a>), that provides basically the same function as the above-mentioned Rust subcommand does.
+Notice that the Python script can be slower than the Rust subcommand by one to
+two orders of magnitude when processing large log files.</p>
+<p>Example usage:</p>
+<pre><code class="language-bash">python scripts/log_converter.py ./packet.rtl path/to/output
+</code></pre>
+<p>or, use the script as a <a href="https://docs.astral.sh/uv/guides/scripts/#using-a-shebang-to-create-an-executable-file">uv script</a> to automatically handle dependencies.</p>
+<pre><code class="language-bash">uv run --script scripts/log_converter.py ./packet.rtl path/to/output
+</code></pre>
+<p>The paths to input and output files are the same as those for <code>rattan convert</code>, and the behaviour of the python script is basically the same as <code>rattan convert</code>.</p>
 <h2 id="specification"><a class="header" href="#specification">Specification</a></h2>
-<p>The packet log is stored in system endianness (little-endian in most cases and in our tests), entry by entry. The specification for each log entry is as follows:</p>
+<h3 id="raw-file"><a class="header" href="#raw-file">Raw file</a></h3>
+<p>A <code>.raw</code> file is an unstructured binary file. Currently, the headers recorded
+in <code>raw-tcp</code> and <code>raw-ip</code> modes are directly written into the <code>.raw</code> file continuously,
+without any padding, header or index.
+The file is considered a byte buffer, where a slice (starting from <code>offset</code> bytes from
+the head of the file and ending at <code>offset</code> + <code>length</code>)
+can be indexed by the pair (<code>offset</code>, <code>length</code>).</p>
+<h3 id="log-entry-file"><a class="header" href="#log-entry-file">Log entry file</a></h3>
+<p>Now we have 2 kinds of log entry files:</p>
+<ul>
+<li><code>.flows</code> files, which contains the metadata for flows. They consist of <code>Flow Entries</code>.</li>
+<li><code>.rtl</code> files, which contains per-packet log for packets in those flows.
+<ul>
+<li>For non-raw modes, they consist of non-raw <code>General Packet Entries</code>.</li>
+<li>For raw modes, they consist of chunks. Each chunk starts with a <code>Chunk Prologue</code>, which is followed by raw <code>General Packet Entries</code>.</li>
+</ul>
+</li>
+</ul>
+<p>Above mentioned log entry types are described as follows.</p>
+<p>Every log entry file consists of <code>Log Entries</code>.
+Those log entries are stored in system endianness (little-endian in most cases and in our tests).
+The specification for a log entry is as follows:</p>
+<pre><code class="language-text">0                   1                   2                   3
+0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       LH.length       | LH.ty.|                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               +
+|                                                               |
++                                                               +
+|                            payload                            |
++                                                               +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<pre><code class="language-bash">protocol "LH.length:12,LH.ty.:4,payload:112"
+</code></pre>
+<p>Generated with <a href="https://github.com/luismartingarcia/protocol">protocol</a>, where
+<code>LH</code> is short for log entry header.</p>
+<p><code>LH.length</code> denotes the whole length of the log entry file, including the header (2 bytes) and its payload, in bytes.</p>
+<p>Currently, there are multiple types of <code>LH.ty.</code> that indicate how a log entry's payload is organized. They are:</p>
+<ul>
+<li><code>LH.ty.</code> = 0, for a General Packet Entry as payload.</li>
+<li><code>LH.ty.</code> = 1, reserved for future use.</li>
+<li><code>LH.ty.</code> = 2, for a Flow Entry as payload,</li>
+<li><code>LH.ty.</code> = 15, for a Chunk Prologue as payload,</li>
+</ul>
+<h4 id="chunk-prologue-entry"><a class="header" href="#chunk-prologue-entry">Chunk Prologue Entry</a></h4>
+<p>A chunk prologue entry is a log entry with <code>LH.ty.</code> = 15, which is used in raw-mode packet logs.</p>
+<pre><code class="language-text"> 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       LH.length       | LH.ty.|       CPH.length      |CPH.ty.|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                        CPH.log_version                        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                        CPH.data_length                        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                        CPH.chunk_length                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                                                               +
+|                                                               |
++                           CP (custom)                         +
+|                                                               |
++                                                               +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<pre><code class="language-bash">protocol "LH.length:12,LH.ty.:4,CPH.length:12,CPH.ty.:4,CPH.log_version:32,CPH.data_length:32,CPH.chunk_length:32,CP (custom):128"
+</code></pre>
+<p>Where <code>CPH</code> is short for Chunk Prologue Header, and <code>CP</code> is short for Chunk Prologue.
+The meaning of each field is as follows:</p>
+<ul>
+<li><code>CPH.length</code> denotes the length of the chunk prologue entry itself.</li>
+<li><code>CPH.ty.</code> is always 0 now.</li>
+<li><code>CPH.log_version</code> is a magic number, which is 0x20260101 in this specification.</li>
+<li><code>CPH.data_length</code> is the sum of the length of this Chunk Prologue Entry and all subsequent content (which, for now, consists solely of raw General Packet Entries).</li>
+<li><code>CPH.chunk_length</code> is the logical length of the current chunk. It indicates that the next Chunk Prologue is expected to be found, or the End-of-File (EOF) is expected to be reached, exactly <code>CPH.chunk_length</code> bytes from the offset of this log entry.</li>
+</ul>
+<p>And when <code>CPH.ty.</code> is 0, the body part of the Chunk Prologue is:</p>
+<pre><code class="language-text"> 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                           CP.offset                           +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                            Reserved                           +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<pre><code class="language-bash">protocol "CP.offset:64,Reserved:64"
+</code></pre>
+<p>Where <code>CP</code> is short for Chunk Prologue.
+<code>CP.offset</code> is a 64-bit integer, whose value is referenced by the raw General Packet entries in the chunk that this
+Chunk Prologue introduces.</p>
+<h4 id="general-packet-entry"><a class="header" href="#general-packet-entry">General Packet Entry</a></h4>
+<p>A General Packet Entry is a log entry with <code>LH.ty.</code> = 0, which records a packet.</p>
+<p>There are two modes of General Packet Entries:</p>
+<ul>
+<li>non-raw (<code>GPH.ty.</code> = 0), and</li>
+<li>raw (<code>GPH.ty.</code> = 1, 2).</li>
+</ul>
+<p><strong>non-raw General Packet Entry</strong>:
+The specification for a non-raw General Packet Entry:</p>
 <pre><code class="language-text"> 0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -1997,22 +2156,20 @@ cargo run --example channel-xdp --release --features="camellia" # AF_XDP version
 |                          PRT (custom)                         |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 </code></pre>
-<p>Generated with <a href="https://github.com/luismartingarcia/protocol">protocol</a>, where:</p>
 <ul>
-<li><code>LH</code> is short for log entry header</li>
-<li><code>GPH</code> is short for general packet entry header</li>
-<li><code>GP</code> is short for general packet entry (the body part)</li>
-<li><code>PRH</code> is short for protocol entry header</li>
-<li><code>PRT</code> is short for protocol entry (the body part)</li>
-<li><code>ty.</code> is short for type</li>
-<li><code>ac.</code> is short for action</li>
+<li><code>GPH</code> is short for general packet entry header.</li>
+<li><code>GP</code> is short for general packet entry (the body part).</li>
+<li><code>PRH</code> is short for protocol entry header.</li>
+<li><code>PRT</code> is short for protocol entry (the body part).</li>
+<li><code>ty.</code> is short for type.</li>
+<li><code>ac.</code> is short for action.</li>
 </ul>
 <pre><code class="language-bash">protocol "LH.length:12,LH.ty.:4,GPH.length:8,GPH.ac.:4,GPH.ty.:4,GP.timestamp:32,GP.length:16,PRH.length:12,PRH.ty.:4,PRT (custom):32"
 </code></pre>
 <p>The meaning of each field is as follows:</p>
 <ul>
 <li><code>LH.length</code>: Length of the whole log entry in bytes. For TCP log entries, it is 32 bytes.</li>
-<li><code>LH.ty.</code>: Type of the log entry, currently only <code>0</code> is supported (indicating a general packet log entry).</li>
+<li><code>LH.ty.</code>: Type of the log entry, currently only <code>0</code> is supported (indicating a general packet entry).</li>
 <li><code>GPH.length</code>: Length of the general packet entry in bytes, including the header and body (<code>GPH</code> + <code>GP</code>). It is 8 bytes in most cases.</li>
 <li><code>GPH.ac.</code>: Action of the general packet entry. It can be one of the following values:
 <ul>
@@ -2022,7 +2179,7 @@ cargo run --example channel-xdp --release --features="camellia" # AF_XDP version
 <li><code>3</code>: Passthrough (packet passes through Rattan without any effect applied)</li>
 </ul>
 </li>
-<li><code>GPH.ty.</code>: Type of the general packet entry, currently only <code>0</code>.</li>
+<li><code>GPH.ty.</code>: Type of the general packet entry, <code>0</code> for non-raw GPH.</li>
 <li><code>GP.timestamp</code>: Timestamp of the packet entry in microseconds since <code>base_ts</code> (in flow description file).</li>
 <li><code>GP.length</code>: Length of the whole packet in bytes.</li>
 <li><code>PRH.length</code>: Length of the protocol entry in bytes, including the header and body (<code>PRH</code> + <code>PRT</code>). For TCP log entries, it is 22 bytes.</li>
@@ -2048,21 +2205,96 @@ cargo run --example channel-xdp --release --features="camellia" # AF_XDP version
 <pre><code class="language-bash">protocol "tcp.flow_id:32,tcp.seq:32,tcp.ack:32,ip.id:16,ip.frag:16,ip.checksum:16,tcp.flags:8,tcp.dataofs:8"
 </code></pre>
 <p>Note that the <code>ip.frag</code> includes the fragment offset and the flags. Other fields are self-explanatory.</p>
-<p>For TCP log, each line of the flow description file will contain a JSON object with the following fields:</p>
-<pre><code class="language-json">{"flow_id":&lt;flow_id&gt;,"base_ts":&lt;base_ts&gt;,"flow_desc":{"TCP":["&lt;src_ip&gt;","&lt;dst_ip&gt;",&lt;src_port&gt;,&lt;dst_port&gt;]}}
+<p><strong>raw General Packet Entry</strong>:
+The specification for a raw General Packet Entry:</p>
+<pre><code class="language-text"> 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       LH.length       | LH.ty.|   GPH.length  |GPH.ac.|GPH.ty.|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                          GP.timestamp                         |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|           GP.length           |         RGP.flow_index        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|              RGP.relative_offset              |    RGP.len.   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 </code></pre>
-<p>Where:</p>
+<pre><code class="language-bash">protocol "LH.length:12,LH.ty.:4,GPH.length:8,GPH.ac.:4,GPH.ty.:4,GP.timestamp:32,GP.length:16,RGP.flow_index:16,RGP.relative_offset:24,RGP.len.:8"
+</code></pre>
+<p>The <code>GP</code> and <code>GPH</code> fields have the same meaning as those in non-raw General Packet Entries.
+And <code>RGP</code> is short for raw General Packet.</p>
+<p>For raw General Packet Entries, <code>GPH.ty.</code> could be one of:</p>
 <ul>
-<li><code>flow_id</code>(<code>u32</code>): The identifier of the flow. The high 16 bits are the interface ID where the packet enters Rattan, and the low 16 bits are the incremental flow counter.</li>
-<li><code>base_ts</code>(<code>i64</code>): The base timestamp in nanoseconds (this unit is different from the <code>GP.timestamp</code> field) for this flow.</li>
-<li><code>flow_desc</code>: The description map of the flow, which contains the protocol-specific information. For TCP, it contains a key <code>TCP</code> with a list of four elements:
-<ul>
-<li>The source IP address (<code>Ipv4Addr</code>)</li>
-<li>The destination IP address (<code>Ipv4Addr</code>)</li>
-<li>The source port (<code>u16</code>)</li>
-<li>The destination port (<code>u16</code>)</li>
+<li><code>GPH.ty.</code> = 1, for raw packet logs with raw L3 and L4 headers (<code>raw-ip</code>).</li>
+<li><code>GPH.ty.</code> = 2, for raw packet logs with raw L4 headers (<code>raw-tcp</code>).</li>
 </ul>
-</li>
+<p>And those are descriptions for other fields that will be only used in raw General Packet Entries:</p>
+<p>If <code>RGP.flow_index</code> is 0, it is a default value for packets that can not be
+related to a recorded flow for any reason. Otherwise, it means the index of flow in the <code>.flow</code> file (counting from 1), that this packet belongs to. It is used, rather
+than directly the 32-bit flow id, for a more compact and cache line-friendly representation.</p>
+<p>Instead of recording the variable-length raw headers of the packet directly in the raw mode General Packet Entry, we record them in an indirect way:</p>
+<p>The raw headers are continuously written into the <code>.raw</code> file, and the length of the headers of a certain packet can be located in the <code>.raw</code> file by the byte range <code>[start, start + length)</code>. Both the <code>start</code> and <code>length</code> are recorded in the <code>.rtl</code> file in the following way:</p>
+<p>The <code>start</code> is recorded as <code>CP.offset</code> + <code>RGP.relative_offset</code>. Here, <code>CP.offset</code> is the value of that field in the Chunk Prologue of the current chunk,
+and <code>RGP.relative_offset</code> is the value of that field in the current raw General Packet Entry.
+Notably, <code>CP.offset</code> is a 64-bit unsigned integer and <code>RGP.relative_offset</code> is a 24-bit unsigned integer. This design prevents the overflow of the resulting <code>start</code> offset while maintaining a compact representation for the raw General Packet Entry.</p>
+<p>The <code>length</code> is recorded as <code>RGP.len</code> in the current raw General Packet Entry. The <code>length</code> is a 8-bit unsigned integer, which means that the maximum allowed length of the raw headers recorded by a raw General Packet Entry is 255 bytes.</p>
+<h4 id="flow-entry"><a class="header" href="#flow-entry">Flow Entry</a></h4>
+<p>A flow entry is a log entry with <code>LH.ty.</code> = 2, which records basic descriptive info for a flow.</p>
+<p>A "flow" is unidirectional in Rattan Packet Log.
+For example, a single connection between a TCP client and TCP server is considered as 2 flows.</p>
+<p>Currently there are only one type of flows supported, the TCP/IPv4 flow, and the Flow entries for those flows, stored continuously in the <code>.flow</code> file, have a specification as follows:</p>
+<pre><code class="language-text"> 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       LH.length       | LH.ty.|       FLH.length      |FLH.ty.|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                             FLE.id                            |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                             src.ip                            |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                             dst.ip                            |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|            src.port           |            dst.port           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                       FLE.base_timestamp                      +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                            Reserved                           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                                                               +
+|                                                               |
++                                                               +
+|                                                               |
++                                                               +
+|                                                               |
++                                                               +
+|                                                               |
++                      FLE.tcp_syn_options                      +
+|                                                               |
++                                                               +
+|                                                               |
++                                                               +
+|                                                               |
++                                                               +
+|                                                               |
++                                                               +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<pre><code class="language-bash">protocol "LH.length:12,LH.ty.:4,FLH.length:12,FLH.ty.:4,FLE.id:32,src.ip:32,dst.ip:32,src.port:16,dst.port:16,FLE.base_timestamp:64,Reserved:32,FLE.tcp_syn_options:320"
+</code></pre>
+<p>Where <code>FLH</code> is short for Flow Entry Header, and <code>FLE</code> is short for Flow Entry.
+The meaning of each field is as follows:</p>
+<ul>
+<li><code>FLH.length</code> is the length for the whole flow entry.</li>
+<li><code>FLH.ty.</code> must be 0, denoting a TCP/IPv4 flow.</li>
+<li><code>FLE.id</code>: The identifier of the flow. The high 16 bits are the interface ID where the packet enters Rattan, and the low 16 bits are the incremental flow counter.</li>
+<li><code>FLE.base_timestamp</code>: The base timestamp in nanoseconds (this unit is different from the <code>GP.timestamp</code> field) for this flow.</li>
+<li><code>src.ip</code>, <code>dst.ip</code>, <code>src.port</code>, <code>dst.port</code>: The source IPv4 address, destination IPv4 address, source TCP port number, destination TCP port number.</li>
+<li><code>FLE.tcp_syn_options</code>: As flows are unidirectional here, only one valid SYN (TCP client side) or SYN_ACK (TCP server side) packet would exist in a TCP connection. The TCP options fields in such packets are recorded in raw here. This field has a fixed length of 40 bytes, and zero-padding at the end if the tcp options are less than 40 bytes. 40 bytes are the upper limit in TCP protocol: a TCP header can be at most 15
+* 4 = 60 bytes in length, and the first 20 bytes are used for fixed fields in the TCP header.</li>
 </ul>
 
                     </main>
