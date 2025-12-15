@@ -1,8 +1,10 @@
+use std::{fmt::Debug, sync::Arc};
+
 use async_trait::async_trait;
 use etherparse::{Ethernet2Header, Ipv4Header};
+use rattan_log::FlowDesc;
 #[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, net::Ipv4Addr, sync::Arc};
+use serde::Deserialize;
 use tokio::time::Instant;
 
 use crate::error::Error;
@@ -16,12 +18,6 @@ pub mod router;
 pub mod shadow;
 pub mod spy;
 pub mod token_bucket;
-
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub enum FlowDesc {
-    TCP(Ipv4Addr, Ipv4Addr, u16, u16),
-}
 
 pub trait Packet: Debug + 'static + Send {
     type PacketGenerator;
@@ -225,11 +221,15 @@ impl Packet for StdPacket {
                                         .get(ether_hdr.slice().len() + ip_hdr.slice().len()..)
                                         .unwrap_or(&[]),
                                 ) {
+                                    // Record all the options, only if SYN bit
+                                    // is set (SYN/ SYN_ACK) packet.
+                                    let options = tcp_hdr.syn().then(|| tcp_hdr.options().to_vec());
                                     Some(FlowDesc::TCP(
                                         ip_hdr.source_addr(),
                                         ip_hdr.destination_addr(),
                                         tcp_hdr.source_port(),
                                         tcp_hdr.destination_port(),
+                                        options,
                                     ))
                                 } else {
                                     None
