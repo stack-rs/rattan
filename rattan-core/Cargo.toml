@@ -2,20 +2,34 @@
 name = "rattan-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 homepage.workspace = true
 repository.workspace = true
-rust-version.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[example]]
+name = "channel-xdp"
+required-features = ["camellia"]
+
+[[bench]]
+harness = false
+name = "bandwidth"
+
+[[bench]]
+harness = false
+name = "cells"
 
 [dependencies]
 async-trait = "0.1.68"
 axum = { version = "0.8.1", optional = true }
 backon = "1.2.0"
 bandwidth = "0.3.0"
-bitfield = "0.19.0"
+bitfield = { workspace = true }
 bytesize = "2.0.1"
 camellia = { git = "https://github.com/minhuw/camellia.git", optional = true }
+clap = { workspace = true }
+csv = { workspace = true }
 dyn-clone = "1.0"
 etherparse = "0.18.0"
 figment = { workspace = true }
@@ -27,22 +41,23 @@ lazy_static = "1.4.0"
 libc = "0.2.141"
 netem-trace = { workspace = true }
 nix = { workspace = true }
+num_enum = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = "0.12.1"
-pcap-file = { version = "2.0.0" }
-plain = "0.2.3"
+pcap-file = { workspace = true }
 rand = { workspace = true }
 rand_distr = "0.5"
+rattan-log = { path = "../rattan-log" }
 regex = "1.7.3"
 rtnetlink = "0.17.0"
 serde = { workspace = true, optional = true }
 serde_json = { version = "1.0.96", optional = true }
 serde_with = "3"
+tempfile = "3.10.1"
 thiserror = "2.0.0"
 tokio = { workspace = true }
 tokio-util = "0.7.7"
 tracing = { workspace = true }
-tempfile = "3.10.1"
 uuid = { version = "1.10.0", features = ["v4"] }
 
 [dev-dependencies]
@@ -50,36 +65,29 @@ anyhow = "1.0.69"
 clap = { version = "4.5.4", features = ["derive"] }
 criterion = { version = "0.7.0", features = ["async_tokio"] }
 ctrlc = { workspace = true }
+hex = "0.4.3"
 insta = { version = "1.39.0", features = ["json"] }
 itertools = "0.14.0"
 netns-rs = "0.1.0"
 pnet = "0.35"
 regex = "1.7.3"
 reqwest = { version = "0.12.9", default-features = false, features = [
-  "json",
   "blocking",
+  "json",
 ] }
-test-log = { version = "0.2.12", default-features = false, features = [
-  "trace",
-] }
+test-log = { workspace = true }
 tracing-subscriber = { workspace = true }
-
-[[bench]]
-name = "bandwidth"
-harness = false
-
-[[bench]]
-name = "cells"
-harness = false
 
 [features]
 default = []
-first-packet = []
-http = ["serde", "dep:axum"]
-packet-dump = []
-serde = ["dep:serde", "dep:serde_json", "bandwidth/serde", "bytesize/serde", "rand_distr/serde"]
 camellia = ["dep:camellia"]
-
-[[example]]
-name = "channel-xdp"
-required-features = ["camellia"]
+first-packet = []
+http = ["dep:axum", "serde"]
+packet-dump = []
+serde = [
+  "bandwidth/serde",
+  "bytesize/serde",
+  "dep:serde",
+  "dep:serde_json",
+  "rand_distr/serde"
+]
