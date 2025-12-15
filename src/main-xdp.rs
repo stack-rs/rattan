@@ -1,8 +1,10 @@
 use std::{
     borrow::Cow,
+    fs::File,
     path::PathBuf,
     process::{ExitCode, Stdio, Termination},
     sync::{atomic::AtomicBool, Arc},
+    time::Duration,
 };
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -13,20 +15,26 @@ use figment::{
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
-
 use rattan_core::env::StdNetEnvMode;
 use rattan_core::metal::io::af_xdp::{XDPDriver, XDPPacket};
+use rattan_core::radix::PacketLogMode;
 use rattan_core::radix::RattanRadix;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
+use rattan_log::convert_log_to_pcapng;
 use serde::{Deserialize, Serialize};
+use shadow_rs::shadow;
 use tracing::warn;
 use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::build::CLAP_LONG_VERSION;
-use shadow_rs::shadow;
+use crate::{
+    build::CLAP_LONG_VERSION,
+    visualize_trace::{write_visualize_trace, OutputMode},
+};
 
 mod channel;
+mod visualize_trace;
+// mod log_converter;
 #[cfg(feature = "nat")]
 mod nat;
 // mod docker;
@@ -37,6 +45,11 @@ shadow!(build);
 
 static LEFT_PID: OnceCell<i32> = OnceCell::new();
 static RIGHT_PID: OnceCell<i32> = OnceCell::new();
+
+fn parse_duration(delay: &str) -> Result<Duration, jiff::Error> {
+    let span: jiff::Span = delay.parse()?;
+    Duration::try_from(span)
+}
 
 #[derive(Debug, Parser, Clone)]
 #[command(rename_all = "kebab-case")]
@@ -56,6 +69,36 @@ pub struct Arguments {
     /// If this flag is set, the program will only generate the config to stdout and exit.
     #[arg(long, global = true)]
     generate: bool,
+
+    /// Generate visualized trace until `visualize_trace` since the trace starts
+    /// If this is set, the program will only generate the csv to stdout and exit.
+    /// Two output modes are supported:  CSV for human and Parquet for scripts.
+    #[arg(
+        long,
+        global = true,
+        value_parser = parse_duration,
+        value_name = "End Time"
+    )]
+    visualize_trace: Option<Duration>,
+
+    /// Start time of visualize_trace, 0s as default.
+    #[arg(long, requires = "visualize_trace", global = true, value_name = "Start Time", value_parser = parse_duration)]
+    visualize_trace_start: Option<Duration>,
+
+    /// Path to output the visualized trace. If not set, output to stdout.
+    /// The extension name would be changed automatically according to `visualize_trace_mode`
+    #[arg(long, requires = "visualize_trace", global = true, value_name = "File")]
+    visualize_trace_output: Option<PathBuf>,
+
+    /// Mode to output the visualied_trace.
+    #[arg(
+        long,
+        requires = "visualize_trace",
+        global = true,
+        value_name = "Mode",
+        default_value = "human-json"
+    )]
+    visualize_trace_mode: OutputMode,
 
     /// Used in isolated mode only. If set, stdout of left is passed to output of this program.
     #[arg(long, global = true)]
@@ -90,6 +133,16 @@ pub struct Arguments {
     #[arg(long, value_name = "File", global = true)]
     packet_log: Option<PathBuf>,
 
+    /// If this flag is set, raw packet header would be recorded for packet_log.
+    #[arg(
+        long,
+        requires = "packet_log",
+        value_name = "Mode",
+        global = true,
+        default_value = "compact-tcp"
+    )]
+    packet_log_mode: PacketLogMode,
+
     /// Enable logging to file
     #[arg(long, global = true)]
     file_log: bool,
@@ -120,12 +173,24 @@ pub struct DisplayTaskCommands {
     pub commands: TaskCommands,
 }
 
+/// Convert Rattan Packet Log file to pcapng file for each side
+#[derive(Args, Debug, Default, Clone)]
+#[command(rename_all = "kebab-case")]
+pub struct ConvertLogArgs {
+    /// Input Rattan Packet Log file path
+    pub input: PathBuf,
+    /// Output pcapng file name prefix. take the input as default value
+    pub output: Option<PathBuf>,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 enum CliCommand {
     /// Run a templated channel with command line arguments using AF_XDP driver.
     Link(channel::ChannelArgs),
     /// Run the instance according to the config with AF_XDP driver.
     Run(RunArgs),
+    /// Convert Rattan packet log into .pcapng file.
+    Convert(ConvertLogArgs),
 }
 
 #[derive(Args, Debug, Default, Clone)]
@@ -309,6 +374,10 @@ fn main() -> ExitCode {
                 let config = args.build_rattan_config::<XDPPacket>()?;
                 (config, commands)
             }
+            CliCommand::Convert(args) => {
+                convert_log_to_pcapng(args.input, args.output)?;
+                return Ok(());
+            }
         };
 
         // Overwrite config with CLI options
@@ -322,7 +391,9 @@ fn main() -> ExitCode {
         }
         if let Some(packet_log) = opts.packet_log {
             config.general.packet_log = Some(packet_log);
+            config.general.packet_log_mode = opts.packet_log_mode.into();
         }
+
         tracing::debug!(?config);
 
         // Generate config
@@ -341,6 +412,29 @@ fn main() -> ExitCode {
                 println!("{toml_string}");
             }
             return Ok(());
+        }
+
+        if let Some(visualize_trace_length) = opts.visualize_trace {
+            let mode = opts.visualize_trace_mode;
+            if let Some(mut output_path) = opts.visualize_trace_output {
+                output_path.set_extension(mode.get_extension_name());
+
+                return write_visualize_trace(
+                    mode,
+                    File::create(output_path)?,
+                    config.cells,
+                    opts.visualize_trace_start,
+                    visualize_trace_length,
+                );
+            } else {
+                return write_visualize_trace(
+                    mode,
+                    std::io::stdout(),
+                    config.cells,
+                    opts.visualize_trace_start,
+                    visualize_trace_length,
+                );
+            }
         }
 
         // Check if the config can correctly spawn
