@@ -38,6 +38,8 @@ pub enum Error {
     HttpServerError(#[from] HttpServerError),
     #[error("Pcap error: {0}")]
     PcapError(#[from] pcap_file::PcapError),
+    #[error("Visualize Trace error: {0}")]
+    VisualizeTraceError(#[from] VisualizeTraceError),
     #[error("Error: {0}")]
     Custom(String),
 }
@@ -153,6 +155,18 @@ pub enum HttpServerError {
     ServerError(std::io::Error),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum VisualizeTraceError {
+    #[error("Failed to write csv, {0}")]
+    CsvError(csv::Error),
+}
+
+impl From<csv::Error> for VisualizeTraceError {
+    fn from(value: csv::Error) -> Self {
+        Self::CsvError(value)
+    }
+}
+
 #[cfg(feature = "http")]
 impl axum::response::IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
@@ -179,6 +193,7 @@ impl axum::response::IntoResponse for Error {
             #[cfg(feature = "http")]
             Error::HttpServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::PcapError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::VisualizeTraceError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::Custom(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
@@ -206,6 +221,7 @@ impl Termination for Error {
             #[cfg(feature = "http")]
             Error::HttpServerError(_) => ExitCode::from(70),
             Error::PcapError(_) => ExitCode::from(74),
+            Error::VisualizeTraceError(_) => ExitCode::from(74),
             Error::Custom(_) => ExitCode::from(1),
         }
     }
