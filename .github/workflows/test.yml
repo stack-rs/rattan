@@ -40,10 +40,19 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update && sudo apt-get install -y iproute2 ethtool iputils-ping iperf3 datamash bc pkg-config m4 libelf-dev libpcap-dev gcc-multilib libnftnl-dev libmnl-dev -y
-      - name: Install LLVM
+      - name: Cache LLVM and Clang
+        id: cache-llvm
+        uses: maxnowack/local-cache@v2
+        with:
+          path: |
+            C:/Program Files/LLVM
+            ./llvm
+          key: llvm-${{ matrix.llvm }}
+      - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v2
         with:
           version: ${{ matrix.llvm }}
+          cached: ${{ steps.cache-llvm.outputs.cache-hit }}
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - run: cargo nextest run --profile ci -F http,camellia --release --workspace
