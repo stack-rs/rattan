@@ -1,3 +1,10 @@
+use std::time::Duration;
+use std::{
+    collections::VecDeque,
+    os::fd::{AsFd, AsRawFd},
+    sync::Arc,
+};
+
 use camellia::{
     socket::af_xdp::{XskSocket, XskSocketBuilder},
     umem::{
@@ -8,12 +15,6 @@ use camellia::{
 };
 use etherparse::{Ethernet2Header, Ipv4Header};
 use once_cell::sync::Lazy;
-use std::time::Duration;
-use std::{
-    collections::VecDeque,
-    os::fd::{AsFd, AsRawFd},
-    sync::Arc,
-};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Instant};
 use tracing::debug;

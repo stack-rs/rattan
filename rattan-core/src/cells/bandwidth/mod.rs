@@ -1,25 +1,27 @@
-use super::{
-    AtomicCellState, Cell, CellState, CurrentConfig, Packet, LARGE_DURATION, TRACE_START_INSTANT,
-};
-use crate::error::Error;
-use crate::metal::timer::Timer;
+use std::fmt::Debug;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use netem_trace::{model::BwTraceConfig, Bandwidth, BwTrace, Delay};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tracing::{debug, info, trace};
 
-use super::{ControlInterface, Egress, Ingress};
+use super::{
+    AtomicCellState, Cell, CellState, ControlInterface, CurrentConfig, Egress, Ingress, Packet,
+    LARGE_DURATION, TRACE_START_INSTANT,
+};
+use crate::error::Error;
+use crate::metal::timer::Timer;
 
 pub mod queue;
 
 use queue::PacketQueue;
 
 pub const MAX_BANDWIDTH: Bandwidth = Bandwidth::from_bps(u64::MAX);
+
 // Length should be the network layer length, not the link layer length
 // Requires the bandwidth to be less than 2^64 bps
 fn transfer_time(length: usize, bandwidth: Bandwidth, bw_type: BwType) -> Delay {

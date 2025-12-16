@@ -12,13 +12,12 @@ use tokio::time::Instant;
 use tracing::{debug, info};
 
 use super::TRACE_START_INSTANT;
+use super::{ControlInterface, Egress, Ingress};
 use crate::cells::config_timestamp::CurrentConfig;
 use crate::cells::{AtomicCellState, Cell, CellState, Packet};
 use crate::error::Error;
 use crate::metal::timer::Timer;
 use crate::utils::sync::AtomicRawCell;
-
-use super::{ControlInterface, Egress, Ingress};
 
 pub struct LossCellIngress<P>
 where

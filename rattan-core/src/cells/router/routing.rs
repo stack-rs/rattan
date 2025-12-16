@@ -1,9 +1,11 @@
-use crate::error::RoutingTableError;
+use std::fmt::{Debug, Formatter};
+use std::net::IpAddr;
+
 use ipnet::IpNet;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::fmt::{Debug, Formatter};
-use std::net::IpAddr;
+
+use crate::error::RoutingTableError;
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
