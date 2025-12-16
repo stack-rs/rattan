@@ -267,6 +267,13 @@ impl Packet for XDPPacket {
         todo!()
     }
 
+    // For test code only.
+    #[cfg(any(test, doc))]
+    fn with_timestamp(_buf: &[u8], _timestamp: Instant) -> Self {
+        // Not implemented since from_raw_buffer is not implemented.
+        todo!()
+    }
+
     fn length(&self) -> usize {
         self.buf.len()
     }
