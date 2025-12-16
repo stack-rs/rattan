@@ -314,14 +314,13 @@ impl Packet for StdPacket {
 }
 
 /// A wrapper around a packet structure to analyse a cell's behaviour.
-/// 
+///
 /// It stores the packet's creation timestamp, allowing us to inspect how long the packet
 /// has been created, in terms of logical timestamp.
-/// This exists only for test code. Especially for the test of cells
-/// that may impose a delay on a packet (e.g. DelayCell, BwCell). After a packet leaves
-/// such a cell, we check both wall-clock time and logical timestamp to determine
-/// how long the packet was delayed in the cell
-///
+/// This exists only for test code. Especially for the test of cells that may impose
+/// a delay on a packet (e.g. DelayCell, BwCell). After a packet leaves such a cell,
+/// we check both wall-clock time and logical timestamp to determine how long the packet
+/// was delayed in the cell.
 #[cfg(any(test, doc))]
 #[derive(Clone, Debug, derive_more::Deref, derive_more::DerefMut)]
 pub struct TestPacket<P> {
