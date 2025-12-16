@@ -18,8 +18,6 @@ impl<C: Debug> CurrentConfig<C> {
         self.last = None;
     }
 
-    /// The value should be current_value during the period [valid_since, valid_duration)
-    /// And it is expected to be next_value(if some) after valid_duration.
     pub fn update(&mut self, current_value: C, valid_since: Instant) {
         #[cfg(test)]
         tracing::debug!(
@@ -36,8 +34,8 @@ impl<C: Debug> CurrentConfig<C> {
         self.last.as_ref()
     }
 
-    /// Get the config value for given timestamp.
-    /// It is expected that the timestamp passed into this function is non-decending.
+    /// Get the config value for a given timestamp.
+    /// It is expected that the timestamp passed into this function is non-decreasing.
     ///
     /// According to the given timestamp,
     ///
@@ -51,10 +49,9 @@ impl<C: Debug> CurrentConfig<C> {
     /// 2)  If `current` value is in its validity period,
     ///     Use the current value
     ///
-    ///
-    /// As long as `self.update` as been called at least once since last `self.reset`,
+    /// As long as `self.update` has been called at least once since the last `self.reset`,
     /// it is impossible for `self.current` and `self.last` to be `None`.
-    /// So if this function ever returned a `None`, it should be unwrapped with
+    /// So if this function ever returns `None`, the caller should unwrap it with
     /// some default value.
     pub fn get_current(&self, timestamp: Instant) -> Option<&C> {
         #[cfg(test)]

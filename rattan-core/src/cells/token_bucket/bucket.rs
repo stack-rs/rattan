@@ -32,7 +32,7 @@ impl<'a> Token<'a> {
     }
 }
 
-/// Token bucket driven by a logicol clock.
+/// Token bucket driven by a logical clock.
 impl TokenBucket {
     pub fn new(burst_size: ByteSize, token_rate: Bandwidth, timestamp: Instant) -> Self {
         Self {
@@ -76,7 +76,7 @@ impl TokenBucket {
     }
 
     // Allows maintaining the tokens (in Bytes) in bucket during a config change.
-    // Not the behavior of current token_bucket
+    // Not used in current token_bucket implementation.
     #[allow(unused)]
     pub fn change_config(
         &mut self,
@@ -107,7 +107,7 @@ mod test {
         size: ByteSize,
     ) -> Option<ByteSize> {
         if let (Some(token_a), Some(token_b)) = (bucket_a.reserve(size), bucket_b.reserve(size)) {
-            // Rust's borrow checker prevents any modification to token_bucket before the token is droped or consumed.
+            // Rust's borrow checker prevents any modification to the token bucket before the token is dropped or consumed.
             token_a.consume();
             token_b.consume();
             // Send packet here
@@ -193,7 +193,7 @@ mod test {
         send_time.consume();
 
         let time = start + Duration::from_millis(8);
-        // It takes 8ms to generrate one more 1kB, totaling 6kB.
+        // It takes 8 ms to generate one more 1 kB, totaling 6 kB.
         assert_eq!(token_bucket.next_available(ByteSize::kb(6)), time);
         assert!(token_bucket.reserve(ByteSize::kb(6)).is_none());
 
@@ -218,7 +218,7 @@ mod test {
             time + Duration::from_millis(160)
         );
 
-        // As the token bucket's capacity is changed to 4 kB, we have an token bucket at `time` fully filled.
+        // After the capacity is changed to 4 kB, the token bucket is fully filled at time.
         token_bucket.change_config(ByteSize::kb(4), Bandwidth::from_kbps(1000), time);
         assert_eq!(
             token_bucket.next_available(ByteSize::kb(4)),

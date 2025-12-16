@@ -250,7 +250,7 @@ where
         if self.next_change(now).is_none() {
             tracing::warn!("Setting null trace");
             self.next_change = now;
-            // set state to Drop to indicate the trace goes to end and the cell will drop all packets
+            // Set state to Drop to indicate the trace has ended and the cell will drop all packets.
             self.change_state(CellState::Drop);
         }
     }

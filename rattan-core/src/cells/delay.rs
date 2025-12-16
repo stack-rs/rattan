@@ -241,7 +241,7 @@ where
         if let Some((current_delay, duration)) = self.trace.next_delay() {
             #[cfg(test)]
             debug!(
-                "Setting {:?} delay valid from {:?} till {:?}",
+                "Setting {:?} delay valid from {:?} utill {:?}",
                 current_delay,
                 relative_time(timestamp),
                 relative_time(timestamp + duration),
@@ -292,7 +292,7 @@ where
 
         let timestamp = packet.get_timestamp();
 
-        // make sure change_time > timestamp, so that the config is appliable for the packet given the timestamp
+        // make sure change_time > timestamp, so that the config is applicable for the packet given the timestamp
         while self.next_change <= timestamp {
             self.update_delay(self.next_change);
         }
@@ -581,8 +581,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(15));
         config_changer.set_config(DelayCellConfig::new(Duration::from_millis(10)))?;
 
-        // The expected behavior is that, the packet exits the cell almost immediately
-        // after the config change.
+        // The expected behaviour is that the packet exits the cell almost immediately.
         let received = rt.block_on(async { egress.dequeue().await });
 
         let duration = start.elapsed().as_micros() as f64 / 1000.0;

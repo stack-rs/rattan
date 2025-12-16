@@ -32,9 +32,9 @@ where
 
     fn is_empty(&self) -> bool;
 
-    // How this queue measures the size of a packet. I
+    // How this queue measures the size of a packet.
     // Should return 0 if it measures the size of a packet based on its L3 size.
-    // Should return 14 if it measures that based on its L2 size. (L3 size + 14B L2 Head)
+    // Should return 14 if it measures that based on its L2 size (L3 length + 14 bytes L2 header).
     fn get_extra_length(&self) -> usize {
         0
     }

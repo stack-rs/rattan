@@ -51,7 +51,8 @@ pub trait Packet: Debug + 'static + Send {
     // Timestamp
     /// Returns the timestamp at which this packet should have reached the cell
     ///
-    /// This is initially set by rattan and need to be updated when leaving the cell with [`delay_until`](Self::delay_until) and [`delay_by`](Self::delay_by)
+    /// This is initially set by rattan and needs to be updated when the packet leaves the cell by calling
+    /// `delay_until` or `delay_by`.
     fn get_timestamp(&self) -> Instant;
     /// Sets the timestamp of the packet
     #[deprecated(
@@ -64,14 +65,14 @@ pub trait Packet: Debug + 'static + Send {
 
     /// Sets the duration the packet should have been delayed by the cell
     ///
-    /// Like [`delay_until`](Self::delay_until) this should be the theoretical duration spent in the cell.
-    /// This help to avoid over-delaying packets du to sleep timeshift.
+    /// Like delay_until this should be the theoretical duration spent in the cell.
+    /// This help to avoid over-delaying packets due to sleep time shift.
     fn delay_by(&mut self, delay: Duration);
 
-    /// Sets the timestamp at which the packet should have left the cell, if it delayed it
+    /// Sets the timestamp at which the packet should have left the cell, if the packet was delayed.
     ///
-    /// Like [`delay_by`](Self::delay_by) this should be the theoretical duration spent in the cell.
-    /// This help to avoid over-delaying packets du to sleep timeshift.
+    /// Like `delay_by`this should be the theoretical duration spent in the cell.
+    /// This helps to avoid over-delaying packets due to sleep time shift.
     fn delay_until(&mut self, timestamp: Instant);
 
     // Creates a new packet from its content and the timestamp at which it arrived.
@@ -312,14 +313,14 @@ impl Packet for StdPacket {
     }
 }
 
-/// A wrapper around a packet structure to analyse a cell behaviour.
-///
-/// It maintains a timestamp that the packet was created, allowing us to inspect how
-/// long the packet has been created, in terms of logical timestamp.
-/// This is useful (and compiled) for test code only. Especially for the test of cells
+/// A wrapper around a packet structure to analyse a cell's behaviour.
+/// 
+/// It stores the packet's creation timestamp, allowing us to inspect how long the packet
+/// has been created, in terms of logical timestamp.
+/// This exists only for test code. Especially for the test of cells
 /// that may impose a delay on a packet (e.g. DelayCell, BwCell). After a packet leaves
-/// such a cell, we check both physically (in terms of wall clock time) and logically
-/// (in terms of logically timestamp) how long the packet has been delayed in the cell.
+/// such a cell, we check both wall-clock time and logical timestamp to determine
+/// how long the packet was delayed in the cell
 ///
 #[cfg(any(test, doc))]
 #[derive(Clone, Debug, derive_more::Deref, derive_more::DerefMut)]
@@ -414,7 +415,7 @@ impl<P: Packet> Packet for TestPacket<P> {
     }
 }
 
-/// How long has this packet been created, in terms of logical timestamp.
+/// How long ago this packet was created, in terms of logical timestamp.
 #[cfg(any(test, doc))]
 impl<P: Packet> TestPacket<P> {
     pub fn delay(&self) -> Duration {
@@ -564,10 +565,10 @@ impl AtomicCellState {
 }
 
 // Check cell state, and:
-// Automately handle Drop and Passthrough.
+// Automatically handle Drop and Passthrough.
 // Packet is returned, on normal conditions.
 //
-// This is the behaviour for most (excpet ShadowCell) cells.
+// This is the behaviour for most (except ShadowCell) cells.
 #[macro_export]
 macro_rules! check_cell_state {
     ($state:expr, $packet:expr) => {
