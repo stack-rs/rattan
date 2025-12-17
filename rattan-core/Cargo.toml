@@ -76,6 +76,7 @@ reqwest = { version = "0.12.9", default-features = false, features = [
   "blocking",
   "json",
 ] }
+serial_test = "3.2.0"
 test-log = { workspace = true }
 tracing-subscriber = { workspace = true }
 

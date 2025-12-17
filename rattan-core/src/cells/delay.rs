@@ -77,6 +77,10 @@ where
         // Wait for Start notify if not started yet
         crate::wait_until_started!(self, Start);
 
+        if let Ok(config) = self.config_rx.try_recv() {
+            self.set_config(config);
+        }
+
         let packet = match self.egress.recv().await {
             Some(packet) => packet,
             None => return None,
@@ -102,11 +106,12 @@ where
                     self.set_config(config);
                 }
                 _ = self.timer.sleep_until(logical_send_time) => {
-                    self.latest_egress_timestamp = logical_send_time;
                     break logical_send_time;
                 }
             }
         };
+
+        self.latest_egress_timestamp = send_time;
 
         packet.delay_until(send_time);
         Some(packet)
@@ -336,10 +341,11 @@ where
                 }
             }
             _ = self.send_timer.sleep(sleep_time) => {
-                self.latest_egress_timestamp = logical_send_time;
                 break logical_send_time;
             }}
         };
+
+        self.latest_egress_timestamp = send_time;
 
         packet.delay_until(send_time);
         Some(packet)
