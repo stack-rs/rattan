@@ -90,6 +90,12 @@ where
         let send_time = loop {
             let logical_send_time = (timestamp + self.delay).max(self.latest_egress_timestamp);
 
+            let sleep_time = logical_send_time.duration_since(Instant::now());
+
+            if sleep_time.is_zero() {
+                break logical_send_time;
+            }
+
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
@@ -307,6 +313,12 @@ where
                 timestamp.max(self.latest_egress_timestamp)
             };
 
+            let sleep_time = logical_send_time.duration_since(Instant::now());
+
+            if sleep_time.is_zero() {
+                break logical_send_time;
+            }
+
             tokio::select! {
             biased;
             Some(config) = self.config_rx.recv() => {
@@ -323,9 +335,9 @@ where
                     }
                 }
             }
-            send_time = self.send_timer.sleep_until(logical_send_time) => {
+            _ = self.send_timer.sleep(sleep_time) => {
                 self.latest_egress_timestamp = logical_send_time;
-                break send_time.ok()?;
+                break logical_send_time;
             }}
         };
 
