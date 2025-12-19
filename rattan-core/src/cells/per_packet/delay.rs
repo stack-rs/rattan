@@ -36,8 +36,7 @@ impl<P> Ingress<P> for DelayPerPacketCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.delay_until(Instant::now());
+    fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -130,8 +129,11 @@ where
         }
 
         // send the packet
-        let (instant, packet) = packet.expect("We cannot exit the previous loop if packet is None");
+        let (instant, mut packet) =
+            packet.expect("We cannot exit the previous loop if packet is None");
         if instant <= Instant::now() {
+            // Update logical timestamp for packet to when it should be sent out.
+            packet.delay_until(instant);
             Some(packet)
         } else {
             // We shouldn't have dequeue the packet, it is not ready to be sent yet.
