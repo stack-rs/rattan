@@ -222,7 +222,8 @@ queue_config = { packet_limit = 60 }
 
 For detailed parameters, you can check the [documentation of `rattan-core`](https://docs.rs/rattan-core/latest/rattan-core) or the example config file [config.example.toml](https://github.com/stack-rs/rattan/blob/main/config.example.toml).
 
-We should state that we sync the start time of all these cell types to the earliest timestamp. The earliest timestamp is conditionally defined. It is the `FIRST_PACKET` time by default, but can be switched to the RATTAN start-up time.
+To make the result more duplicable, Rattan synchronize the start time of all cell types that are time-dependent, including `DelayReplay`, `BwReplay`, and `LossReplay`, for them to replay traces at the same time base.
+The start time is conditionally defined. By default, we use the `FIRST_PACKET` time as the start time. But users can also choose to use the Rattan start-up time as the start time.
 
 The `FIRST_PACKET` is defined as the first L2 unicast packet to enter Rattan. An L2 unicast packet has a **destination** MAC address with the 8th bit (the Individual/Group bit) set to `0`.
 
