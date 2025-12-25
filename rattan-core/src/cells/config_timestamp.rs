@@ -46,7 +46,7 @@ impl<C: Debug> CurrentConfig<C> {
     ///     a) Try to use the `last`
     ///     b) Use the `current` value
     ///
-    /// 2)  If `current` value is in its validity period,
+    /// 2)  If `current` value is in its valid period,
     ///     Use the current value
     ///
     /// As long as `self.update` has been called at least once since the last `self.reset`,

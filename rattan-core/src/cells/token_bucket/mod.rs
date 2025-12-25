@@ -127,7 +127,7 @@ where
         }
     }
 
-    // Returns None only if both token_buckets is None
+    // Returns None only if both token_buckets are None
     fn next_token_ready(&self, size: ByteSize) -> Option<Instant> {
         self.token_bucket
             .iter()
@@ -172,7 +172,7 @@ where
                     .map(|t| t.reserve(current_size)),
             ) {
                 (Some(None), _) | (_, Some(None)) => {
-                    // We have packets waiting to be send, yet at least one token bucket is not ready
+                    // We have packets waiting to be sent, yet at least one token bucket is not ready
                     debug!(
                         "Insufficient token at {:?}",
                         debug_relative_time(self.logical_clock)
@@ -256,7 +256,7 @@ where
 
                     let recv_packet = crate::check_cell_state!(self.state, recv_packet);
 
-                    // drop packet if is too large to pass through a full token bucket
+                    // drop packet if it is too large to pass through a full token bucket
                     let packet_size = self.packet_queue.get_packet_size(&recv_packet);
                     if packet_size > (self.max_size.0 as usize) {
                         continue;

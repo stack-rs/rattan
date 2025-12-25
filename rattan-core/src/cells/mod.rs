@@ -69,7 +69,7 @@ pub trait Packet: Debug + 'static + Send {
     /// This help to avoid over-delaying packets due to sleep time shift.
     fn delay_by(&mut self, delay: Duration);
 
-    /// Sets the timestamp at which the packet should have left the cell, if the packet was delayed.
+    /// Sets the timestamp at which the packet should have left the cell, if the packet is delayed.
     ///
     /// Like `delay_by`this should be the theoretical duration spent in the cell.
     /// This helps to avoid over-delaying packets due to sleep time shift.
@@ -317,10 +317,11 @@ impl Packet for StdPacket {
 ///
 /// It stores the packet's creation timestamp, allowing us to inspect how long the packet
 /// has been created, in terms of logical timestamp.
+///
 /// This exists only for test code. Especially for the test of cells that may impose
 /// a delay on a packet (e.g. DelayCell, BwCell). After a packet leaves such a cell,
 /// we check both wall-clock time and logical timestamp to determine how long the packet
-/// was delayed in the cell.
+/// has been delayed in the cell.
 #[cfg(any(test, doc))]
 #[derive(Clone, Debug, derive_more::Deref, derive_more::DerefMut)]
 pub struct TestPacket<P> {
@@ -579,7 +580,7 @@ macro_rules! check_cell_state {
     };
 }
 
-// For test code only. Converts an Instant (machine time) to a relative time since the
+// For test code only. Convert an Instant (machine time) to a relative time since the
 // logical start point of trace start. This makes the test output more human-readable.
 #[cfg(test)]
 pub fn relative_time(time: Instant) -> Duration {
