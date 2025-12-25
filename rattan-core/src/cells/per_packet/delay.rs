@@ -1,4 +1,4 @@
-use std::sync::{atomic::AtomicI32, Arc};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use netem_trace::{model::DelayPerPacketTraceConfig, DelayPerPacketTrace};
@@ -9,7 +9,7 @@ use tracing::debug;
 
 use crate::cells::per_packet::DelayedQueue;
 use crate::{
-    cells::{Cell, ControlInterface, Egress, Ingress, Packet},
+    cells::{AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, Packet},
     error::Error,
     metal::timer::Timer,
 };
@@ -36,8 +36,7 @@ impl<P> Ingress<P> for DelayPerPacketCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.set_timestamp(Instant::now());
+    fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -54,7 +53,7 @@ where
     packet_queue: DelayedQueue<P>,
     config_rx: mpsc::UnboundedReceiver<DelayPerPacketCellConfig>,
     timer: Timer,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
 }
@@ -87,18 +86,9 @@ where
                 recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                                0 => {
-                                    return None;
-                                }
-                                1 => {
-                                    return Some(new_packet);
-                                }
-                                _ => {
-                                    let Some(delay) = self.delay.next_delay() else { continue };
-                                    self.packet_queue.enqueue(new_packet, delay);
-                                }
-                            }
+                            let new_packet = crate::check_cell_state!(self.state, new_packet);
+                            let Some(delay) = self.delay.next_delay() else { continue };
+                            self.packet_queue.enqueue(new_packet, delay);
                         }
                         None => {
                             // channel closed
@@ -123,19 +113,11 @@ where
                 recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
-                            match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                                0 => {
-                                    return None;
-                                }
-                                1 => {
-                                    return Some(new_packet);
-                                }
-                                _ => {
-                                    let Some(delay) = self.delay.next_delay() else { continue };
-                                    self.packet_queue.enqueue(new_packet, delay);
-                                    packet = self.packet_queue.dequeue();
-                                }
-                            }
+                            let new_packet = crate::check_cell_state!(self.state, new_packet);
+                            let Some(delay) = self.delay.next_delay() else { continue };
+                            self.packet_queue.enqueue(new_packet, delay);
+                            packet = self.packet_queue.dequeue();
+
                         }
                         None => {
                             // channel closed
@@ -147,8 +129,11 @@ where
         }
 
         // send the packet
-        let (instant, packet) = packet.expect("We cannot exit the previous loop if packet is None");
+        let (instant, mut packet) =
+            packet.expect("We cannot exit the previous loop if packet is None");
         if instant <= Instant::now() {
+            // Update logical timestamp for packet to when it should be sent out.
+            packet.delay_until(instant);
             Some(packet)
         } else {
             // We shouldn't have dequeue the packet, it is not ready to be sent yet.
@@ -157,7 +142,7 @@ where
         }
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -252,7 +237,7 @@ where
                 packet_queue: DelayedQueue::new(),
                 config_rx,
                 timer: Timer::new()?,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
             },
@@ -280,7 +265,7 @@ impl<Config: DelayPerPacketTraceConfig + 'static> From<Config> for DelayPerPacke
 #[cfg(test)]
 mod tests {
     use netem_trace::{model::StaticDelayPerPacketConfig, Delay};
-    use std::time::{Duration, Instant};
+    use tokio::time::{Duration, Instant};
     use tracing::{info, span, Level};
 
     use crate::cells::StdPacket;
@@ -311,7 +296,7 @@ mod tests {
             let ingress = cell.sender();
             let mut egress = cell.into_receiver();
             egress.reset();
-            egress.change_state(2);
+            egress.change_state(CellState::Normal);
 
             info!("Testing delay time for {}ms delay cell", testing_delay);
             let mut delays: Vec<f64> = Vec::new();
@@ -349,7 +334,7 @@ mod tests {
                 (average_delay - testing_delay as f64).abs()
             );
             // Check the delay time
-            assert!((average_delay - testing_delay as f64) <= DELAY_ACCURACY_TOLERANCE);
+            assert!((average_delay - testing_delay as f64).abs() <= DELAY_ACCURACY_TOLERANCE);
         }
 
         Ok(())
@@ -374,7 +359,7 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         //Test whether the packet will wait longer if the config is updated
         let test_packet = StdPacket::from_raw_buffer(&[0; 256]);

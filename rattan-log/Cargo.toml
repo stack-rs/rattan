@@ -10,7 +10,7 @@ repository.workspace = true
 binread = "2.2.0"
 bitfield = { workspace = true }
 clap = { workspace = true }
-derive_more = { version = "2.0.1", features = ["deref", "deref_mut"] }
+derive_more = {workspace = true}
 memmap2 = "0.9.9"
 num_enum = { workspace = true }
 once_cell = { workspace = true }

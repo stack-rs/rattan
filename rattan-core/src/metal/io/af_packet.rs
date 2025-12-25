@@ -3,7 +3,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::cells::{Packet, StdPacket};
 use libc::{c_void, size_t, sockaddr, sockaddr_ll, socklen_t};
 use nix::{
     errno::Errno,
@@ -12,6 +11,7 @@ use nix::{
 use tracing::{debug, error, trace, warn};
 
 use super::common::PacketType;
+use crate::cells::{Packet, StdPacket};
 use crate::metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender};
 use crate::metal::{error::MetalError, veth::VethCell};
 

@@ -13,6 +13,7 @@ use tracing::{info, instrument, span, Level};
 
 #[instrument]
 #[test_log::test]
+#[serial_test::parallel]
 fn test_spy() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {

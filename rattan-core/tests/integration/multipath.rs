@@ -14,6 +14,7 @@ use tracing::warn;
 
 #[instrument]
 #[test_log::test]
+#[serial_test::parallel]
 fn test_multipath_ping() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {

@@ -1,15 +1,16 @@
-use crate::error::{Error, RoutingTableError};
-use async_trait::async_trait;
-use ipnet::IpNet;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use std::{
     net::{IpAddr, Ipv4Addr},
     sync::{Arc, RwLock},
 };
+
+use async_trait::async_trait;
+use ipnet::IpNet;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use super::{Cell, ControlInterface, Egress, Ingress, Packet};
+use crate::error::{Error, RoutingTableError};
 
 pub mod routing;
 pub use routing::*;
@@ -266,9 +267,9 @@ mod tests {
 
         let mut egresses = [shadow0.into_receiver(), shadow1.into_receiver()];
         egresses[0].reset();
-        egresses[0].change_state(2);
+        egresses[0].change_state(crate::cells::CellState::Normal);
         egresses[1].reset();
-        egresses[1].change_state(2);
+        egresses[1].change_state(crate::cells::CellState::Normal);
 
         let cell: RouterCell<StdPacket, SimpleRoutingTable> = RouterCell::new(
             ingresses,
@@ -312,9 +313,9 @@ mod tests {
             vec![shadow0.sender().clone(), shadow1.sender().clone()];
         let mut egresses = [shadow0.into_receiver(), shadow1.into_receiver()];
         egresses[0].reset();
-        egresses[0].change_state(2);
+        egresses[0].change_state(crate::cells::CellState::Normal);
         egresses[1].reset();
-        egresses[1].change_state(2);
+        egresses[1].change_state(crate::cells::CellState::Normal);
 
         let cell: RouterCell<StdPacket, SimpleRoutingTable> =
             RouterCell::new(ingresses, vec![RoutingEntry::new(ips[0], Some(0))])?;
