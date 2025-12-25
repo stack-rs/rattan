@@ -399,7 +399,6 @@ where
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<BwReplayCellConfig<P, Q>>,
     send_timer: Timer,
-    change_timer: Timer,
     state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
@@ -446,7 +445,7 @@ where
             debug!("Set inner trace config");
             self.trace = trace_config.into_model();
             let now = Instant::now();
-            if self.next_change(now).is_none() {
+            if !self.update_bw(now) {
                 // handle null trace outside this function
                 tracing::warn!("Setting null trace");
                 self.next_change = now;
@@ -464,18 +463,25 @@ where
         }
     }
 
-    // Return the next change time or **None** if the trace goes to end
-    fn next_change(&mut self, change_time: Instant) -> Option<()> {
-        let next_bw = self.trace.next_bw();
-        next_bw.map(|(bandwidth, duration)| {
+    /// If the trace does not go to end and a new config was set, returns true and update self.next_change.
+    /// If the trace goes to end, returns false, returns false and disable self.next_change. In such case,
+    /// the config is not updated so that the latest value is used.
+    fn update_bw(&mut self, change_time: Instant) -> bool {
+        if let Some((bandwidth, duration)) = self.trace.next_bw() {
             self.change_bandwidth(bandwidth, change_time);
             self.next_change = change_time + duration;
+            #[cfg(test)]
             trace!(
                 "Bandwidth changed to {:?}, next change after {:?}",
                 bandwidth,
                 self.next_change - Instant::now()
             );
-        })
+            true
+        } else {
+            debug!("Trace goes to end in DelayReplay Cell");
+            self.next_change = change_time + LARGE_DURATION;
+            false
+        }
     }
 }
 
@@ -498,13 +504,6 @@ where
                 biased;
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
-                }
-                _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
-                    if self.next_change(self.next_change).is_none() {
-                        debug!("Trace goes to end");
-                        self.egress.close();
-                        return None;
-                    }
                 }
                recv_packet = self.egress.recv() => {
                     match recv_packet {
@@ -533,13 +532,6 @@ where
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
-                    if self.next_change(self.next_change).is_none() {
-                        debug!("Trace goes to end");
-                        self.egress.close();
-                        return None;
-                    }
-                }
                 recv_packet = self.egress.recv() => {
                     match recv_packet {
                         Some(new_packet) => {
@@ -558,6 +550,13 @@ where
 
         // send the packet
         let mut packet = packet.unwrap();
+        let timestamp = packet.get_timestamp();
+
+        // Update the config until it is applicable for the packet.
+        while self.next_change <= timestamp {
+            self.update_bw(self.next_change);
+        }
+
         let transfer_time = self
             .current_bandwidth
             .get_current(packet.get_timestamp())
@@ -751,7 +750,6 @@ where
                 next_change: Instant::now(),
                 config_rx,
                 send_timer: Timer::new()?,
-                change_timer: Timer::new()?,
                 state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,

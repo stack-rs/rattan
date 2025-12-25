@@ -5,7 +5,9 @@ use netem_trace::{model::DelayTraceConfig, Delay, DelayTrace};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::Instant};
-use tracing::{debug, error, info};
+#[cfg(test)]
+use tracing::trace;
+use tracing::{debug, info};
 
 use super::{CurrentConfig, LARGE_DURATION, TRACE_START_INSTANT};
 #[cfg(test)]
@@ -77,6 +79,9 @@ where
         // Wait for Start notify if not started yet
         crate::wait_until_started!(self, Start);
 
+        // For better performance, current implementation tries to send a packet out whose logical_send_time has passed.
+        // In such case, `the config_rx.recv()` in tokio::select! would not be called. So this is needed, to
+        // maintain the behaviour of the cell, that it should be able to handle the run-time config changes.
         if let Ok(config) = self.config_rx.try_recv() {
             self.set_config(config);
         }
@@ -232,7 +237,6 @@ where
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<DelayReplayCellConfig>,
     send_timer: Timer,
-    change_timer: Timer,
     state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
@@ -248,10 +252,13 @@ where
         self.trace = config.trace_config.into_model();
     }
 
-    fn update_delay(&mut self, timestamp: Instant) {
+    /// If the trace does not go to end and a new config was set, returns true and update self.next_change.
+    /// If the trace goes to end, returns false, returns false and disable self.next_change. In such case,
+    /// the config is not updated so that the latest value is used.
+    fn update_delay(&mut self, timestamp: Instant) -> bool {
         if let Some((current_delay, duration)) = self.trace.next_delay() {
             #[cfg(test)]
-            debug!(
+            trace!(
                 "Setting {:?} delay valid from {:?} utill {:?}",
                 current_delay,
                 relative_time(timestamp),
@@ -259,9 +266,11 @@ where
             );
             self.delays.update(current_delay, timestamp);
             self.next_change = timestamp + duration;
+            true
         } else {
-            debug!("Trace goes to end");
-            self.next_change = timestamp + LARGE_DURATION
+            debug!("Trace goes to end in DelayReplay Cell");
+            self.next_change = timestamp + LARGE_DURATION;
+            false
         }
     }
 }
@@ -284,17 +293,6 @@ where
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                change_time = self.change_timer.sleep_until(self.next_change) => {
-                    match change_time {
-                        Ok(change_time) => {
-                            self.update_delay(change_time);
-                        },
-                        Err(e) => {
-                            error!("Error on change timer: {:?}", e);
-                        }
-                    }
-                }
-
                 packet = self.egress.recv() => if let Some(packet) = packet { break packet }
             }
         };
@@ -303,12 +301,12 @@ where
 
         let timestamp = packet.get_timestamp();
 
-        // make sure change_time > timestamp, so that the config is applicable for the packet given the timestamp
+        // Update the config until it is applicable for the packet.
         while self.next_change <= timestamp {
             self.update_delay(self.next_change);
         }
 
-        let send_time = loop {
+        let send_time = {
             // `get_current` returns None if and only if `self.delays` has never been updated
             // since last reset.
 
@@ -320,29 +318,11 @@ where
 
             let sleep_time = logical_send_time.duration_since(Instant::now());
 
-            if sleep_time.is_zero() {
-                break logical_send_time;
+            if !sleep_time.is_zero() {
+                let _ = self.send_timer.sleep(sleep_time).await;
             }
 
-            tokio::select! {
-            biased;
-            Some(config) = self.config_rx.recv() => {
-                self.set_config(config);
-            }
-            // In case there is a config change during this loop. Otherwise, this should never be triggered.
-            change_time = self.change_timer.sleep_until(self.next_change) => {
-                match change_time {
-                    Ok(change_time) => {
-                        self.update_delay(change_time);
-                    },
-                    Err(e) => {
-                        error!("Error on change timer: {:?}", e);
-                    }
-                }
-            }
-            _ = self.send_timer.sleep(sleep_time) => {
-                break logical_send_time;
-            }}
+            logical_send_time
         };
 
         self.latest_egress_timestamp = send_time;
@@ -461,7 +441,6 @@ where
                 next_change: Instant::now(),
                 config_rx,
                 send_timer: Timer::new()?,
-                change_timer: Timer::new()?,
                 state: AtomicCellState::new(CellState::Drop),
                 latest_egress_timestamp: *CALIBRATED_START_INSTANT.get_or_init(Instant::now),
                 notify_rx: None,
@@ -478,7 +457,7 @@ mod tests {
     use netem_trace::model::{RepeatedDelayPatternConfig, StaticDelayConfig};
     use std::time::Duration;
     use tokio::time::Instant;
-    use tracing::{span, warn, Level};
+    use tracing::{info, span, Level};
 
     use crate::cells::{StdPacket, TestPacket};
 
@@ -746,7 +725,7 @@ mod tests {
         rt.block_on(async {
             tokio::time::sleep_until(start_time + Duration::from_millis(1100)).await;
         });
-        warn!("Start pass through {:?}", relative_time(Instant::now()));
+        info!("Start pass through {:?}", relative_time(Instant::now()));
         for _ in 0..10 {
             let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
             let start = Instant::now();
@@ -774,7 +753,7 @@ mod tests {
                 tokio::time::sleep_until(start_time + Duration::from_millis(interval)).await;
             });
 
-            warn!("Begin test at {:?}", relative_time(Instant::now()));
+            info!("Begin test at {:?}", relative_time(Instant::now()));
 
             for _ in 0..10 {
                 let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);

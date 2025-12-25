@@ -14,9 +14,8 @@ use tracing::{debug, info};
 use super::TRACE_START_INSTANT;
 use super::{ControlInterface, Egress, Ingress};
 use crate::cells::config_timestamp::CurrentConfig;
-use crate::cells::{AtomicCellState, Cell, CellState, Packet};
+use crate::cells::{AtomicCellState, Cell, CellState, Packet, LARGE_DURATION};
 use crate::error::Error;
-use crate::metal::timer::Timer;
 use crate::utils::sync::AtomicRawCell;
 
 pub struct LossCellIngress<P>
@@ -215,7 +214,6 @@ where
     current_loss_pattern: CurrentConfig<LossPattern>,
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<LossReplayCellConfig>,
-    change_timer: Timer,
     /// How many packets have been lost consecutively
     prev_loss: usize,
     rng: R,
@@ -247,7 +245,7 @@ where
         tracing::debug!("Set inner trace config");
         self.trace = config.trace_config.into_model();
         let now = Instant::now();
-        if self.next_change(now).is_none() {
+        if !self.update_loss(now) {
             tracing::warn!("Setting null trace");
             self.next_change = now;
             // Set state to Drop to indicate the trace has ended and the cell will drop all packets.
@@ -255,8 +253,12 @@ where
         }
     }
 
-    fn next_change(&mut self, change_time: Instant) -> Option<()> {
-        self.trace.next_loss().map(|(loss, duration)| {
+    /// If the trace does not go to end and a new config was set, returns true and update self.next_change.
+    /// If the trace goes to end, returns false, returns false and disable self.next_change. In such case,
+    /// the config is not updated so that the latest value is used.
+    fn update_loss(&mut self, change_time: Instant) -> bool {
+        if let Some((loss, duration)) = self.trace.next_loss() {
+            #[cfg(test)]
             tracing::trace!(
                 "Loss pattern changed to {:?}, next change after {:?}",
                 loss,
@@ -264,7 +266,12 @@ where
             );
             self.change_loss(loss, change_time);
             self.next_change = change_time + duration;
-        })
+            true
+        } else {
+            debug!("Trace goes to end in DelayReplay Cell");
+            self.next_change = change_time + LARGE_DURATION;
+            false
+        }
     }
 }
 
@@ -287,17 +294,17 @@ where
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
-                    if self.next_change(self.next_change).is_none() {
-                        debug!("Trace goes to end");
-                        self.egress.close();
-                        return None;
-                    }
-                }
                 packet = self.egress.recv() => if let Some(packet) = packet { break packet }
             }
         };
         let packet = crate::check_cell_state!(self.state, packet);
+
+        let timestamp = packet.get_timestamp();
+
+        // Update the config until it is applicable for the packet.
+        while self.next_change <= timestamp {
+            self.update_loss(self.next_change);
+        }
 
         let current_loss_pattern = self
             .current_loss_pattern
@@ -426,7 +433,6 @@ where
                 current_loss_pattern: CurrentConfig::default(),
                 next_change: Instant::now(),
                 config_rx,
-                change_timer: Timer::new()?,
                 prev_loss: 0,
                 rng,
                 state: AtomicCellState::new(CellState::Drop),
