@@ -8,6 +8,7 @@ use std::{
 
 use async_trait::async_trait;
 use etherparse::{Ethernet2Header, Ipv4Header};
+use num_enum::TryFromPrimitive;
 use rattan_log::FlowDesc;
 #[cfg(feature = "serde")]
 use serde::Deserialize;
@@ -529,7 +530,7 @@ pub use crate::core::CALIBRATED_START_INSTANT as TRACE_START_INSTANT;
 #[cfg(feature = "first-packet")]
 pub use crate::core::FIRST_PACKET_INSTANT as TRACE_START_INSTANT;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u8)]
 pub enum CellState {
     // Drops all packets
@@ -550,12 +551,7 @@ impl AtomicCellState {
 
     #[inline]
     pub fn load(&self, order: Ordering) -> CellState {
-        match self.0.load(order) {
-            0 => CellState::Drop,
-            1 => CellState::PassThrough,
-            2 => CellState::Normal,
-            _ => unreachable!("invalid CellState value"),
-        }
+        CellState::try_from_primitive(self.0.load(order)).expect("invalid CellState value")
     }
 
     #[inline]
