@@ -161,7 +161,15 @@ where
                     match recv_packet {
                         Some(new_packet) => {
                             let new_packet = crate::check_cell_state!(self.state, new_packet);
-                            self.packet_queue.enqueue(new_packet);
+                            if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet){
+                                // If the packet queue is 0-sized, yet there is actually enough
+                                // bandwidth to directly send it out, do so.
+                                let timestamp = packet_to_drop.get_timestamp();
+                                if timestamp >= self.next_available{
+                                   self.next_available = timestamp +transfer_time(packet_to_drop.l3_length(), self.bandwidth, self.bw_type);
+                                   return Some(packet_to_drop);
+                                }
+                            }
                         }
                         None => {
                             // channel closed
@@ -509,7 +517,22 @@ where
                     match recv_packet {
                         Some(new_packet) => {
                             let new_packet = crate::check_cell_state!(self.state, new_packet);
-                            self.packet_queue.enqueue(new_packet);
+                            if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet){
+                                let timestamp = packet_to_drop.get_timestamp();
+                                // If the packet queue is 0-sized, yet there is actually enough
+                                // bandwidth to directly send it out, do so.
+                                while self.next_change <= timestamp {
+                                    self.update_bw(self.next_change);
+                                }
+                                if timestamp >= self.next_available{
+                                    let transfer_time = self
+                                        .current_bandwidth
+                                        .get_current(timestamp)
+                                        .map(|bw| transfer_time(packet_to_drop.l3_length(), *bw, self.bw_type));
+                                   self.next_available = timestamp + transfer_time.unwrap_or_default();
+                                   return Some(packet_to_drop);
+                                }
+                            }
                         }
                         None => {
                             // channel closed
@@ -756,5 +779,132 @@ where
             },
             control_interface: Arc::new(BwReplayCellControlInterface { config_tx }),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use crate::cells::bandwidth::queue::{DropTailQueue, DropTailQueueConfig};
+
+    use super::*;
+    use crate::cells::{StdPacket, TestPacket};
+    use netem_trace::model::{RepeatedBwPatternConfig, StaticBwConfig};
+    use tracing::{info, span, Level};
+
+    #[test_log::test]
+    fn zero_buffer_bw() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_zero_buffer_bw").entered();
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        let _guard = rt.enter();
+
+        // A 256B packet needs 80ms transmission time.
+        let bandwidth = Bandwidth::from_bps(25600);
+        let packet_queue =
+            DropTailQueue::new(DropTailQueueConfig::new(None, 0, BwType::NetworkLayer));
+        let cell = BwCell::new(bandwidth, packet_queue, BwType::NetworkLayer)?;
+
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
+        egress.reset();
+        egress.change_state(CellState::Normal);
+
+        let mut logical_send_time = Instant::now();
+        let logical_start = logical_send_time;
+        for i in 0..16 {
+            ingress.enqueue(TestPacket::<StdPacket>::with_timestamp(
+                &[i; 256],
+                logical_send_time,
+            ))?;
+            logical_send_time += Duration::from_millis(25);
+        }
+
+        for i in 0..4 {
+            let received = rt.block_on(async { egress.dequeue().await }).unwrap();
+            assert_eq!(received.packet.buf[0], i * 4);
+            assert_eq!(Duration::ZERO, received.delay());
+            info!(
+                "Packet {} sent at {:?} has been delayed by {:?} ",
+                received.packet.buf[0],
+                received
+                    .packet
+                    .get_timestamp()
+                    .duration_since(logical_start),
+                received.delay()
+            )
+        }
+
+        Ok(())
+    }
+
+    #[test_log::test]
+    fn zero_buffer_bw_replay() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "test_zero_buffer_bw_replay").entered();
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        let _guard = rt.enter();
+
+        let bandwidth_trace = RepeatedBwPatternConfig::new()
+            .pattern(vec![
+                // A 256B packet needs 80ms transmission time for 25.6Kbps,
+                Box::new(StaticBwConfig {
+                    bw: Some(Bandwidth::from_bps(25600)),
+                    duration: Some(Duration::from_millis(400)),
+                }) as Box<dyn BwTraceConfig>,
+                // A 256B packet needs 160ms transmission time for 25.6Kbps,
+                Box::new(StaticBwConfig {
+                    bw: Some(Bandwidth::from_bps(12800)),
+                    duration: Some(Duration::from_millis(40000)),
+                }) as Box<dyn BwTraceConfig>,
+            ])
+            .build();
+
+        let packet_queue =
+            DropTailQueue::new(DropTailQueueConfig::new(None, 0, BwType::NetworkLayer));
+        let cell = BwReplayCell::new(
+            Box::new(bandwidth_trace),
+            packet_queue,
+            BwType::NetworkLayer,
+        )?;
+
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
+        egress.reset();
+        egress.change_state(CellState::Normal);
+
+        let mut logical_send_time = Instant::now();
+        let logical_start = logical_send_time;
+        for i in 0..16 {
+            ingress.enqueue(TestPacket::<StdPacket>::with_timestamp(
+                &[i; 256],
+                logical_send_time,
+            ))?;
+            logical_send_time += Duration::from_millis(50);
+        }
+
+        for i in [0, 2, 4, 6, 8, 12] {
+            let received = rt.block_on(async { egress.dequeue().await }).unwrap();
+            assert_eq!(received.packet.buf[0], i);
+            assert_eq!(Duration::ZERO, received.delay());
+            info!(
+                "Packet {} sent at {:?} has been delayed by {:?} ",
+                received.packet.buf[0],
+                received
+                    .packet
+                    .get_timestamp()
+                    .duration_since(logical_start),
+                received.delay()
+            )
+        }
+
+        Ok(())
     }
 }

@@ -25,7 +25,8 @@ where
 
     fn configure(&mut self, config: Self::Config);
 
-    fn enqueue(&mut self, packet: P);
+    /// Returns the packet if there is not space for it.
+    fn enqueue(&mut self, packet: P) -> Option<P>;
 
     // If the queue is empty, return `None`
     fn dequeue(&mut self) -> Option<P>;
@@ -101,8 +102,9 @@ where
 
     fn configure(&mut self, _config: Self::Config) {}
 
-    fn enqueue(&mut self, packet: P) {
+    fn enqueue(&mut self, packet: P) -> Option<P> {
         self.queue.push_back(packet);
+        None
     }
 
     fn dequeue(&mut self) -> Option<P> {
@@ -210,7 +212,13 @@ where
         self.bw_type = config.bw_type;
     }
 
-    fn enqueue(&mut self, packet: P) {
+    fn enqueue(&mut self, packet: P) -> Option<P> {
+        if self.packet_limit.is_some_and(|limit| limit == 0)
+            || self.byte_limit.is_some_and(|limit| limit == 0)
+        {
+            return packet.into();
+        }
+
         if self
             .packet_limit
             .is_none_or(|limit| self.queue.len() < limit)
@@ -221,6 +229,7 @@ where
             self.now_bytes += packet.l3_length() + self.bw_type.extra_length();
             self.queue.push_back(packet);
         } else {
+            #[cfg(test)]
             trace!(
                 queue_len = self.queue.len(),
                 now_bytes = self.now_bytes,
@@ -228,6 +237,7 @@ where
                 "Drop packet(l3_len: {}, extra_len: {}) when enqueue", packet.l3_length(), self.bw_type.extra_length()
             );
         }
+        None
     }
 
     fn dequeue(&mut self) -> Option<P> {
@@ -341,7 +351,13 @@ where
         self.bw_type = config.bw_type;
     }
 
-    fn enqueue(&mut self, packet: P) {
+    fn enqueue(&mut self, packet: P) -> Option<P> {
+        if self.packet_limit.is_some_and(|limit| limit == 0)
+            || self.byte_limit.is_some_and(|limit| limit == 0)
+        {
+            return packet.into();
+        }
+
         self.now_bytes += packet.l3_length() + self.bw_type.extra_length();
         self.queue.push_back(packet);
         while self
@@ -349,14 +365,16 @@ where
             .is_some_and(|limit| self.queue.len() > limit)
             || self.byte_limit.is_some_and(|limit| self.now_bytes > limit)
         {
-            let packet = self.dequeue().unwrap();
+            let _packet = self.dequeue().unwrap();
+            #[cfg(test)]
             trace!(
                 after_queue_len = self.queue.len(),
                 after_now_bytes = self.now_bytes,
-                header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                "Drop packet(l3_len: {}, extra_len: {}) when enqueue another packet", packet.l3_length(), self.bw_type.extra_length()
-            )
+                header = ?format!("{:X?}", &_packet.as_slice()[0..std::cmp::min(56, _packet.length())]),
+                "Drop packet(l3_len: {}, extra_len: {}) when enqueue another packet", _packet.l3_length(), self.bw_type.extra_length()
+            );
         }
+        None
     }
 
     fn dequeue(&mut self) -> Option<P> {
@@ -536,7 +554,13 @@ where
         self.config = config;
     }
 
-    fn enqueue(&mut self, packet: P) {
+    fn enqueue(&mut self, packet: P) -> Option<P> {
+        if self.config.packet_limit.is_some_and(|limit| limit == 0)
+            || self.config.byte_limit.is_some_and(|limit| limit == 0)
+        {
+            return packet.into();
+        }
+
         if self
             .config
             .packet_limit
@@ -548,6 +572,7 @@ where
             self.now_bytes += packet.l3_length() + self.config.bw_type.extra_length();
             self.queue.push_back(packet);
         } else {
+            #[cfg(test)]
             trace!(
                 queue_len = self.queue.len(),
                 now_bytes = self.now_bytes,
@@ -557,6 +582,7 @@ where
                 self.config.bw_type.extra_length()
             );
         }
+        None
     }
 
     fn dequeue(&mut self) -> Option<P> {
