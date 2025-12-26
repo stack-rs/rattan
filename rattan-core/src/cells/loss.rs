@@ -288,15 +288,12 @@ where
         #[cfg(not(feature = "first-packet"))]
         crate::wait_until_started!(self, Start);
 
-        let packet = loop {
-            tokio::select! {
-                biased;
-                Some(config) = self.config_rx.recv() => {
-                    self.set_config(config);
-                }
-                packet = self.egress.recv() => if let Some(packet) = packet { break packet }
-            }
-        };
+        // It could be None only if the other end of the channel has closed.
+        let packet = self.egress.recv().await?;
+        while let Ok(config) = self.config_rx.try_recv() {
+            self.set_config(config);
+        }
+
         let packet = crate::check_cell_state!(self.state, packet);
 
         let timestamp = packet.get_timestamp();

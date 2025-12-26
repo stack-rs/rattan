@@ -79,17 +79,11 @@ where
         // Wait for Start notify if not started yet
         crate::wait_until_started!(self, Start);
 
-        // For better performance, current implementation tries to send a packet out whose logical_send_time has passed.
-        // In such case, `the config_rx.recv()` in tokio::select! would not be called. So this is needed, to
-        // maintain the behaviour of the cell, that it should be able to handle the run-time config changes.
-        if let Ok(config) = self.config_rx.try_recv() {
+        // It could be None only if the other end of the channel has closed.
+        let packet = self.egress.recv().await?;
+        while let Ok(config) = self.config_rx.try_recv() {
             self.set_config(config);
         }
-
-        let packet = match self.egress.recv().await {
-            Some(packet) => packet,
-            None => return None,
-        };
 
         let mut packet = crate::check_cell_state!(self.state, packet);
 
