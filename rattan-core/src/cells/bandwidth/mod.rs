@@ -195,7 +195,15 @@ where
                     match recv_packet {
                         Some(new_packet) => {
                             let new_packet = crate::check_cell_state!(self.state, new_packet);
-                            self.packet_queue.enqueue(new_packet);
+                            if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet){
+                                // If the packet queue is 0-sized, yet there is actually enough
+                                // bandwidth to directly send it out, do so.
+                                let timestamp = packet_to_drop.get_timestamp();
+                                if timestamp >= self.next_available{
+                                   self.next_available = timestamp +transfer_time(packet_to_drop.l3_length(), self.bandwidth, self.bw_type);
+                                   return Some(packet_to_drop);
+                                }
+                            }
                             packet = self.packet_queue.dequeue();
                         }
                         None => {
@@ -559,7 +567,22 @@ where
                     match recv_packet {
                         Some(new_packet) => {
                             let new_packet = crate::check_cell_state!(self.state, new_packet);
-                            self.packet_queue.enqueue(new_packet);
+                            if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet){
+                                let timestamp = packet_to_drop.get_timestamp();
+                                // If the packet queue is 0-sized, yet there is actually enough
+                                // bandwidth to directly send it out, do so.
+                                while self.next_change <= timestamp {
+                                    self.update_bw(self.next_change);
+                                }
+                                if timestamp >= self.next_available{
+                                    let transfer_time = self
+                                        .current_bandwidth
+                                        .get_current(timestamp)
+                                        .map(|bw| transfer_time(packet_to_drop.l3_length(), *bw, self.bw_type));
+                                   self.next_available = timestamp + transfer_time.unwrap_or_default();
+                                   return Some(packet_to_drop);
+                                }
+                            }
                             packet = self.packet_queue.dequeue();
                         }
                         None => {

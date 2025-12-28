@@ -60,8 +60,19 @@ where
     prev_loss: usize,
     rng: R,
     state: AtomicCellState,
+    config_rx: mpsc::UnboundedReceiver<LossCellConfig>,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
+}
+
+impl<P, R> LossCellEgress<P, R>
+where
+    P: Packet + Send + Sync,
+    R: Rng + Send + Sync,
+{
+    fn set_config(&mut self, config: LossCellConfig) {
+        *self.inner_pattern = config.pattern;
+    }
 }
 
 #[async_trait]
@@ -74,10 +85,12 @@ where
         // Wait for Start notify if not started yet
         crate::wait_until_started!(self, Start);
 
-        let packet = match self.egress.recv().await {
-            Some(packet) => packet,
-            None => return None,
-        };
+        // It could be None only if the other end of the channel has closed.
+        let packet = self.egress.recv().await?;
+        while let Ok(config) = self.config_rx.try_recv() {
+            self.set_config(config);
+        }
+
         let packet = crate::check_cell_state!(self.state, packet);
         if let Some(pattern) = self.pattern.swap_null() {
             self.inner_pattern = pattern;
@@ -129,8 +142,7 @@ impl LossCellConfig {
 }
 
 pub struct LossCellControlInterface {
-    /// Stored as nanoseconds
-    pattern: Arc<AtomicRawCell<LossPattern>>,
+    config_tx: mpsc::UnboundedSender<LossCellConfig>,
 }
 
 impl ControlInterface for LossCellControlInterface {
@@ -138,7 +150,9 @@ impl ControlInterface for LossCellControlInterface {
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         info!("Setting loss pattern to: {:?}", config.pattern);
-        self.pattern.store(Box::new(config.pattern));
+        self.config_tx
+            .send(config)
+            .map_err(|_| Error::ConfigError("Control channel is closed.".to_string()))?;
         Ok(())
     }
 }
@@ -184,6 +198,7 @@ where
         let pattern = pattern.into();
         debug!(?pattern, "New LossCell");
         let (rx, tx) = mpsc::unbounded_channel();
+        let (config_tx, config_rx) = mpsc::unbounded_channel();
         let pattern = Arc::new(AtomicRawCell::new(Box::new(pattern)));
         Ok(LossCell {
             ingress: Arc::new(LossCellIngress { ingress: rx }),
@@ -195,9 +210,10 @@ where
                 rng,
                 state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
+                config_rx,
                 started: false,
             },
-            control_interface: Arc::new(LossCellControlInterface { pattern }),
+            control_interface: Arc::new(LossCellControlInterface { config_tx }),
         })
     }
 }
