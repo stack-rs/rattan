@@ -79,13 +79,18 @@ where
         // Wait for Start notify if not started yet
         crate::wait_until_started!(self, Start);
 
-        // It could be None only if the other end of the channel has closed.
-        let packet = self.egress.recv().await?;
-        while let Ok(config) = self.config_rx.try_recv() {
-            self.set_config(config);
-        }
-
-        let mut packet = crate::check_cell_state!(self.state, packet);
+        let mut packet = loop {
+            tokio::select! {
+                biased;
+                Some(config) = self.config_rx.recv() => {
+                    self.set_config(config);
+                }
+                // `packet` can be None only if `self.egress` is closed.
+                packet = self.egress.recv() => {
+                    break crate::check_cell_state!(self.state, packet?);
+                }
+            }
+        };
 
         // Logical timestamps are considered non-decreasing.
         let timestamp = packet.get_timestamp();
@@ -231,6 +236,7 @@ where
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<DelayReplayCellConfig>,
     send_timer: Timer,
+    change_timer: Timer,
     state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
@@ -281,13 +287,18 @@ where
         #[cfg(not(feature = "first-packet"))]
         crate::wait_until_started!(self, Start);
 
-        // It could be None only if the other end of the channel has closed.
-        let packet = self.egress.recv().await?;
-        while let Ok(config) = self.config_rx.try_recv() {
-            self.set_config(config);
-        }
-
-        let mut packet = crate::check_cell_state!(self.state, packet);
+        let mut packet = loop {
+            tokio::select! {
+                biased;
+                Some(config) = self.config_rx.recv() => {
+                    self.set_config(config);
+                }
+                // `packet` can be None only if `self.egress` is closed.
+                packet = self.egress.recv() => {
+                    break crate::check_cell_state!(self.state, packet?);
+                }
+            }
+        };
 
         let timestamp = packet.get_timestamp();
 
@@ -296,23 +307,37 @@ where
             self.update_delay(self.next_change);
         }
 
-        let send_time = {
+        let send_time = loop {
             // `get_current` returns None if and only if `self.delays` has never been updated
             // since last reset.
-
             let logical_send_time = if let Some(delay_time) = self.delays.get_current(timestamp) {
                 (timestamp + *delay_time).max(self.latest_egress_timestamp)
             } else {
                 timestamp.max(self.latest_egress_timestamp)
             };
-
             let sleep_time = logical_send_time.duration_since(Instant::now());
 
-            if !sleep_time.is_zero() {
-                let _ = self.send_timer.sleep(sleep_time).await;
+            if sleep_time.is_zero() {
+                // Send immediately.
+                break logical_send_time;
             }
 
-            logical_send_time
+            tokio::select! {
+                biased;
+                Some(config) = self.config_rx.recv() => {
+                    self.set_config(config);
+                }
+                _ = self.change_timer.sleep_until(self.next_change),
+                    if self.next_change <= logical_send_time
+                => {
+                    self.update_delay(self.next_change);
+                }
+                _ = self.send_timer.sleep(sleep_time),
+                    if self.next_change > logical_send_time
+                => {
+                    break logical_send_time;
+                }
+            }
         };
 
         self.latest_egress_timestamp = send_time;
@@ -431,6 +456,7 @@ where
                 next_change: Instant::now(),
                 config_rx,
                 send_timer: Timer::new()?,
+                change_timer: Timer::new()?,
                 state: AtomicCellState::new(CellState::Drop),
                 latest_egress_timestamp: *CALIBRATED_START_INSTANT.get_or_init(Instant::now),
                 notify_rx: None,

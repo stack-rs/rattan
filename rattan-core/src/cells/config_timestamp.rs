@@ -5,7 +5,7 @@ use tokio::time::Instant;
 #[cfg(test)]
 use super::relative_time;
 
-/// Store the current active config and next config.
+/// Store last and current config.
 #[derive(Debug, Default)]
 pub struct CurrentConfig<C> {
     last: Option<C>,

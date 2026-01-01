@@ -138,6 +138,22 @@ where
             self.bw_type = bw_type;
         }
     }
+
+    /// If and only if there is enough bandwidth to send a packet which is enqueued into a 0-sized
+    /// queue and thus being returnd, this function returns `Some`. When this happens, the caller
+    /// should send out the packet immediately.
+    #[inline(always)]
+    fn enqueue_packet(&mut self, new_packet: P) -> Option<P> {
+        if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet) {
+            let timestamp = packet_to_drop.get_timestamp();
+            if timestamp >= self.next_available {
+                self.next_available = timestamp
+                    + transfer_time(packet_to_drop.l3_length(), self.bandwidth, self.bw_type);
+                return Some(packet_to_drop);
+            }
+        }
+        None
+    }
 }
 
 #[async_trait]
@@ -157,28 +173,16 @@ where
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                recv_packet = self.egress.recv() => {
-                    match recv_packet {
-                        Some(new_packet) => {
-                            let new_packet = crate::check_cell_state!(self.state, new_packet);
-                            if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet){
-                                // If the packet queue is 0-sized, yet there is actually enough
-                                // bandwidth to directly send it out, do so.
-                                let timestamp = packet_to_drop.get_timestamp();
-                                if timestamp >= self.next_available{
-                                   self.next_available = timestamp +transfer_time(packet_to_drop.l3_length(), self.bandwidth, self.bw_type);
-                                   return Some(packet_to_drop);
-                                }
-                            }
-                        }
-                        None => {
-                            // channel closed
-                            return None;
-                        }
-                    }
-                }
                 _ = self.timer.sleep(self.next_available - Instant::now()) => {
                     break;
+                }
+                // `new_packet` can be None only if `self.egress` is closed.
+                // The new_packet's timestamp is ealier than self.next_available.
+                new_packet = self.egress.recv() => {
+                    let new_packet = crate::check_cell_state!(self.state, new_packet?);
+                    if let Some(packet) = self.enqueue_packet(new_packet){
+                        return Some(packet);
+                    }
                 }
             }
         }
@@ -191,26 +195,13 @@ where
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                recv_packet = self.egress.recv() => {
-                    match recv_packet {
-                        Some(new_packet) => {
-                            let new_packet = crate::check_cell_state!(self.state, new_packet);
-                            if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet){
-                                // If the packet queue is 0-sized, yet there is actually enough
-                                // bandwidth to directly send it out, do so.
-                                let timestamp = packet_to_drop.get_timestamp();
-                                if timestamp >= self.next_available{
-                                   self.next_available = timestamp +transfer_time(packet_to_drop.l3_length(), self.bandwidth, self.bw_type);
-                                   return Some(packet_to_drop);
-                                }
-                            }
-                            packet = self.packet_queue.dequeue();
-                        }
-                        None => {
-                            // channel closed
-                            return None;
-                        }
+                // `new_packet` can be None only if `self.egress` is closed.
+                new_packet = self.egress.recv() => {
+                    let new_packet = crate::check_cell_state!(self.state, new_packet?);
+                    if let Some(packet) = self.enqueue_packet(new_packet){
+                        return Some(packet);
                     }
+                    packet = self.packet_queue.dequeue();
                 }
             }
         }
@@ -415,6 +406,7 @@ where
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<BwReplayCellConfig<P, Q>>,
     send_timer: Timer,
+    change_timer: Timer,
     state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
@@ -499,6 +491,30 @@ where
             false
         }
     }
+
+    /// If and only if there is enough bandwidth to send a packet which is enqueued into a 0-sized
+    /// queue and thus being returnd, this function returns `Some`. When this happens, the caller
+    /// should send out the packet immediately.
+    #[inline(always)]
+    fn enqueue_packet(&mut self, new_packet: P) -> Option<P> {
+        if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet) {
+            let timestamp = packet_to_drop.get_timestamp();
+            // If the packet queue is 0-sized, yet there is actually enough
+            // bandwidth to directly send it out, do so.
+            while self.next_change <= timestamp {
+                self.update_bw(self.next_change);
+            }
+            if timestamp >= self.next_available {
+                let transfer_time = self
+                    .current_bandwidth
+                    .get_current(timestamp)
+                    .map(|bw| transfer_time(packet_to_drop.l3_length(), *bw, self.bw_type));
+                self.next_available = timestamp + transfer_time.unwrap_or_default();
+                return Some(packet_to_drop);
+            }
+        }
+        None
+    }
 }
 
 #[async_trait]
@@ -521,36 +537,22 @@ where
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-               recv_packet = self.egress.recv() => {
-                    match recv_packet {
-                        Some(new_packet) => {
-                            let new_packet = crate::check_cell_state!(self.state, new_packet);
-                            if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet){
-                                let timestamp = packet_to_drop.get_timestamp();
-                                // If the packet queue is 0-sized, yet there is actually enough
-                                // bandwidth to directly send it out, do so.
-                                while self.next_change <= timestamp {
-                                    self.update_bw(self.next_change);
-                                }
-                                if timestamp >= self.next_available{
-                                    let transfer_time = self
-                                        .current_bandwidth
-                                        .get_current(timestamp)
-                                        .map(|bw| transfer_time(packet_to_drop.l3_length(), *bw, self.bw_type));
-                                   self.next_available = timestamp + transfer_time.unwrap_or_default();
-                                   return Some(packet_to_drop);
-                                }
-                            }
-                        }
-                        None => {
-                            // channel closed
-                            return None;
-                        }
-                    }
+                _ = self.change_timer.sleep(self.next_change - Instant::now()),
+                    if self.next_change <= self.next_available => {
+                    self.update_bw(self.next_change);
                 }
-                _ = self.send_timer.sleep(self.next_available - Instant::now()) => {
+                _ = self.send_timer.sleep(self.next_available - Instant::now()),
+                    if self.next_change > self.next_available => {
                     break;
                 }
+                // `new_packet` can be None only if `self.egress` is closed.
+                new_packet = self.egress.recv() => {
+                    let new_packet = crate::check_cell_state!(self.state, new_packet?);
+                    if let Some(packet) = self.enqueue_packet(new_packet){
+                        return Some(packet);
+                    }
+                }
+
             }
         }
 
@@ -563,33 +565,16 @@ where
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                recv_packet = self.egress.recv() => {
-                    match recv_packet {
-                        Some(new_packet) => {
-                            let new_packet = crate::check_cell_state!(self.state, new_packet);
-                            if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet){
-                                let timestamp = packet_to_drop.get_timestamp();
-                                // If the packet queue is 0-sized, yet there is actually enough
-                                // bandwidth to directly send it out, do so.
-                                while self.next_change <= timestamp {
-                                    self.update_bw(self.next_change);
-                                }
-                                if timestamp >= self.next_available{
-                                    let transfer_time = self
-                                        .current_bandwidth
-                                        .get_current(timestamp)
-                                        .map(|bw| transfer_time(packet_to_drop.l3_length(), *bw, self.bw_type));
-                                   self.next_available = timestamp + transfer_time.unwrap_or_default();
-                                   return Some(packet_to_drop);
-                                }
-                            }
-                            packet = self.packet_queue.dequeue();
-                        }
-                        None => {
-                            // channel closed
-                            return None;
-                        }
+                _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
+                    self.update_bw(self.next_change);
+                }
+                // `new_packet` can be None only if `self.egress` is closed.
+                new_packet = self.egress.recv() => {
+                    let new_packet = crate::check_cell_state!(self.state, new_packet?);
+                    if let Some(packet) = self.enqueue_packet(new_packet){
+                        return Some(packet);
                     }
+                    packet = self.packet_queue.dequeue();
                 }
             }
         }
@@ -598,22 +583,17 @@ where
         let mut packet = packet.unwrap();
         let timestamp = packet.get_timestamp();
 
-        // Update the config until it is applicable for the packet.
-        while self.next_change <= timestamp {
-            self.update_bw(self.next_change);
-        }
-
         let transfer_time = self
             .current_bandwidth
-            .get_current(packet.get_timestamp())
+            .get_current(timestamp)
             .map(|bw| transfer_time(packet.l3_length(), *bw, self.bw_type));
 
         // release the packet immediately (aka infinity bandwidth) when no avaiable bandwidth has been set.
         let transfer_time = transfer_time.unwrap_or_default();
 
-        if packet.get_timestamp() >= self.next_available {
+        if timestamp >= self.next_available {
             // the packet arrives after next_available
-            self.next_available = packet.get_timestamp() + transfer_time;
+            self.next_available = timestamp + transfer_time;
         } else {
             // the packet arrives before next_available and now >= self.next_available
             packet.delay_until(self.next_available);
@@ -796,6 +776,7 @@ where
                 next_change: Instant::now(),
                 config_rx,
                 send_timer: Timer::new()?,
+                change_timer: Timer::new()?,
                 state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
