@@ -35,6 +35,7 @@ use tracing::{info, instrument, span, warn, Level};
 
 #[instrument]
 #[test_log::test]
+#[serial_test::parallel]
 fn test_bandwidth() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
@@ -195,6 +196,7 @@ fn test_bandwidth() {
 #[cfg(feature = "serde")]
 #[instrument]
 #[test_log::test]
+#[serial_test::parallel]
 fn test_droptail_queue() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
@@ -365,6 +367,7 @@ fn test_droptail_queue() {
 #[cfg(feature = "serde")]
 #[instrument]
 #[test_log::test]
+#[serial_test::parallel]
 fn test_drophead_queue() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
@@ -540,6 +543,7 @@ fn test_drophead_queue() {
 #[cfg(feature = "serde")]
 #[instrument]
 #[test_log::test]
+#[serial_test::serial]
 fn test_codel_queue() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
@@ -747,6 +751,7 @@ fn test_codel_queue() {
 
 #[instrument]
 #[test_log::test]
+#[serial_test::serial]
 fn test_replay() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {

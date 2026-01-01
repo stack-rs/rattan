@@ -1,12 +1,13 @@
-use crate::cells::Packet;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fmt::Debug;
+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use tokio::time::{Duration, Instant};
 use tracing::{debug, trace};
 
 use super::BwType;
+use crate::cells::Packet;
 
 #[cfg(feature = "serde")]
 fn serde_default<T: Default + PartialEq>(t: &T) -> bool {
@@ -24,12 +25,26 @@ where
 
     fn configure(&mut self, config: Self::Config);
 
-    fn enqueue(&mut self, packet: P);
+    /// Returns the packet if there is not space for it.
+    fn enqueue(&mut self, packet: P) -> Option<P>;
 
     // If the queue is empty, return `None`
     fn dequeue(&mut self) -> Option<P>;
 
     fn is_empty(&self) -> bool;
+
+    // How this queue measures the size of a packet.
+    // Should return 0 if it measures the size of a packet based on its L3 size.
+    // Should return 14 if it measures that based on its L2 size (L3 length + 14 bytes L2 header).
+    fn get_extra_length(&self) -> usize {
+        0
+    }
+
+    // How this queue measures the size of a packet;
+    #[inline(always)]
+    fn get_packet_size(&self, packet: &P) -> usize {
+        packet.l3_length() + self.get_extra_length()
+    }
 
     // If the queue is empty, return `None`
     fn get_front_size(&self) -> Option<usize>;
@@ -87,8 +102,9 @@ where
 
     fn configure(&mut self, _config: Self::Config) {}
 
-    fn enqueue(&mut self, packet: P) {
+    fn enqueue(&mut self, packet: P) -> Option<P> {
         self.queue.push_back(packet);
+        None
     }
 
     fn dequeue(&mut self) -> Option<P> {
@@ -99,8 +115,15 @@ where
         self.queue.is_empty()
     }
 
+    #[inline(always)]
+    fn get_extra_length(&self) -> usize {
+        0
+    }
+
     fn get_front_size(&self) -> Option<usize> {
-        self.queue.front().map(|packet| packet.l3_length())
+        self.queue
+            .front()
+            .map(|packet| self.get_packet_size(packet))
     }
 
     fn length(&self) -> usize {
@@ -169,10 +192,6 @@ impl<P> DropTailQueue<P> {
             now_bytes: 0,
         }
     }
-
-    pub fn get_extra_length(&self) -> usize {
-        self.bw_type.extra_length()
-    }
 }
 
 impl<P> Default for DropTailQueue<P> {
@@ -193,7 +212,13 @@ where
         self.bw_type = config.bw_type;
     }
 
-    fn enqueue(&mut self, packet: P) {
+    fn enqueue(&mut self, packet: P) -> Option<P> {
+        if self.packet_limit.is_some_and(|limit| limit == 0)
+            || self.byte_limit.is_some_and(|limit| limit == 0)
+        {
+            return packet.into();
+        }
+
         if self
             .packet_limit
             .is_none_or(|limit| self.queue.len() < limit)
@@ -204,6 +229,7 @@ where
             self.now_bytes += packet.l3_length() + self.bw_type.extra_length();
             self.queue.push_back(packet);
         } else {
+            #[cfg(test)]
             trace!(
                 queue_len = self.queue.len(),
                 now_bytes = self.now_bytes,
@@ -211,6 +237,7 @@ where
                 "Drop packet(l3_len: {}, extra_len: {}) when enqueue", packet.l3_length(), self.bw_type.extra_length()
             );
         }
+        None
     }
 
     fn dequeue(&mut self) -> Option<P> {
@@ -227,10 +254,15 @@ where
         self.queue.is_empty()
     }
 
+    #[inline(always)]
+    fn get_extra_length(&self) -> usize {
+        self.bw_type.extra_length()
+    }
+
     fn get_front_size(&self) -> Option<usize> {
         self.queue
             .front()
-            .map(|packet| packet.l3_length() + self.bw_type.extra_length())
+            .map(|packet| self.get_packet_size(packet))
     }
 
     fn length(&self) -> usize {
@@ -319,7 +351,13 @@ where
         self.bw_type = config.bw_type;
     }
 
-    fn enqueue(&mut self, packet: P) {
+    fn enqueue(&mut self, packet: P) -> Option<P> {
+        if self.packet_limit.is_some_and(|limit| limit == 0)
+            || self.byte_limit.is_some_and(|limit| limit == 0)
+        {
+            return packet.into();
+        }
+
         self.now_bytes += packet.l3_length() + self.bw_type.extra_length();
         self.queue.push_back(packet);
         while self
@@ -327,14 +365,16 @@ where
             .is_some_and(|limit| self.queue.len() > limit)
             || self.byte_limit.is_some_and(|limit| self.now_bytes > limit)
         {
-            let packet = self.dequeue().unwrap();
+            let _packet = self.dequeue().unwrap();
+            #[cfg(test)]
             trace!(
                 after_queue_len = self.queue.len(),
                 after_now_bytes = self.now_bytes,
-                header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                "Drop packet(l3_len: {}, extra_len: {}) when enqueue another packet", packet.l3_length(), self.bw_type.extra_length()
-            )
+                header = ?format!("{:X?}", &_packet.as_slice()[0..std::cmp::min(56, _packet.length())]),
+                "Drop packet(l3_len: {}, extra_len: {}) when enqueue another packet", _packet.l3_length(), self.bw_type.extra_length()
+            );
         }
+        None
     }
 
     fn dequeue(&mut self) -> Option<P> {
@@ -351,10 +391,15 @@ where
         self.queue.is_empty()
     }
 
+    #[inline(always)]
+    fn get_extra_length(&self) -> usize {
+        self.bw_type.extra_length()
+    }
+
     fn get_front_size(&self) -> Option<usize> {
         self.queue
             .front()
-            .map(|packet| packet.l3_length() + self.bw_type.extra_length())
+            .map(|packet| self.get_packet_size(packet))
     }
 
     fn length(&self) -> usize {
@@ -509,7 +554,13 @@ where
         self.config = config;
     }
 
-    fn enqueue(&mut self, packet: P) {
+    fn enqueue(&mut self, packet: P) -> Option<P> {
+        if self.config.packet_limit.is_some_and(|limit| limit == 0)
+            || self.config.byte_limit.is_some_and(|limit| limit == 0)
+        {
+            return packet.into();
+        }
+
         if self
             .config
             .packet_limit
@@ -521,6 +572,7 @@ where
             self.now_bytes += packet.l3_length() + self.config.bw_type.extra_length();
             self.queue.push_back(packet);
         } else {
+            #[cfg(test)]
             trace!(
                 queue_len = self.queue.len(),
                 now_bytes = self.now_bytes,
@@ -530,6 +582,7 @@ where
                 self.config.bw_type.extra_length()
             );
         }
+        None
     }
 
     fn dequeue(&mut self) -> Option<P> {
@@ -639,10 +692,15 @@ where
         self.queue.is_empty()
     }
 
+    #[inline(always)]
+    fn get_extra_length(&self) -> usize {
+        self.config.bw_type.extra_length()
+    }
+
     fn get_front_size(&self) -> Option<usize> {
         self.queue
             .front()
-            .map(|packet| packet.l3_length() + self.config.bw_type.extra_length())
+            .map(|packet| self.get_packet_size(packet))
     }
 
     fn length(&self) -> usize {

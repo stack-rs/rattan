@@ -1,16 +1,17 @@
-use crate::cells::{Cell, ControlInterface, Egress, Ingress, Packet};
-use crate::error::Error;
+use std::fmt::Debug;
+use std::io::Write;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+
 use async_trait::async_trait;
 use pcap_file::pcap::{PcapPacket, PcapWriter};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
-use std::io::Write;
-use std::sync::atomic::AtomicI32;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tracing::{debug, info};
+
+use crate::cells::{AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, Packet};
+use crate::error::Error;
 
 #[derive(Clone)]
 pub struct SpyCellIngress<P>
@@ -34,7 +35,7 @@ where
     egress: mpsc::UnboundedReceiver<(Duration, P)>,
     config_rx: mpsc::UnboundedReceiver<SpyCellConfig<W>>,
     last: tokio::time::Instant,
-    state: AtomicI32,
+    state: AtomicCellState,
     spy: Option<PcapWriter<W>>,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
@@ -87,7 +88,7 @@ where
                 egress: tx,
                 config_rx,
                 last: tokio::time::Instant::now(),
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 spy: Some(PcapWriter::new(spy.into())?),
                 notify_rx: None,
                 started: false,
@@ -101,8 +102,7 @@ impl<P> Ingress<P> for SpyCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
-        packet.set_timestamp(tokio::time::Instant::now());
+    fn enqueue(&self, packet: P) -> Result<(), Error> {
         self.ingress
             .send((
                 SystemTime::now()
@@ -132,15 +132,7 @@ where
                     self.set_config(config);
                 }
                 Some((timestamp, packet)) = self.egress.recv() => {
-                    match self.state.load(std::sync::atomic::Ordering::Acquire) {
-                        0 => {
-                            return None;
-                        }
-                        1 => {
-                            return Some(packet);
-                        }
-                        _ => ()
-                    }
+                    let packet = crate::check_cell_state!(self.state, packet);
                     assert!(self.last < packet.get_timestamp());
                     self.last = packet.get_timestamp();
                     self.spy.as_mut().map(|spy| spy.write_packet(&PcapPacket {
@@ -155,7 +147,7 @@ where
         }
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -213,7 +205,6 @@ mod test {
         io::{Seek, SeekFrom},
     };
 
-    use crate::cells::StdPacket;
     use pnet::{
         packet::{
             ethernet::{EtherType, MutableEthernetPacket},
@@ -223,6 +214,8 @@ mod test {
         },
         util::MacAddr,
     };
+
+    use crate::cells::{StdPacket, TestPacket};
 
     use super::*;
 
@@ -236,13 +229,13 @@ mod test {
         let file =
             tempfile::tempfile().expect("Failed to create a temporary file for the spy cell");
         let mut cell = SpyCell::new(file.try_clone().unwrap()).unwrap();
-        cell.receiver().change_state(2);
+        cell.receiver().change_state(CellState::Normal);
         (file, cell)
     }
 
     #[tokio::test]
     async fn test_spy_cell_ordering() {
-        let (mut spy, mut cell) = spy_cell::<StdPacket>();
+        let (mut spy, mut cell) = spy_cell::<TestPacket<StdPacket>>();
 
         let packet_creation = |id| -> Vec<u8> {
             let size = if id < MAX_PAYLOAD_LEN as u32 {
@@ -300,7 +293,9 @@ mod test {
         let sender = Arc::clone(&cell.sender());
         let server = tokio::task::spawn(async move {
             for packet in packets_clone {
-                sender.enqueue(StdPacket::from_raw_buffer(&packet)).unwrap();
+                sender
+                    .enqueue(TestPacket::<StdPacket>::from_raw_buffer(&packet))
+                    .unwrap();
             }
         });
 
@@ -310,6 +305,7 @@ mod test {
         let client = tokio::spawn(async move {
             for packet in packets_clone {
                 let new = cell.receiver().dequeue().await.unwrap();
+                assert_eq!(new.delay(), Duration::ZERO);
                 assert_eq!(new.as_slice(), packet);
             }
         });
