@@ -3,7 +3,10 @@ use std::fmt::Debug;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use tokio::time::{Duration, Instant};
+use tokio::{
+    sync::mpsc::{error::TryRecvError, UnboundedReceiver},
+    time::{Duration, Instant},
+};
 use tracing::{debug, trace};
 
 use super::BwType;
@@ -12,6 +15,83 @@ use crate::cells::Packet;
 #[cfg(feature = "serde")]
 fn serde_default<T: Default + PartialEq>(t: &T) -> bool {
     *t == Default::default()
+}
+
+pub enum PacketInboundTryReceiveError {
+    Empty,
+    Failed,
+}
+
+pub trait PacketInbound<P> {
+    fn try_receive(&mut self) -> Result<P, PacketInboundTryReceiveError>;
+}
+
+impl<P> PacketInbound<P> for UnboundedReceiver<P> {
+    fn try_receive(&mut self) -> Result<P, PacketInboundTryReceiveError> {
+        self.try_recv().map_err(|e| match e {
+            TryRecvError::Empty => PacketInboundTryReceiveError::Empty,
+            TryRecvError::Disconnected => PacketInboundTryReceiveError::Failed,
+        })
+    }
+}
+
+pub struct AQM<Q, P>
+where
+    Q: PacketQueue<P>,
+    P: Packet,
+{
+    inbound_buffer: VecDeque<P>,
+    queue: Q,
+    latest_enqueue_timestamp: Option<Instant>,
+}
+
+impl<Q, P> AQM<Q, P>
+where
+    Q: PacketQueue<P>,
+    P: Packet,
+{
+    pub fn new(queue: Q) -> Self {
+        Self {
+            inbound_buffer: VecDeque::with_capacity(1024),
+            queue,
+            latest_enqueue_timestamp: None,
+        }
+    }
+
+    pub fn configure(&mut self, config: Q::Config) {
+        self.queue.configure(config);
+    }
+
+    /// If this returns true, the caller should try to enqueue more packets.
+    pub fn need_more_packets(&self, next_available: Instant) -> bool {
+        self.latest_enqueue_timestamp
+            .is_none_or(|t| t <= next_available)
+    }
+
+    /// Return the packet immediately, if the inner queue is zero-buffered.
+    pub fn enqueue(&mut self, packet: P) -> Option<P> {
+        self.latest_enqueue_timestamp = packet.get_timestamp().into();
+        if self.queue.is_zero_buffer() {
+            packet.into()
+        } else {
+            self.inbound_buffer.push_back(packet);
+            None
+        }
+    }
+
+    /// The caller ensures that:
+    ///   1) This function is not called before the `timestamp` here.
+    ///   2) The timestamp should be non-decending.
+    pub fn dequeue_at(&mut self, timestamp: Instant) -> Option<P> {
+        while let Some(head) = self.inbound_buffer.front() {
+            if head.get_timestamp() <= timestamp {
+                self.queue.enqueue(self.inbound_buffer.pop_front().unwrap());
+            } else {
+                break;
+            }
+        }
+        self.queue.dequeue()
+    }
 }
 
 pub trait PacketQueue<P>: Send
@@ -25,13 +105,17 @@ where
 
     fn configure(&mut self, config: Self::Config);
 
-    /// Returns the packet if there is not space for it.
-    fn enqueue(&mut self, packet: P) -> Option<P>;
+    fn enqueue(&mut self, packet: P);
 
     // If the queue is empty, return `None`
     fn dequeue(&mut self) -> Option<P>;
 
     fn is_empty(&self) -> bool;
+
+    // Returns if the buffer is zero-sized.
+    fn is_zero_buffer(&self) -> bool {
+        false
+    }
 
     // How this queue measures the size of a packet.
     // Should return 0 if it measures the size of a packet based on its L3 size.
@@ -102,9 +186,8 @@ where
 
     fn configure(&mut self, _config: Self::Config) {}
 
-    fn enqueue(&mut self, packet: P) -> Option<P> {
+    fn enqueue(&mut self, packet: P) {
         self.queue.push_back(packet);
-        None
     }
 
     fn dequeue(&mut self) -> Option<P> {
@@ -212,13 +295,12 @@ where
         self.bw_type = config.bw_type;
     }
 
-    fn enqueue(&mut self, packet: P) -> Option<P> {
-        if self.packet_limit.is_some_and(|limit| limit == 0)
+    fn is_zero_buffer(&self) -> bool {
+        self.packet_limit.is_some_and(|limit| limit == 0)
             || self.byte_limit.is_some_and(|limit| limit == 0)
-        {
-            return packet.into();
-        }
+    }
 
+    fn enqueue(&mut self, packet: P) {
         if self
             .packet_limit
             .is_none_or(|limit| self.queue.len() < limit)
@@ -237,7 +319,6 @@ where
                 "Drop packet(l3_len: {}, extra_len: {}) when enqueue", packet.l3_length(), self.bw_type.extra_length()
             );
         }
-        None
     }
 
     fn dequeue(&mut self) -> Option<P> {
@@ -351,13 +432,12 @@ where
         self.bw_type = config.bw_type;
     }
 
-    fn enqueue(&mut self, packet: P) -> Option<P> {
-        if self.packet_limit.is_some_and(|limit| limit == 0)
+    fn is_zero_buffer(&self) -> bool {
+        self.packet_limit.is_some_and(|limit| limit == 0)
             || self.byte_limit.is_some_and(|limit| limit == 0)
-        {
-            return packet.into();
-        }
+    }
 
+    fn enqueue(&mut self, packet: P) {
         self.now_bytes += packet.l3_length() + self.bw_type.extra_length();
         self.queue.push_back(packet);
         while self
@@ -374,7 +454,6 @@ where
                 "Drop packet(l3_len: {}, extra_len: {}) when enqueue another packet", _packet.l3_length(), self.bw_type.extra_length()
             );
         }
-        None
     }
 
     fn dequeue(&mut self) -> Option<P> {
@@ -554,13 +633,12 @@ where
         self.config = config;
     }
 
-    fn enqueue(&mut self, packet: P) -> Option<P> {
-        if self.config.packet_limit.is_some_and(|limit| limit == 0)
+    fn is_zero_buffer(&self) -> bool {
+        self.config.packet_limit.is_some_and(|limit| limit == 0)
             || self.config.byte_limit.is_some_and(|limit| limit == 0)
-        {
-            return packet.into();
-        }
+    }
 
+    fn enqueue(&mut self, packet: P) {
         if self
             .config
             .packet_limit
@@ -582,7 +660,6 @@ where
                 self.config.bw_type.extra_length()
             );
         }
-        None
     }
 
     fn dequeue(&mut self) -> Option<P> {

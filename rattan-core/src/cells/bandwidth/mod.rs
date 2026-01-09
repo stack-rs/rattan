@@ -6,6 +6,7 @@ use netem_trace::{model::BwTraceConfig, Bandwidth, BwTrace, Delay};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::time::Instant;
 use tracing::{debug, info, trace};
 
@@ -13,6 +14,7 @@ use super::{
     AtomicCellState, Cell, CellState, ControlInterface, CurrentConfig, Egress, Ingress, Packet,
     LARGE_DURATION, TRACE_START_INSTANT,
 };
+use crate::cells::bandwidth::queue::AQM;
 use crate::error::Error;
 use crate::metal::timer::Timer;
 
@@ -91,7 +93,7 @@ where
     egress: mpsc::UnboundedReceiver<P>,
     bw_type: BwType,
     bandwidth: Bandwidth,
-    packet_queue: Q,
+    packet_queue: AQM<Q, P>,
     next_available: Instant,
     config_rx: mpsc::UnboundedReceiver<BwCellConfig<P, Q>>,
     timer: Timer,
@@ -143,6 +145,7 @@ where
     /// queue and thus being returnd, this function returns `Some`. When this happens, the caller
     /// should send out the packet immediately.
     #[inline(always)]
+    #[must_use]
     fn enqueue_packet(&mut self, new_packet: P) -> Option<P> {
         if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet) {
             let timestamp = packet_to_drop.get_timestamp();
@@ -155,7 +158,6 @@ where
         None
     }
 }
-
 #[async_trait]
 impl<P, Q> Egress<P> for BwCellEgress<P, Q>
 where
@@ -187,7 +189,29 @@ where
             }
         }
 
-        let mut packet = self.packet_queue.dequeue();
+        while self.packet_queue.need_more_packets(self.next_available) {
+            match self.egress.try_recv() {
+                Ok(new_packet) => {
+                    let new_packet = crate::check_cell_state!(self.state, new_packet);
+                    if let Some(packet) = self.enqueue_packet(new_packet) {
+                        return Some(packet);
+                    }
+                }
+                Err(TryRecvError::Empty) => {
+                    break;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    return None;
+                }
+            }
+        }
+        // Here, either:
+        //    1) No more packets can be retrived from egress, or
+        //    2) A packet, that should enter the queue after `self.next_available` is seen.
+        // Thus the `dequeue_at()` see a correct queue, containing any packet that should
+        // enter the AQM at `self.next_available`.
+        let mut packet = self.packet_queue.dequeue_at(self.next_available);
+
         while packet.is_none() {
             // the queue is empty, wait for the next packet
             tokio::select! {
@@ -198,10 +222,11 @@ where
                 // `new_packet` can be None only if `self.egress` is closed.
                 new_packet = self.egress.recv() => {
                     let new_packet = crate::check_cell_state!(self.state, new_packet?);
+                    let timestamp = new_packet.get_timestamp();
                     if let Some(packet) = self.enqueue_packet(new_packet){
                         return Some(packet);
                     }
-                    packet = self.packet_queue.dequeue();
+                    packet = self.packet_queue.dequeue_at(timestamp);
                 }
             }
         }
@@ -377,7 +402,7 @@ where
                 egress: tx,
                 bw_type: bw_type.into().unwrap_or_default(),
                 bandwidth: bandwidth.into().unwrap_or(MAX_BANDWIDTH),
-                packet_queue,
+                packet_queue: AQM::new(packet_queue),
                 next_available: Instant::now(),
                 config_rx,
                 timer: Timer::new()?,
@@ -400,7 +425,7 @@ where
     egress: mpsc::UnboundedReceiver<P>,
     bw_type: BwType,
     trace: Box<dyn BwTrace>,
-    packet_queue: Q,
+    packet_queue: AQM<Q, P>,
     current_bandwidth: CurrentConfig<Bandwidth>,
     next_available: Instant,
     next_change: Instant,
@@ -478,11 +503,12 @@ where
         if let Some((bandwidth, duration)) = self.trace.next_bw() {
             self.change_bandwidth(bandwidth, change_time);
             self.next_change = change_time + duration;
-            #[cfg(test)]
-            trace!(
-                "Bandwidth changed to {:?}, next change after {:?}",
+            // #[cfg(test)]
+            eprintln!(
+                "Bandwidth changed to {:?}, next change after {:?}. now {:?}",
                 bandwidth,
-                self.next_change - Instant::now()
+                self.next_change - Instant::now(),
+                Instant::now(),
             );
             true
         } else {
@@ -556,7 +582,29 @@ where
             }
         }
 
-        let mut packet = self.packet_queue.dequeue();
+        while self.packet_queue.need_more_packets(self.next_available) {
+            match self.egress.try_recv() {
+                Ok(new_packet) => {
+                    let new_packet = crate::check_cell_state!(self.state, new_packet);
+                    if let Some(packet) = self.enqueue_packet(new_packet) {
+                        return Some(packet);
+                    }
+                }
+                Err(TryRecvError::Empty) => {
+                    break;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    return None;
+                }
+            }
+        }
+
+        // Here, either:
+        //    1) No more packets can be retrived from egress, or
+        //    2) A packet, that should enter the queue after `self.next_available` is seen.
+        // Thus the `dequeue_at()` see a correct queue, containing any packet that should
+        // enter the AQM at `self.next_available`.
+        let mut packet = self.packet_queue.dequeue_at(self.next_available);
 
         while packet.is_none() {
             // the queue is empty, wait for the next packet
@@ -571,10 +619,11 @@ where
                 // `new_packet` can be None only if `self.egress` is closed.
                 new_packet = self.egress.recv() => {
                     let new_packet = crate::check_cell_state!(self.state, new_packet?);
+                    let timestamp = new_packet.get_timestamp();
                     if let Some(packet) = self.enqueue_packet(new_packet){
                         return Some(packet);
                     }
-                    packet = self.packet_queue.dequeue();
+                    packet = self.packet_queue.dequeue_at(timestamp);
                 }
             }
         }
@@ -606,6 +655,7 @@ where
     fn reset(&mut self) {
         self.next_available = *TRACE_START_INSTANT.get_or_init(Instant::now);
         self.next_change = *TRACE_START_INSTANT.get_or_init(Instant::now);
+        eprintln!("Reset to {:?}", self.next_change);
     }
 
     fn change_state(&self, state: CellState) {
@@ -770,7 +820,7 @@ where
                 egress: tx,
                 bw_type: bw_type.into().unwrap_or_default(),
                 trace,
-                packet_queue,
+                packet_queue: AQM::new(packet_queue),
                 current_bandwidth: CurrentConfig::default(),
                 next_available: Instant::now(),
                 next_change: Instant::now(),
