@@ -208,7 +208,7 @@ where
         // Here, either:
         //    1) No more packets can be retrived from egress, or
         //    2) A packet, that should enter the queue after `self.next_available` is seen.
-        // Thus the `dequeue_at()` see a correct queue, containing any packet that should
+        // Thus the `dequeue_at()` sees a correct queue, containing any packet that should
         // enter the AQM at `self.next_available`.
         let mut packet = self.packet_queue.dequeue_at(self.next_available);
 
@@ -503,8 +503,8 @@ where
         if let Some((bandwidth, duration)) = self.trace.next_bw() {
             self.change_bandwidth(bandwidth, change_time);
             self.next_change = change_time + duration;
-            // #[cfg(test)]
-            eprintln!(
+            #[cfg(test)]
+            trace!(
                 "Bandwidth changed to {:?}, next change after {:?}. now {:?}",
                 bandwidth,
                 self.next_change - Instant::now(),
@@ -602,7 +602,7 @@ where
         // Here, either:
         //    1) No more packets can be retrived from egress, or
         //    2) A packet, that should enter the queue after `self.next_available` is seen.
-        // Thus the `dequeue_at()` see a correct queue, containing any packet that should
+        // Thus the `dequeue_at()` sees a correct queue, containing any packet that should
         // enter the AQM at `self.next_available`.
         let mut packet = self.packet_queue.dequeue_at(self.next_available);
 
@@ -655,7 +655,6 @@ where
     fn reset(&mut self) {
         self.next_available = *TRACE_START_INSTANT.get_or_init(Instant::now);
         self.next_change = *TRACE_START_INSTANT.get_or_init(Instant::now);
-        eprintln!("Reset to {:?}", self.next_change);
     }
 
     fn change_state(&self, state: CellState) {

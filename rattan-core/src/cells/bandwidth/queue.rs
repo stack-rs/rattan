@@ -68,7 +68,9 @@ where
             .is_none_or(|t| t <= next_available)
     }
 
-    /// Return the packet immediately, if the inner queue is zero-buffered.
+    /// Enqueue a packet into the AQM.
+    ///
+    /// If the inner queue is zero-buffered, the packet is returned immediately.
     pub fn enqueue(&mut self, packet: P) -> Option<P> {
         self.latest_enqueue_timestamp = packet.get_timestamp().into();
         if self.queue.is_zero_buffer() {
@@ -79,9 +81,13 @@ where
         }
     }
 
+    /// Dequeue a packet from the AQM based on the timestamp.
+    /// The function tries to maintain the queue status at the given timestamp before dequeing a packet,
+    /// by enqueuing any packets that should have been enqueued by that timestamp.
+    ///
     /// The caller ensures that:
-    ///   1) This function is not called before the `timestamp` here.
-    ///   2) The timestamp should be non-decending.
+    ///   1) This function is not called before the wall-clock time of `timestamp`.
+    ///   2) The timestamp should be non-descending.
     pub fn dequeue_at(&mut self, timestamp: Instant) -> Option<P> {
         while let Some(head) = self.inbound_buffer.front() {
             if head.get_timestamp() <= timestamp {
@@ -316,7 +322,7 @@ where
                 queue_len = self.queue.len(),
                 now_bytes = self.now_bytes,
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                "Drop packet(l3_len: {}, extra_len: {}) when enqueue", packet.l3_length(), self.bw_type.extra_length()
+                "Drop packet(l3_len: {}, extra_len: {}) when enqueuing", packet.l3_length(), self.bw_type.extra_length()
             );
         }
     }
@@ -451,7 +457,7 @@ where
                 after_queue_len = self.queue.len(),
                 after_now_bytes = self.now_bytes,
                 header = ?format!("{:X?}", &_packet.as_slice()[0..std::cmp::min(56, _packet.length())]),
-                "Drop packet(l3_len: {}, extra_len: {}) when enqueue another packet", _packet.l3_length(), self.bw_type.extra_length()
+                "Drop packet(l3_len: {}, extra_len: {}) when enqueuing another packet", _packet.l3_length(), self.bw_type.extra_length()
             );
         }
     }
@@ -655,7 +661,7 @@ where
                 queue_len = self.queue.len(),
                 now_bytes = self.now_bytes,
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                "Drop packet(l3_len: {}, extra_len: {}) when enqueue",
+                "Drop packet(l3_len: {}, extra_len: {}) when enqueuing",
                 packet.l3_length(),
                 self.config.bw_type.extra_length()
             );
@@ -683,7 +689,7 @@ where
                 if self.dropping {
                     if !drop {
                         self.dropping = false;
-                        trace!("Exit dropping state since packet should not drop");
+                        trace!("Exit dropping state since packet should not be dropped");
                     } else {
                         while self.dropping && now >= self.drop_next {
                             self.count += 1;
