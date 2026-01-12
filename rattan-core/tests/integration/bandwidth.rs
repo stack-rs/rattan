@@ -817,11 +817,11 @@ fn test_replay() {
         let trace_config = RepeatedBwPatternConfig::new().pattern(vec![
             Box::new(StaticBwConfig {
                 bw: Some(Bandwidth::from_mbps(100)),
-                duration: Some(Duration::from_secs(5)),
+                duration: Some(Duration::from_secs(6)),
             }),
             Box::new(StaticBwConfig {
                 bw: Some(Bandwidth::from_mbps(20)),
-                duration: Some(Duration::from_secs(5)),
+                duration: Some(Duration::from_secs(6)),
             }) as Box<dyn BwTraceConfig>,
         ]);
         control_interface
@@ -836,7 +836,7 @@ fn test_replay() {
             .left_spawn(None, move || {
                 let client_handle = std::process::Command::new("iperf3")
                     .args([
-                        "-c", &right_ip, "-p", "9000", "--cport", "10000", "-t", "10", "-J", "-R",
+                        "-c", &right_ip, "-p", "9000", "--cport", "10000", "-t", "12", "-J", "-R",
                         "-C", "reno",
                     ])
                     .stdout(std::process::Stdio::piped())
@@ -860,9 +860,13 @@ fn test_replay() {
             .captures_iter(&stdout)
             .flat_map(|cap| cap[1].parse::<u64>())
             .step_by(2)
-            .take(10)
+            .take(11)
             .collect::<Vec<_>>();
         let front_5s_bandwidth = bandwidth.drain(0..5).collect::<Vec<_>>();
+
+        // There could be a multi-hundred-ms gap between the initial request by iperf and the actual start point
+        // of trasmission. Thus, skip one sec near the change point of bw.
+        let _ = bandwidth.drain(0..1).take(1);
         let back_5s_bandwidth = bandwidth.drain(0..5).collect::<Vec<_>>();
 
         let front_5s_bitrate =
@@ -881,7 +885,16 @@ fn test_replay() {
             back_5s_bandwidth
         );
 
-        assert!(front_5s_bitrate > 90000000 && front_5s_bitrate < 100000000);
-        assert!(back_5s_bitrate > 18000000 && back_5s_bitrate < 22000000);
+        // Correct for difference between payload length and L2 length
+        let front_5s_target_rate = Bandwidth::from_mbps(100).as_bps() as f64 * 1460.0 / 1514.0;
+        let back_5s_target_rate = Bandwidth::from_mbps(20).as_bps() as f64 * 1460.0 / 1514.0;
+
+        let front_5s_bitrate = front_5s_bitrate as f64;
+        let back_5s_bitrate = back_5s_bitrate as f64;
+
+        assert!(front_5s_bitrate > front_5s_target_rate * 0.97);
+        assert!(front_5s_bitrate < front_5s_target_rate * 1.03);
+        assert!(back_5s_bitrate > back_5s_target_rate * 0.97);
+        assert!(back_5s_bitrate < back_5s_target_rate * 1.03);
     }
 }
