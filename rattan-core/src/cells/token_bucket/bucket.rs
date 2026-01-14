@@ -77,7 +77,6 @@ impl TokenBucket {
 
     // Allows maintaining the tokens (in Bytes) in bucket during a config change.
     // Not used in current token_bucket implementation.
-    #[allow(unused)]
     pub fn change_config(
         &mut self,
         burst_size: ByteSize,

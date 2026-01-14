@@ -66,12 +66,31 @@ where
     peak_token_bucket: Option<TokenBucket>,
     max_size: ByteSize,
     packet_queue: DropTailQueue<P>,
-    config_rx: mpsc::UnboundedReceiver<TokenBucketCellConfig>,
+    config_rx: mpsc::UnboundedReceiver<(Instant, TokenBucketCellConfig)>,
     timer: Timer,
     state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
     logical_clock: Instant,
+}
+
+fn update_token_bucket(
+    old: &mut Option<TokenBucket>,
+    burst_size: ByteSize,
+    token_rate: Bandwidth,
+    timestamp: Instant,
+) {
+    if let Some(old) = old.as_mut() {
+        // Update the old bucket.
+        old.change_config(burst_size, token_rate, timestamp);
+    } else {
+        // Init a new bucket
+        let _ = old.insert(TokenBucket::new(
+            burst_size,
+            token_rate,
+            timestamp - LARGE_DURATION,
+        ));
+    }
 }
 
 impl<P> TokenBucketCellEgress<P>
@@ -80,21 +99,21 @@ where
 {
     fn set_config(&mut self, config: TokenBucketCellConfig, timestamp: Instant) {
         let mut new_max_size = ByteSize(u64::MAX);
-        self.token_bucket =
-            if let (Some(burst_size), Some(token_rate)) = (config.burst, config.rate) {
-                new_max_size = new_max_size.min(burst_size);
-                TokenBucket::new(burst_size, token_rate, timestamp - LARGE_DURATION).into()
-            } else {
-                None
-            };
 
-        self.peak_token_bucket =
-            if let (Some(burst_size), Some(token_rate)) = (config.minburst, config.peakrate) {
-                new_max_size = new_max_size.min(burst_size);
-                TokenBucket::new(burst_size, token_rate, timestamp - LARGE_DURATION).into()
-            } else {
-                None
-            };
+        if let (Some(burst_size), Some(token_rate)) = (config.burst, config.rate) {
+            new_max_size = new_max_size.min(burst_size);
+            update_token_bucket(&mut self.token_bucket, burst_size, token_rate, timestamp);
+        };
+
+        if let (Some(burst_size), Some(token_rate)) = (config.minburst, config.peakrate) {
+            new_max_size = new_max_size.min(burst_size);
+            update_token_bucket(
+                &mut self.peak_token_bucket,
+                burst_size,
+                token_rate,
+                timestamp,
+            );
+        };
 
         // calculate max_size
         let old_max_size = self.max_size;
@@ -171,6 +190,9 @@ where
                     .as_mut()
                     .map(|t| t.reserve(current_size)),
             ) {
+                // None:              The token bucket is not present.
+                // Some(None):        The token bucket is present, but there is not suffcient token.
+                // Some(Some(token)): The token bucket is present, and there is token to be consumed.
                 (Some(None), _) | (_, Some(None)) => {
                     // We have packets waiting to be sent, yet at least one token bucket is not ready
                     debug!(
@@ -183,14 +205,14 @@ where
                     self.update_available(Some(current_bytes));
                     return None;
                 }
-                (Some(Some(token)), None) | (None, Some(Some(token))) => {
-                    token.consume();
+                (token_a, token_b) => {
+                    if let Some(token) = token_a.flatten() {
+                        token.consume()
+                    };
+                    if let Some(token) = token_b.flatten() {
+                        token.consume()
+                    };
                 }
-                (Some(Some(token_a)), Some(Some(token_b))) => {
-                    token_a.consume();
-                    token_b.consume();
-                }
-                (None, None) => {}
             }
             // Send this packet!
             let mut current_packet = if let Some(head_packet) = self.packet_queue.dequeue() {
@@ -246,8 +268,8 @@ where
         while new_packet.is_none() {
             tokio::select! {
                 biased;
-                Some(config) = self.config_rx.recv() => {
-                    self.set_config(config, Instant::now());
+                Some((timestamp, config)) = self.config_rx.recv() => {
+                    self.set_config(config, timestamp);
                 }
                 recv_packet = self.egress.recv() => {
                     // return None if the channel is closed
@@ -352,7 +374,53 @@ impl TokenBucketCellConfig {
 }
 
 pub struct TokenBucketCellControlInterface {
-    config_tx: mpsc::UnboundedSender<TokenBucketCellConfig>,
+    config_tx: mpsc::UnboundedSender<(Instant, TokenBucketCellConfig)>,
+}
+
+fn sanity_check(config: TokenBucketCellConfig) -> Result<TokenBucketCellConfig, Error> {
+    if (config.rate.is_none() && config.burst.is_some())
+        || (config.rate.is_some() && config.burst.is_none())
+    {
+        return Err(Error::ConfigError(
+            "rate and burst should be provided together".to_string(),
+        ));
+    }
+    if (config.peakrate.is_none() && config.minburst.is_some())
+        || (config.peakrate.is_some() && config.minburst.is_none())
+    {
+        return Err(Error::ConfigError(
+            "peakrate and minburst should be provided together".to_string(),
+        ));
+    }
+    if let Some(rate) = config.rate {
+        if rate.as_bps() == 0 {
+            return Err(Error::ConfigError(
+                "rate must be greater than 0".to_string(),
+            ));
+        }
+    }
+    if let Some(burst) = config.burst {
+        if burst.as_u64() == 0 {
+            return Err(Error::ConfigError(
+                "burst must be greater than 0".to_string(),
+            ));
+        }
+    }
+    if let Some(peakrate) = config.peakrate {
+        if peakrate.as_bps() == 0 {
+            return Err(Error::ConfigError(
+                "peakrate must be greater than 0".to_string(),
+            ));
+        }
+    }
+    if let Some(minburst) = config.minburst {
+        if minburst.as_u64() == 0 {
+            return Err(Error::ConfigError(
+                "minburst must be greater than 0".to_string(),
+            ));
+        }
+    }
+    Ok(config)
 }
 
 impl ControlInterface for TokenBucketCellControlInterface {
@@ -360,52 +428,10 @@ impl ControlInterface for TokenBucketCellControlInterface {
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         // set_config of TokenBucketCellControlInterface (send config through tx)
-        if (config.rate.is_none() && config.burst.is_some())
-            || (config.rate.is_some() && config.burst.is_none())
-        {
-            return Err(Error::ConfigError(
-                "rate and burst should be provided together".to_string(),
-            ));
-        }
-        if (config.peakrate.is_none() && config.minburst.is_some())
-            || (config.peakrate.is_some() && config.minburst.is_none())
-        {
-            return Err(Error::ConfigError(
-                "peakrate and minburst should be provided together".to_string(),
-            ));
-        }
-        if let Some(rate) = config.rate {
-            if rate.as_bps() == 0 {
-                return Err(Error::ConfigError(
-                    "rate must be greater than 0".to_string(),
-                ));
-            }
-        }
-        if let Some(burst) = config.burst {
-            if burst.as_u64() == 0 {
-                return Err(Error::ConfigError(
-                    "burst must be greater than 0".to_string(),
-                ));
-            }
-        }
-        if let Some(peakrate) = config.peakrate {
-            if peakrate.as_bps() == 0 {
-                return Err(Error::ConfigError(
-                    "peakrate must be greater than 0".to_string(),
-                ));
-            }
-        }
-        if let Some(minburst) = config.minburst {
-            if minburst.as_u64() == 0 {
-                return Err(Error::ConfigError(
-                    "minburst must be greater than 0".to_string(),
-                ));
-            }
-        }
+        let config = sanity_check(config)?;
         self.config_tx
-            .send(config)
-            .map_err(|_| Error::ConfigError("Control channel is closed.".to_string()))?;
-        Ok(())
+            .send((Instant::now(), config))
+            .map_err(|_| Error::ConfigError("Control channel is closed.".to_string()))
     }
 }
 
@@ -615,6 +641,8 @@ mod tests {
         packet_size: usize,
         config: TokenBucketCellConfig,
         updated_config: TokenBucketCellConfig,
+        update_time_since_start: Duration,
+        packet_send_time_after_update: Duration,
     ) -> Result<(Vec<Duration>, Vec<Duration>), Error> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -640,6 +668,7 @@ mod tests {
         let mut measured_delays = Vec::new();
 
         let logical_time = Instant::now() + Duration::from_millis(10);
+        let update_time = logical_time + update_time_since_start;
 
         rt.block_on(async {
             timer.sleep_until(logical_time).await.unwrap();
@@ -674,9 +703,12 @@ mod tests {
             measured_delays.push(actual_receive_time.duration_since(send_time));
         }
 
-        controller_interface.config_tx.send(updated_config).unwrap();
+        controller_interface
+            .config_tx
+            .send((update_time, updated_config))
+            .unwrap();
 
-        let logical_time = Instant::now() + Duration::from_millis(10);
+        let logical_time = logical_time + packet_send_time_after_update;
 
         rt.block_on(async {
             timer.sleep_until(logical_time).await.unwrap();
@@ -867,8 +899,14 @@ mod tests {
         );
 
         // 256 Bytes L3 length
-        let (measured_delays, logical_delays) =
-            get_delays_with_update(4, 256 + 14, config, updated_config)?;
+        let (measured_delays, logical_delays) = get_delays_with_update(
+            4,
+            256 + 14,
+            config,
+            updated_config,
+            Duration::from_millis(1100),
+            Duration::from_millis(1140),
+        )?;
 
         // In this test, rate and burst is the bottleneck
         //
@@ -877,14 +915,17 @@ mod tests {
         // Each packet consumed token that needs 1s to refill after the config change.
         compare_delays(
             vec![
+                // Start from an fully filled bucket, thus the first two packets is not delayed.
                 Duration::ZERO,
                 Duration::ZERO,
                 Duration::from_millis(500),
                 Duration::from_millis(1000),
-                Duration::ZERO,
-                Duration::ZERO,
-                Duration::from_millis(1000),
-                Duration::from_millis(2000),
+                // Config change happens 100ms after 4th packet was sent, and 40ms before the 5th packet was sent.
+                // token when the 5th packet arrives: 100ms / 500ms/pkt + 40ms / 1s/pkt = 0.24 pkt, or 240ms at 1s/pkt.
+                Duration::from_millis(1000 - 240),
+                Duration::from_millis(2000 - 240),
+                Duration::from_millis(3000 - 240),
+                Duration::from_millis(4000 - 240),
             ],
             measured_delays,
             logical_delays,
@@ -914,8 +955,14 @@ mod tests {
             None,
         );
         // 256 Bytes L3 length
-        let (measured_delays, logical_delays) =
-            get_delays_with_update(4, 256 + 14, config, updated_config)?;
+        let (measured_delays, logical_delays) = get_delays_with_update(
+            4,
+            256 + 14,
+            config,
+            updated_config,
+            Duration::from_millis(3100),
+            Duration::from_millis(3140),
+        )?;
 
         // In this test, rate and burst is the bottleneck
         //
@@ -924,14 +971,17 @@ mod tests {
         // Each packet consumed token that needs 500ms to refill after the config change.
         compare_delays(
             vec![
+                // Start from an fully filled bucket, thus the first two packets is not delayed.
                 Duration::ZERO,
                 Duration::from_millis(1000),
                 Duration::from_millis(2000),
                 Duration::from_millis(3000),
-                Duration::ZERO,
-                Duration::from_millis(500),
-                Duration::from_millis(1000),
-                Duration::from_millis(1500),
+                // Config change happens 100ms after 4th packet was sent, and 40ms before the 5th packet was sent.
+                // token when the 5th packet arrives: 100ms / 1s/pkt + 40ms / 500ms/pkt = 0.18 pkt, or 90ms at 500ms/pkt.
+                Duration::from_millis(500 - 90),
+                Duration::from_millis(1000 - 90),
+                Duration::from_millis(1500 - 90),
+                Duration::from_millis(2000 - 90),
             ],
             measured_delays,
             logical_delays,

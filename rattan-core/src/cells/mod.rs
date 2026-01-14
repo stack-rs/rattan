@@ -459,6 +459,7 @@ pub trait ControlInterface: Send + Sync + 'static {
     #[cfg(not(feature = "serde"))]
     type Config: Send;
     fn set_config(&self, config: Self::Config) -> Result<(), Error>;
+    // TODO: add `set_config_at` to explicitly express the logical timestamp of config change.
 }
 
 #[cfg(feature = "serde")]
