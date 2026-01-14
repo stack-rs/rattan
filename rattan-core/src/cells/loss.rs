@@ -13,7 +13,7 @@ use tracing::{debug, info};
 
 use super::TRACE_START_INSTANT;
 use super::{ControlInterface, Egress, Ingress};
-use crate::cells::config_timestamp::CurrentConfig;
+use crate::cells::timed_config::TimedConfig;
 use crate::cells::{AtomicCellState, Cell, CellState, Packet, LARGE_DURATION};
 use crate::error::Error;
 use crate::utils::sync::AtomicRawCell;
@@ -227,7 +227,7 @@ where
 {
     egress: mpsc::UnboundedReceiver<P>,
     trace: Box<dyn LossTrace>,
-    current_loss_pattern: CurrentConfig<LossPattern>,
+    current_loss_pattern: TimedConfig<LossPattern>,
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<LossReplayCellConfig>,
     /// How many packets have been lost consecutively
@@ -321,7 +321,7 @@ where
 
         let current_loss_pattern = self
             .current_loss_pattern
-            .get_current(packet.get_timestamp());
+            .get_at_timestamp(packet.get_timestamp());
 
         // Notice that if the trace has gone to an end, the last value will be used.
         let loss_rate = if let Some(current_loss_pattern) = current_loss_pattern {
@@ -443,7 +443,7 @@ where
             egress: LossReplayCellEgress {
                 egress: tx,
                 trace,
-                current_loss_pattern: CurrentConfig::default(),
+                current_loss_pattern: TimedConfig::default(),
                 next_change: Instant::now(),
                 config_rx,
                 prev_loss: 0,

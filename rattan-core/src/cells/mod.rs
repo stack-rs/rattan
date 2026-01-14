@@ -17,7 +17,6 @@ use tokio::time::{Duration, Instant};
 use crate::error::Error;
 
 pub mod bandwidth;
-pub mod config_timestamp;
 pub mod delay;
 pub mod external;
 pub mod loss;
@@ -25,9 +24,10 @@ pub mod per_packet;
 pub mod router;
 pub mod shadow;
 pub mod spy;
+pub mod timed_config;
 pub mod token_bucket;
 
-pub use config_timestamp::CurrentConfig;
+pub use timed_config::TimedConfig;
 
 pub const LARGE_DURATION: Duration = Duration::from_secs(10 * 365 * 24 * 60 * 60);
 
@@ -49,6 +49,7 @@ pub trait Packet: Debug + 'static + Send {
     fn ether_hdr(&self) -> Option<Ethernet2Header>;
     fn ip_hdr(&self) -> Option<Ipv4Header>;
 
+    // TODO: remove this when 0.1.1 is released.
     // Timestamp
     /// Returns the timestamp at which this packet should have reached the cell
     ///
@@ -76,8 +77,8 @@ pub trait Packet: Debug + 'static + Send {
     /// This helps to avoid over-delaying packets due to sleep time shift.
     fn delay_until(&mut self, timestamp: Instant);
 
-    // Creates a new packet from its content and the timestamp at which it arrived.
-    // Used (and exists) in test code only.
+    /// Creates a new packet from its content and the timestamp at which it arrived.
+    /// Used (and exists) in test code only.
     #[cfg(any(test, doc))]
     fn with_timestamp(buf: &[u8], timestamp: Instant) -> Self;
 
@@ -533,11 +534,11 @@ pub use crate::core::FIRST_PACKET_INSTANT as TRACE_START_INSTANT;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u8)]
 pub enum CellState {
-    // Drops all packets
+    /// Drops all packets
     Drop = 0,
-    // Passes through all packets
+    /// Passes through all packets
     PassThrough = 1,
-    // Normal operation
+    /// Normal operation
     Normal = 2,
 }
 
@@ -560,11 +561,10 @@ impl AtomicCellState {
     }
 }
 
-// Check cell state, and:
-// Automatically handle Drop and Passthrough.
-// Packet is returned, on normal conditions.
-//
-// This is the behaviour for most (except ShadowCell) cells.
+/// Evaluates cell state logic for incoming packets.
+///
+/// Automatically handles `Drop` (returning `None`) and `PassThrough` (returning `Some`).
+/// For `Normal` states, it yields the packet to be used in the next logic step.
 #[macro_export]
 macro_rules! check_cell_state {
     ($state:expr, $packet:expr) => {

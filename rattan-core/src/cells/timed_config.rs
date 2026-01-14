@@ -7,12 +7,12 @@ use super::relative_time;
 
 /// Store last and current config.
 #[derive(Debug, Default)]
-pub struct CurrentConfig<C> {
+pub struct TimedConfig<C> {
     last: Option<C>,
     current: Option<(Instant, C)>,
 }
 
-impl<C: Debug> CurrentConfig<C> {
+impl<C: Debug> TimedConfig<C> {
     pub fn reset(&mut self) {
         self.current = None;
         self.last = None;
@@ -53,7 +53,7 @@ impl<C: Debug> CurrentConfig<C> {
     /// it is impossible for `self.current` and `self.last` to be `None`.
     /// So if this function ever returns `None`, the caller should unwrap it with
     /// some default value.
-    pub fn get_current(&self, timestamp: Instant) -> Option<&C> {
+    pub fn get_at_timestamp(&self, timestamp: Instant) -> Option<&C> {
         #[cfg(test)]
         tracing::debug!(
             "get_current called at logical {:?} wallclock {:?}",

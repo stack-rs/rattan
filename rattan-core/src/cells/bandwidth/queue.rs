@@ -88,6 +88,7 @@ where
     /// The caller ensures that:
     ///   1) This function is not called before the wall-clock time of `timestamp`.
     ///   2) The timestamp should be non-descending.
+    //  FIXME: The non-descending property can not be assured under multipath scenario.
     pub fn dequeue_at(&mut self, timestamp: Instant) -> Option<P> {
         while let Some(head) = self.inbound_buffer.front() {
             if head.get_timestamp() <= timestamp {
@@ -113,30 +114,30 @@ where
 
     fn enqueue(&mut self, packet: P);
 
-    // If the queue is empty, return `None`
+    /// If the queue is empty, return `None`
     fn dequeue(&mut self) -> Option<P>;
 
     fn is_empty(&self) -> bool;
 
-    // Returns if the buffer is zero-sized.
+    /// Returns if the buffer is zero-sized.
     fn is_zero_buffer(&self) -> bool {
         false
     }
 
-    // How this queue measures the size of a packet.
-    // Should return 0 if it measures the size of a packet based on its L3 size.
-    // Should return 14 if it measures that based on its L2 size (L3 length + 14 bytes L2 header).
+    /// How this queue measures the size of a packet.
+    /// Should return 0 if it measures the size of a packet based on its L3 size.
+    /// Should return 14 if it measures that based on its L2 size (L3 length + 14 bytes L2 header).
     fn get_extra_length(&self) -> usize {
         0
     }
 
-    // How this queue measures the size of a packet;
+    /// How this queue measures the size of a packet;
     #[inline(always)]
     fn get_packet_size(&self, packet: &P) -> usize {
         packet.l3_length() + self.get_extra_length()
     }
 
-    // If the queue is empty, return `None`
+    /// If the queue is empty, return `None`
     fn get_front_size(&self) -> Option<usize>;
 
     fn length(&self) -> usize;

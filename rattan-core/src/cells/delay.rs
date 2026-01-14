@@ -5,11 +5,8 @@ use netem_trace::{model::DelayTraceConfig, Delay, DelayTrace};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::Instant};
-#[cfg(test)]
-use tracing::trace;
-use tracing::{debug, info};
 
-use super::{CurrentConfig, LARGE_DURATION, TRACE_START_INSTANT};
+use super::{TimedConfig, LARGE_DURATION, TRACE_START_INSTANT};
 #[cfg(test)]
 use crate::cells::relative_time;
 use crate::cells::{AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, Packet};
@@ -157,7 +154,7 @@ impl ControlInterface for DelayCellControlInterface {
     type Config = DelayCellConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
-        info!("Setting delay to {:?}", config.delay);
+        tracing::info!("Setting delay to {:?}", config.delay);
         self.config_tx
             .send(config)
             .map_err(|_| Error::ConfigError("Control channel is closed.".to_string()))?;
@@ -202,7 +199,7 @@ where
 {
     pub fn new<D: Into<Option<Delay>>>(delay: D) -> Result<DelayCell<P>, Error> {
         let delay = delay.into().unwrap_or_default();
-        debug!(?delay, "New DelayCell");
+        tracing::debug!(?delay, "New DelayCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
 
@@ -232,7 +229,7 @@ where
 {
     egress: mpsc::UnboundedReceiver<P>,
     trace: Box<dyn DelayTrace>,
-    delays: CurrentConfig<Delay>,
+    delays: TimedConfig<Delay>,
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<DelayReplayCellConfig>,
     send_timer: Timer,
@@ -258,7 +255,7 @@ where
     fn update_delay(&mut self, timestamp: Instant) -> bool {
         if let Some((current_delay, duration)) = self.trace.next_delay() {
             #[cfg(test)]
-            trace!(
+            tracing::trace!(
                 "Setting {:?} delay valid from {:?} utill {:?}",
                 current_delay,
                 relative_time(timestamp),
@@ -268,7 +265,7 @@ where
             self.next_change = timestamp + duration;
             true
         } else {
-            debug!("Trace goes to end in DelayReplay Cell");
+            tracing::debug!("Trace goes to end in DelayReplay Cell");
             self.next_change = timestamp + LARGE_DURATION;
             false
         }
@@ -310,11 +307,12 @@ where
         let send_time = loop {
             // `get_current` returns None if and only if `self.delays` has never been updated
             // since last reset.
-            let logical_send_time = if let Some(delay_time) = self.delays.get_current(timestamp) {
-                (timestamp + *delay_time).max(self.latest_egress_timestamp)
-            } else {
-                timestamp.max(self.latest_egress_timestamp)
-            };
+            let logical_send_time =
+                if let Some(delay_time) = self.delays.get_at_timestamp(timestamp) {
+                    (timestamp + *delay_time).max(self.latest_egress_timestamp)
+                } else {
+                    timestamp.max(self.latest_egress_timestamp)
+                };
             let sleep_time = logical_send_time.duration_since(Instant::now());
 
             if sleep_time.is_zero() {
@@ -327,14 +325,10 @@ where
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                _ = self.change_timer.sleep_until(self.next_change),
-                    if self.next_change <= logical_send_time
-                => {
+                _ = self.change_timer.sleep_until(self.next_change), if self.next_change <= logical_send_time => {
                     self.update_delay(self.next_change);
                 }
-                _ = self.send_timer.sleep(sleep_time),
-                    if self.next_change > logical_send_time
-                => {
+                _ = self.send_timer.sleep(sleep_time), if self.next_change > logical_send_time => {
                     break logical_send_time;
                 }
             }
@@ -400,7 +394,7 @@ impl ControlInterface for DelayReplayCellControlInterface {
     type Config = DelayReplayCellConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
-        info!("Setting delay replay config");
+        tracing::info!("Setting delay replay config");
         self.config_tx
             .send(config)
             .map_err(|_| Error::ConfigError("Control channel is closed.".to_string()))?;
@@ -452,7 +446,7 @@ where
             egress: DelayReplayCellEgress {
                 egress: tx,
                 trace,
-                delays: CurrentConfig::default(),
+                delays: TimedConfig::default(),
                 next_change: Instant::now(),
                 config_rx,
                 send_timer: Timer::new()?,
@@ -532,7 +526,7 @@ mod tests {
             );
 
             let average_delay = delays.iter().sum::<f64>() / 10.0;
-            debug!("Delays: {:?}", delays);
+            tracing::debug!("Delays: {:?}", delays);
             info!(
                 "Average delay: {:.3}ms, error {:.1}ms",
                 average_delay,
@@ -674,12 +668,12 @@ mod tests {
         assert_eq!(real_delays.len(), 40);
 
         for (idx, calibrated_delay) in vec![10, 50, 10, 50].into_iter().enumerate() {
-            debug!("Expected delay {}ms", calibrated_delay);
+            tracing::debug!("Expected delay {}ms", calibrated_delay);
             let range = (idx * 10)..(10 + idx * 10);
 
             let average_delay = delays[range.clone()].iter().sum::<f64>() / 10.0;
-            debug!("Delays: {:?}", delays[range.clone()].iter().collect_vec());
-            debug!(
+            tracing::debug!("Delays: {:?}", delays[range.clone()].iter().collect_vec());
+            tracing::debug!(
                 "Real Delays: {:?}",
                 real_delays[range.clone()].iter().collect_vec()
             );
@@ -796,7 +790,7 @@ mod tests {
         assert_eq!(delays.len(), 30);
         for (idx, calibrated_delay) in vec![0, 10, 50].into_iter().enumerate() {
             let average_delay = delays[(idx * 10)..(10 + idx * 10)].iter().sum::<f64>() / 10.0;
-            debug!("Delays: {:?}", delays);
+            tracing::debug!("Delays: {:?}", delays);
             info!(
                 "Average delay: {:.3}ms, error {:.1}ms",
                 average_delay,

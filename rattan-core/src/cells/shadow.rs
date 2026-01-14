@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 
 use super::{ControlInterface, Egress, Ingress};
 use crate::cells::{AtomicCellState, Cell, CellState, Packet};
+use crate::check_cell_state;
 use crate::error::Error;
 
 #[derive(Clone)]
@@ -44,11 +45,7 @@ where
     async fn dequeue(&mut self) -> Option<P> {
         // Wait for Start notify if not started yet
         crate::wait_until_started!(self, Start);
-
-        match self.state.load(std::sync::atomic::Ordering::Acquire) {
-            CellState::Drop => None,
-            _ => self.egress.recv().await,
-        }
+        check_cell_state!(self.state, self.egress.recv().await?).into()
     }
 
     fn change_state(&self, state: CellState) {

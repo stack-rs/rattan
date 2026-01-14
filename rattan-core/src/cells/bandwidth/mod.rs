@@ -11,7 +11,7 @@ use tokio::time::Instant;
 use tracing::{debug, info, trace};
 
 use super::{
-    AtomicCellState, Cell, CellState, ControlInterface, CurrentConfig, Egress, Ingress, Packet,
+    AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, Packet, TimedConfig,
     LARGE_DURATION, TRACE_START_INSTANT,
 };
 use crate::cells::bandwidth::queue::AQM;
@@ -426,7 +426,7 @@ where
     bw_type: BwType,
     trace: Box<dyn BwTrace>,
     packet_queue: AQM<Q, P>,
-    current_bandwidth: CurrentConfig<Bandwidth>,
+    current_bandwidth: TimedConfig<Bandwidth>,
     next_available: Instant,
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<BwReplayCellConfig<P, Q>>,
@@ -533,7 +533,7 @@ where
             if timestamp >= self.next_available {
                 let transfer_time = self
                     .current_bandwidth
-                    .get_current(timestamp)
+                    .get_at_timestamp(timestamp)
                     .map(|bw| transfer_time(packet_to_drop.l3_length(), *bw, self.bw_type));
                 self.next_available = timestamp + transfer_time.unwrap_or_default();
                 return Some(packet_to_drop);
@@ -634,7 +634,7 @@ where
 
         let transfer_time = self
             .current_bandwidth
-            .get_current(timestamp)
+            .get_at_timestamp(timestamp)
             .map(|bw| transfer_time(packet.l3_length(), *bw, self.bw_type));
 
         // release the packet immediately (aka infinity bandwidth) when no avaiable bandwidth has been set.
@@ -820,7 +820,7 @@ where
                 bw_type: bw_type.into().unwrap_or_default(),
                 trace,
                 packet_queue: AQM::new(packet_queue),
-                current_bandwidth: CurrentConfig::default(),
+                current_bandwidth: TimedConfig::default(),
                 next_available: Instant::now(),
                 next_change: Instant::now(),
                 config_rx,

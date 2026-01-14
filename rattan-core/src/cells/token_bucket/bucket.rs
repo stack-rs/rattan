@@ -2,7 +2,7 @@ use bandwidth::Bandwidth;
 use bytesize::ByteSize;
 use tokio::time::{Duration, Instant};
 
-use crate::cells::token_bucket::LARGE_DURATION;
+use crate::cells::LARGE_DURATION;
 
 fn length_to_time(length: ByteSize, rate: Bandwidth) -> Duration {
     if rate.as_bps() == 0 {
