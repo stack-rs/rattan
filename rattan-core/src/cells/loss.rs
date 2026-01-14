@@ -54,25 +54,15 @@ where
     R: Rng,
 {
     egress: mpsc::UnboundedReceiver<P>,
-    pattern: Arc<AtomicRawCell<LossPattern>>,
-    inner_pattern: Box<LossPattern>,
+    /// This `Arc` is shared with the `LossCellControlInterface`.
+    pattern_to_set: Arc<AtomicRawCell<LossPattern>>,
+    pattern_in_use: Box<LossPattern>,
     /// How many packets have been lost consecutively
     prev_loss: usize,
     rng: R,
     state: AtomicCellState,
-    config_rx: mpsc::UnboundedReceiver<LossCellConfig>,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
-}
-
-impl<P, R> LossCellEgress<P, R>
-where
-    P: Packet + Send + Sync,
-    R: Rng + Send + Sync,
-{
-    fn set_config(&mut self, config: LossCellConfig) {
-        *self.inner_pattern = config.pattern;
-    }
 }
 
 #[async_trait]
@@ -87,18 +77,17 @@ where
 
         // It could be None only if the other end of the channel has closed.
         let packet = self.egress.recv().await?;
-        while let Ok(config) = self.config_rx.try_recv() {
-            self.set_config(config);
+        let packet = crate::check_cell_state!(self.state, packet);
+
+        // Try to update the config.
+        if let Some(pattern) = self.pattern_to_set.swap_null() {
+            self.pattern_in_use = pattern;
+            debug!(?self.pattern_in_use, "Set inner pattern:");
         }
 
-        let packet = crate::check_cell_state!(self.state, packet);
-        if let Some(pattern) = self.pattern.swap_null() {
-            self.inner_pattern = pattern;
-            debug!(?self.inner_pattern, "Set inner pattern:");
-        }
-        let loss_rate = match self.inner_pattern.get(self.prev_loss) {
+        let loss_rate = match self.pattern_in_use.get(self.prev_loss) {
             Some(&loss_rate) => loss_rate,
-            None => *self.inner_pattern.last().unwrap_or(&0.0),
+            None => *self.pattern_in_use.last().unwrap_or(&0.0),
         };
         let rand_num = self.rng.random_range(0.0..1.0);
         if rand_num < loss_rate {
@@ -142,7 +131,7 @@ impl LossCellConfig {
 }
 
 pub struct LossCellControlInterface {
-    config_tx: mpsc::UnboundedSender<LossCellConfig>,
+    pattern_to_set: Arc<AtomicRawCell<LossPattern>>,
 }
 
 impl ControlInterface for LossCellControlInterface {
@@ -150,9 +139,7 @@ impl ControlInterface for LossCellControlInterface {
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         info!("Setting loss pattern to: {:?}", config.pattern);
-        self.config_tx
-            .send(config)
-            .map_err(|_| Error::ConfigError("Control channel is closed.".to_string()))?;
+        self.pattern_to_set.store(Box::new(config.pattern));
         Ok(())
     }
 }
@@ -198,22 +185,20 @@ where
         let pattern = pattern.into();
         debug!(?pattern, "New LossCell");
         let (rx, tx) = mpsc::unbounded_channel();
-        let (config_tx, config_rx) = mpsc::unbounded_channel();
-        let pattern = Arc::new(AtomicRawCell::new(Box::new(pattern)));
+        let pattern_to_set = Arc::new(AtomicRawCell::new(Box::new(pattern)));
         Ok(LossCell {
             ingress: Arc::new(LossCellIngress { ingress: rx }),
             egress: LossCellEgress {
                 egress: tx,
-                pattern: Arc::clone(&pattern),
-                inner_pattern: Box::default(),
+                pattern_to_set: Arc::clone(&pattern_to_set),
+                pattern_in_use: Box::default(),
                 prev_loss: 0,
                 rng,
                 state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
-                config_rx,
                 started: false,
             },
-            control_interface: Arc::new(LossCellControlInterface { config_tx }),
+            control_interface: Arc::new(LossCellControlInterface { pattern_to_set }),
         })
     }
 }
@@ -229,7 +214,7 @@ where
     trace: Box<dyn LossTrace>,
     current_loss_pattern: TimedConfig<LossPattern>,
     next_change: Instant,
-    config_rx: mpsc::UnboundedReceiver<LossReplayCellConfig>,
+    trace_to_set: Arc<AtomicRawCell<Box<dyn LossTraceConfig>>>,
     /// How many packets have been lost consecutively
     prev_loss: usize,
     rng: R,
@@ -257,9 +242,9 @@ where
         self.current_loss_pattern.update(loss, change_time);
     }
 
-    fn set_config(&mut self, config: LossReplayCellConfig) {
+    fn set_config(&mut self, trace_config: Box<dyn LossTraceConfig>) {
         tracing::debug!("Set inner trace config");
-        self.trace = config.trace_config.into_model();
+        self.trace = trace_config.into_model();
         let now = Instant::now();
         if !self.update_loss(now) {
             tracing::warn!("Setting null trace");
@@ -306,11 +291,12 @@ where
 
         // It could be None only if the other end of the channel has closed.
         let packet = self.egress.recv().await?;
-        while let Ok(config) = self.config_rx.try_recv() {
-            self.set_config(config);
-        }
-
         let packet = crate::check_cell_state!(self.state, packet);
+
+        // Try to update the config.
+        if let Some(trace) = self.trace_to_set.swap_null() {
+            self.set_config(*trace);
+        }
 
         let timestamp = packet.get_timestamp();
 
@@ -383,7 +369,7 @@ impl LossReplayCellConfig {
 }
 
 pub struct LossReplayCellControlInterface {
-    config_tx: mpsc::UnboundedSender<LossReplayCellConfig>,
+    trace_to_set: Arc<AtomicRawCell<Box<dyn LossTraceConfig>>>,
 }
 
 impl ControlInterface for LossReplayCellControlInterface {
@@ -391,9 +377,7 @@ impl ControlInterface for LossReplayCellControlInterface {
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
         info!("Setting loss replay config");
-        self.config_tx
-            .send(config)
-            .map_err(|_| Error::ConfigError("Control channel is closed.".to_string()))?;
+        self.trace_to_set.store(Box::new(config.trace_config));
         Ok(())
     }
 }
@@ -437,7 +421,7 @@ where
 {
     pub fn new(trace: Box<dyn LossTrace>, rng: R) -> Result<LossReplayCell<P, R>, Error> {
         let (rx, tx) = mpsc::unbounded_channel();
-        let (config_tx, config_rx) = mpsc::unbounded_channel();
+        let trace_to_set = Arc::new(AtomicRawCell::new_null());
         Ok(LossReplayCell {
             ingress: Arc::new(LossReplayCellIngress { ingress: rx }),
             egress: LossReplayCellEgress {
@@ -445,14 +429,14 @@ where
                 trace,
                 current_loss_pattern: TimedConfig::default(),
                 next_change: Instant::now(),
-                config_rx,
+                trace_to_set: trace_to_set.clone(),
                 prev_loss: 0,
                 rng,
                 state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
             },
-            control_interface: Arc::new(LossReplayCellControlInterface { config_tx }),
+            control_interface: Arc::new(LossReplayCellControlInterface { trace_to_set }),
         })
     }
 }
