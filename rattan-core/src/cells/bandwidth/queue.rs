@@ -10,7 +10,7 @@ use tokio::{
 use tracing::{debug, trace};
 
 use super::BwType;
-use crate::cells::Packet;
+use crate::cells::{Packet, LARGE_DURATION};
 
 #[cfg(feature = "serde")]
 fn serde_default<T: Default + PartialEq>(t: &T) -> bool {
@@ -98,6 +98,13 @@ where
             }
         }
         self.queue.dequeue()
+    }
+
+    pub fn next_call_time(&self) -> Instant {
+        if let Some(head) = self.inbound_buffer.front() {
+            return head.get_timestamp();
+        }
+        Instant::now() + LARGE_DURATION
     }
 }
 

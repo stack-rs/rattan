@@ -8,13 +8,14 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::time::Instant;
-use tracing::{debug, info, trace};
 
 use super::{
     AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, Packet, TimedConfig,
     LARGE_DURATION, TRACE_START_INSTANT,
 };
 use crate::cells::bandwidth::queue::AQM;
+#[cfg(test)]
+use crate::cells::relative_time;
 use crate::error::Error;
 use crate::metal::timer::Timer;
 
@@ -100,6 +101,7 @@ where
     state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
+    transmitting_packet: Option<P>,
 }
 
 impl<P, Q> BwCellEgress<P, Q>
@@ -110,7 +112,7 @@ where
     fn set_config(&mut self, config: BwCellConfig<P, Q>) {
         if let Some(bandwidth) = config.bandwidth {
             let now = Instant::now();
-            debug!(
+            tracing::debug!(
                 "Previous next_available distance: {:?}",
                 self.next_available - now
             );
@@ -120,42 +122,69 @@ where
                 now + (self.next_available - now)
                     .mul_f64(self.bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64)
             };
-            debug!(
+            tracing::debug!(
                 before = ?self.bandwidth,
                 after = ?bandwidth,
                 "Set inner bandwidth:"
             );
-            debug!(
+            tracing::debug!(
                 "Now next_available distance: {:?}",
                 self.next_available - now
             );
             self.bandwidth = bandwidth;
         }
         if let Some(queue_config) = config.queue_config {
-            debug!(?queue_config, "Set inner queue config:");
+            tracing::debug!(?queue_config, "Set inner queue config:");
             self.packet_queue.configure(queue_config);
         }
         if let Some(bw_type) = config.bw_type {
-            debug!(?bw_type, "Set inner bw_type:");
+            tracing::debug!(?bw_type, "Set inner bw_type:");
             self.bw_type = bw_type;
         }
     }
 
-    /// If and only if there is enough bandwidth to send a packet which is enqueued into a 0-sized
-    /// queue and thus being returned, this function returns `Some`. When this happens, the caller
-    /// should send out the packet immediately.
     #[inline(always)]
-    #[must_use]
-    fn enqueue_packet(&mut self, new_packet: P) -> Option<P> {
+    fn enqueue(&mut self, new_packet: P) {
+        #[cfg(test)]
+        tracing::debug!(
+            "Packet with timestamp {:?} is enqueued at {:?}",
+            relative_time(new_packet.get_timestamp()),
+            relative_time(Instant::now())
+        );
         if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet) {
-            let timestamp = packet_to_drop.get_timestamp();
-            if timestamp >= self.next_available {
-                self.next_available = timestamp
-                    + transfer_time(packet_to_drop.l3_length(), self.bandwidth, self.bw_type);
-                return Some(packet_to_drop);
-            }
+            // If the `self.transmitting_packet` is Some, the `packet_to_drop` is dropped.
+            self.set_transmitting_packet(packet_to_drop);
         }
-        None
+    }
+
+    #[inline(always)]
+    fn set_transmitting_packet(&mut self, mut packet: P) {
+        if self.transmitting_packet.is_none() {
+            let transfer_time = transfer_time(packet.l3_length(), self.bandwidth, self.bw_type);
+
+            if packet.get_timestamp() >= self.next_available {
+                // the packet arrives after next_available
+                self.next_available = packet.get_timestamp() + transfer_time;
+            } else {
+                // the packet arrives before next_available and now >= self.next_available
+                self.next_available += transfer_time;
+            }
+            #[cfg(test)]
+            tracing::debug!(
+                "Packet at {:?} is going to be delayed for {:?}",
+                relative_time(packet.get_timestamp()),
+                self.next_available.duration_since(packet.get_timestamp())
+            );
+            packet.delay_until(self.next_available);
+
+            self.transmitting_packet = packet.into();
+        } else {
+            #[cfg(test)]
+            tracing::warn!(
+                "Packet at {:?} is going to be dropped",
+                relative_time(packet.get_timestamp())
+            );
+        }
     }
 }
 #[async_trait]
@@ -182,9 +211,7 @@ where
                 // The new_packet's timestamp is earlier than self.next_available.
                 new_packet = self.egress.recv() => {
                     let new_packet = crate::check_cell_state!(self.state, new_packet?);
-                    if let Some(packet) = self.enqueue_packet(new_packet){
-                        return Some(packet);
-                    }
+                    self.enqueue(new_packet);
                 }
             }
         }
@@ -193,9 +220,7 @@ where
             match self.egress.try_recv() {
                 Ok(new_packet) => {
                     let new_packet = crate::check_cell_state!(self.state, new_packet);
-                    if let Some(packet) = self.enqueue_packet(new_packet) {
-                        return Some(packet);
-                    }
+                    self.enqueue(new_packet);
                 }
                 Err(TryRecvError::Empty) => {
                     break;
@@ -205,44 +230,48 @@ where
                 }
             }
         }
+
         // Here, either:
         //    1) No more packets can be retrieved from egress, or
         //    2) A packet, that should enter the queue after `self.next_available` is seen.
         // Thus the `dequeue_at()` sees a correct queue, containing any packet that should
         // enter the AQM at `self.next_available`.
-        let mut packet = self.packet_queue.dequeue_at(self.next_available);
+        if let Some(packet_to_send) = self.transmitting_packet.take() {
+            if let Some(next_packet) = self.packet_queue.dequeue_at(self.next_available) {
+                // Here, self.transmitting_packet can not be None, thus the next_packet would not be dropped.
+                self.set_transmitting_packet(next_packet);
+            }
+            return packet_to_send.into();
+        }
 
-        while packet.is_none() {
+        while self.transmitting_packet.is_none() {
             // the queue is empty, wait for the next packet
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
+                _ = self.timer.sleep_until(self.packet_queue.next_call_time()) => {
+                    if let Some(next_packet) = self.packet_queue.dequeue_at(Instant::now()) {
+                        // Here, self.transmitting_packet can not be None, thus the next_packet would not be dropped.
+                        self.set_transmitting_packet(next_packet);
+                    }
+                }
                 // `new_packet` can be None only if `self.egress` is closed.
                 new_packet = self.egress.recv() => {
                     let new_packet = crate::check_cell_state!(self.state, new_packet?);
                     let timestamp = new_packet.get_timestamp();
-                    if let Some(packet) = self.enqueue_packet(new_packet){
-                        return Some(packet);
+                    self.enqueue(new_packet);
+                    if let Some(next_packet) = self.packet_queue.dequeue_at(timestamp) {
+                        // Here, self.transmitting_packet can not be None, thus the next_packet would not be dropped.
+                        self.set_transmitting_packet(next_packet);
                     }
-                    packet = self.packet_queue.dequeue_at(timestamp);
                 }
             }
         }
 
-        // send the packet
-        let mut packet = packet.unwrap();
-        let transfer_time = transfer_time(packet.l3_length(), self.bandwidth, self.bw_type);
-        if packet.get_timestamp() >= self.next_available {
-            // the packet arrives after next_available
-            self.next_available = packet.get_timestamp() + transfer_time;
-        } else {
-            // the packet arrives before next_available and now >= self.next_available
-            packet.delay_until(self.next_available);
-            self.next_available += transfer_time;
-        }
-        Some(packet)
+        self.transmitting_packet
+            .take_if(|_| self.next_available <= Instant::now())
     }
 
     fn change_state(&self, state: CellState) {
@@ -336,13 +365,13 @@ where
                     "Bandwidth should be less than 2^64 bps".to_string(),
                 ));
             }
-            info!("Setting bandwidth to: {:?}", bandwidth);
+            tracing::info!("Setting bandwidth to: {:?}", bandwidth);
         }
         if let Some(queue_config) = config.queue_config.as_ref() {
-            info!("Setting queue config to: {:?}", queue_config);
+            tracing::info!("Setting queue config to: {:?}", queue_config);
         }
         if let Some(bw_type) = config.bw_type {
-            info!("Setting bw_type to: {:?}", bw_type);
+            tracing::info!("Setting bw_type to: {:?}", bw_type);
         }
         self.config_tx
             .send(config)
@@ -393,7 +422,7 @@ where
         packet_queue: Q,
         bw_type: BT,
     ) -> Result<BwCell<P, Q>, Error> {
-        debug!("New BwCell");
+        tracing::debug!("New BwCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
         Ok(BwCell {
@@ -409,6 +438,7 @@ where
                 state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
+                transmitting_packet: None,
             },
             control_interface: Arc::new(BwCellControlInterface { config_tx }),
         })
@@ -447,7 +477,7 @@ where
             .current_bandwidth
             .update_get_last(bandwidth, change_time);
 
-        trace!(
+        tracing::trace!(
             "Changing bandwidth from{:?} to {:?} (should at {:?} ago)",
             last_bandwidth,
             bandwidth,
@@ -455,7 +485,7 @@ where
         );
 
         let last_bandwidth = last_bandwidth.unwrap_or(&bandwidth);
-        trace!(
+        tracing::trace!(
             "Previous next_available distance: {:?}",
             self.next_available - change_time
         );
@@ -467,7 +497,7 @@ where
                 + (self.next_available - change_time)
                     .mul_f64(last_bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64)
         };
-        trace!(
+        tracing::trace!(
             "Now next_available distance: {:?}",
             self.next_available - change_time
         );
@@ -475,7 +505,7 @@ where
 
     fn set_config(&mut self, config: BwReplayCellConfig<P, Q>) {
         if let Some(trace_config) = config.trace_config {
-            debug!("Set inner trace config");
+            tracing::debug!("Set inner trace config");
             self.trace = trace_config.into_model();
             let now = Instant::now();
             if !self.update_bw(now) {
@@ -487,11 +517,11 @@ where
             }
         }
         if let Some(queue_config) = config.queue_config {
-            debug!(?queue_config, "Set inner queue config:");
+            tracing::debug!(?queue_config, "Set inner queue config:");
             self.packet_queue.configure(queue_config);
         }
         if let Some(bw_type) = config.bw_type {
-            debug!(?bw_type, "Set inner bw_type:");
+            tracing::debug!(?bw_type, "Set inner bw_type:");
             self.bw_type = bw_type;
         }
     }
@@ -504,15 +534,15 @@ where
             self.change_bandwidth(bandwidth, change_time);
             self.next_change = change_time + duration;
             #[cfg(test)]
-            trace!(
+            tracing::trace!(
                 "Bandwidth changed to {:?}, next change after {:?}. now {:?}",
                 bandwidth,
                 self.next_change - Instant::now(),
-                Instant::now(),
+                relative_time(Instant::now()),
             );
             true
         } else {
-            debug!("Trace goes to end in DelayReplay Cell");
+            tracing::debug!("Trace goes to end in DelayReplay Cell");
             self.next_change = change_time + LARGE_DURATION;
             false
         }
@@ -748,18 +778,18 @@ where
             ));
         }
         if let Some(_trace_config) = config.trace_config.as_ref() {
-            info!("Setting trace config");
+            tracing::info!("Setting trace config");
             #[cfg(feature = "serde")]
-            debug!(
+            tracing::debug!(
                 "Trace config: {:?}",
                 serde_json::to_string_pretty(_trace_config)
             );
         }
         if let Some(queue_config) = config.queue_config.as_ref() {
-            info!("Setting queue config to: {:?}", queue_config);
+            tracing::info!("Setting queue config to: {:?}", queue_config);
         }
         if let Some(bw_type) = config.bw_type {
-            info!("Setting bw_type to: {:?}", bw_type);
+            tracing::info!("Setting bw_type to: {:?}", bw_type);
         }
         self.config_tx
             .send(config)
@@ -810,7 +840,7 @@ where
         packet_queue: Q,
         bw_type: BT,
     ) -> Result<BwReplayCell<P, Q>, Error> {
-        debug!("New BwReplayCell");
+        tracing::debug!("New BwReplayCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
         Ok(BwReplayCell {
@@ -839,16 +869,93 @@ where
 mod tests {
     use std::time::Duration;
 
-    use crate::cells::bandwidth::queue::{DropTailQueue, DropTailQueueConfig};
+    use netem_trace::model::{RepeatedBwPatternConfig, StaticBwConfig};
+    use rstest::rstest;
+    use tracing::{span, Level};
 
     use super::*;
+    use crate::cells::bandwidth::queue::{
+        DropTailQueue, DropTailQueueConfig, InfiniteQueue, InfiniteQueueConfig,
+    };
     use crate::cells::{StdPacket, TestPacket};
-    use netem_trace::model::{RepeatedBwPatternConfig, StaticBwConfig};
-    use tracing::{info, span, Level};
+
+    #[rstest]
+    #[case(50)]
+    #[case(80)]
+    #[case(90)]
+    #[test_log::test]
+    fn test_send_interval(#[case] send_interval: u64) -> Result<(), Error> {
+        let _span = span!(Level::DEBUG, "test_send_interval").entered();
+
+        tracing::info!("Input Packet Interval = {:?}ms", send_interval);
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        let _guard = rt.enter();
+
+        // A 256B + 14B packet needs 80ms transmission time.
+        let bandwidth = Bandwidth::from_bps(25600);
+
+        let packet_queue = InfiniteQueue::new(InfiniteQueueConfig {});
+        let cell = BwCell::new(bandwidth, packet_queue, BwType::NetworkLayer)?;
+
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
+        egress.reset();
+        egress.change_state(CellState::Normal);
+
+        let mut logical_send_time = Instant::now() + Duration::from_millis(10);
+        let logical_start = logical_send_time;
+        for i in 0..16 {
+            tracing::debug!(
+                "Send packet with timestamp {:?}",
+                relative_time(logical_send_time)
+            );
+            ingress.enqueue(TestPacket::<StdPacket>::with_timestamp(
+                &[i; 256 + 14],
+                logical_send_time,
+            ))?;
+            logical_send_time += Duration::from_millis(send_interval);
+        }
+
+        let mut actual_receive_time = vec![];
+        let mut recv_cnt = 0;
+        while recv_cnt < 16 {
+            let Some(received) = rt.block_on(async { egress.dequeue().await }) else {
+                continue;
+            };
+            actual_receive_time.push(logical_start.elapsed());
+            assert_eq!(received.packet.buf[0] as u64, recv_cnt);
+            assert_eq!(
+                Duration::from_millis(80 + recv_cnt * 80u64.saturating_sub(send_interval)),
+                received.delay()
+            );
+            tracing::debug!(
+                "Packet {} has been delayed by logically {:?}",
+                received.packet.buf[0],
+                received.delay()
+            );
+            recv_cnt += 1;
+        }
+
+        tracing::info!("Actual receive time {:?}", &actual_receive_time);
+
+        for (i, actual_receive_time) in actual_receive_time.into_iter().enumerate() {
+            let delay_ms = actual_receive_time.as_secs_f64() * 1E3;
+            let expected_delay_ms =
+                80f64 * (i + 1) as f64 + send_interval.saturating_sub(80) as f64 * (i) as f64;
+            assert!(expected_delay_ms <= delay_ms + 1.0);
+            assert!(expected_delay_ms >= delay_ms - 1.0);
+        }
+
+        Ok(())
+    }
 
     #[test_log::test]
     fn zero_buffer_bw() -> Result<(), Error> {
-        let _span = span!(Level::INFO, "test_zero_buffer_bw").entered();
+        let _span = span!(Level::DEBUG, "test_zero_buffer_bw").entered();
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -868,28 +975,51 @@ mod tests {
         egress.change_state(CellState::Normal);
 
         let mut logical_send_time = Instant::now();
-        let logical_start = logical_send_time;
-        for i in 0..16 {
-            ingress.enqueue(TestPacket::<StdPacket>::with_timestamp(
-                &[i; 256],
-                logical_send_time,
-            ))?;
-            logical_send_time += Duration::from_millis(25);
-        }
 
-        for i in 0..4 {
-            let received = rt.block_on(async { egress.dequeue().await }).unwrap();
-            assert_eq!(received.packet.buf[0], i * 4);
-            assert_eq!(Duration::ZERO, received.delay());
-            info!(
+        let logical_start = logical_send_time;
+        relative_time(logical_start);
+
+        logical_send_time += Duration::from_millis(10);
+
+        let _handle = rt.spawn(async move {
+            for i in 0..17 {
+                tokio::time::sleep_until(logical_send_time).await;
+                ingress
+                    .enqueue(TestPacket::<StdPacket>::with_timestamp(
+                        &[i; 256 + 14],
+                        logical_send_time,
+                    ))
+                    .unwrap();
+                logical_send_time += Duration::from_millis(25);
+            }
+        });
+
+        let mut actual_receive_time = vec![];
+        let mut recv_cnt = 0;
+        while recv_cnt < 4 {
+            let Some(received) = rt.block_on(async { egress.dequeue().await }) else {
+                continue;
+            };
+            actual_receive_time.push(logical_start.elapsed());
+
+            assert_eq!(received.packet.buf[0], recv_cnt * 4);
+            assert_eq!(Duration::from_millis(80), received.delay());
+            tracing::info!(
                 "Packet {} sent at {:?} has been delayed by {:?} ",
                 received.packet.buf[0],
-                received
-                    .packet
-                    .get_timestamp()
-                    .duration_since(logical_start),
+                relative_time(received.packet.get_timestamp()) - received.delay(),
                 received.delay()
-            )
+            );
+            recv_cnt += 1;
+        }
+
+        tracing::info!("Actual receive time {:?}", &actual_receive_time);
+
+        for (i, actual_receive_time) in actual_receive_time.into_iter().enumerate() {
+            let delay_ms = actual_receive_time.as_secs_f64() * 1E3;
+            let expected_delay_ms = 100f64 * (i + 1) as f64 - 10.0;
+            assert!(expected_delay_ms <= delay_ms + 1.0);
+            assert!(expected_delay_ms >= delay_ms - 1.0);
         }
 
         Ok(())
@@ -947,7 +1077,7 @@ mod tests {
             let received = rt.block_on(async { egress.dequeue().await }).unwrap();
             assert_eq!(received.packet.buf[0], i);
             assert_eq!(Duration::ZERO, received.delay());
-            info!(
+            tracing::info!(
                 "Packet {} sent at {:?} has been delayed by {:?} ",
                 received.packet.buf[0],
                 received
