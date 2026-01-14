@@ -12,6 +12,32 @@ fn length_to_time(length: ByteSize, rate: Bandwidth) -> Duration {
     }
 }
 
+/// A Token bucket that is driven by a logical clock.
+///
+/// Example usage of using 2 buckets at the same time:
+///
+/// ```rust
+/// use bytesize::ByteSize;
+/// use rattan_core::cells::token_bucket::TokenBucket;
+///
+/// fn use_2(
+///     bucket_a: &mut TokenBucket,
+///     bucket_b: &mut TokenBucket,
+///     size: ByteSize,
+/// ) -> Option<ByteSize> {
+///     if let (Some(token_a), Some(token_b)) = (bucket_a.reserve(size), bucket_b.reserve(size)) {
+///         // Rust's borrow checker prevents any modification to the token buckets
+///         // before the tokens are dropped or consumed.
+///         token_a.consume();
+///         token_b.consume();
+///         // Send packet here
+///         Some(size)
+///     } else {
+///         // Nothing changed for either token bucket
+///         None
+///     }
+/// }
+/// ```
 pub struct TokenBucket {
     fill_up_time: Duration,
     token_rate: Bandwidth,
@@ -32,7 +58,6 @@ impl<'a> Token<'a> {
     }
 }
 
-/// Token bucket driven by a logical clock.
 impl TokenBucket {
     pub fn new(burst_size: ByteSize, token_rate: Bandwidth, timestamp: Instant) -> Self {
         Self {
@@ -106,13 +131,14 @@ mod test {
         size: ByteSize,
     ) -> Option<ByteSize> {
         if let (Some(token_a), Some(token_b)) = (bucket_a.reserve(size), bucket_b.reserve(size)) {
-            // Rust's borrow checker prevents any modification to the token bucket before the token is dropped or consumed.
+            // Rust's borrow checker prevents any modification to the token buckets
+            // before the tokens are dropped or consumed.
             token_a.consume();
             token_b.consume();
             // Send packet here
             Some(size)
         } else {
-            // Nothing changed for both token bucket
+            // Nothing changed for either token bucket
             None
         }
     }

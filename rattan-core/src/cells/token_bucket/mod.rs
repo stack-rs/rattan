@@ -20,7 +20,7 @@ use crate::metal::timer::Timer;
 
 mod bucket;
 
-use bucket::TokenBucket;
+pub use bucket::TokenBucket;
 
 pub struct TokenBucketCellIngress<P>
 where
