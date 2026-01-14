@@ -4,6 +4,7 @@ use std::{collections::HashMap, thread::sleep, time::Duration};
 #[cfg(feature = "serde")]
 use std::{sync::mpsc, time::Instant};
 
+use itertools::Itertools;
 use netem_trace::{
     model::{BwTraceConfig, RepeatedBwPatternConfig, StaticBwConfig},
     Bandwidth, BwTrace,
@@ -543,7 +544,7 @@ fn test_drophead_queue() {
 #[cfg(feature = "serde")]
 #[instrument]
 #[test_log::test]
-#[serial_test::serial]
+#[serial_test::parallel]
 fn test_codel_queue() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
@@ -897,4 +898,69 @@ fn test_replay() {
         assert!(back_5s_bitrate > back_5s_target_rate * 0.97);
         assert!(back_5s_bitrate < back_5s_target_rate * 1.03);
     }
+}
+
+#[instrument]
+#[test_log::test]
+#[serial_test::parallel]
+fn test_low_rate() {
+    // cargo run -- link --uplink-bandwidth 4096bps --ping -c 10 10.2.1.1 -s 100 -i 0.3
+    let mut config = RattanConfig::<StdPacket> {
+        env: StdNetEnvConfig {
+            mode: StdNetEnvMode::Isolated,
+            client_cores: vec![1],
+            server_cores: vec![3],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    config.cells.insert(
+        "up_bw".to_string(),
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
+            Bandwidth::from_bps(4096),
+            InfiniteQueueConfig::new(),
+            None,
+        ))),
+    );
+
+    config.links = HashMap::from([
+        ("left".to_string(), "up_bw".to_string()),
+        ("up_bw".to_string(), "right".to_string()),
+        ("right".to_string(), "left".to_string()),
+    ]);
+    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
+    radix.spawn_rattan().unwrap();
+    radix.start_rattan().unwrap();
+
+    // Wait for AfPacketDriver to be ready
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    let _span = span!(Level::INFO, "bandwidth_low_rate").entered();
+    info!("try to ping 128B packets in a 4096bps link");
+    let right_ip = radix.right_ip(1).to_string();
+    let left_handle = radix
+        .left_spawn(None, move || {
+            let handle = std::process::Command::new("ping")
+                .args([&right_ip, "-c", "10", "-i", "0.3", "-s", "100"])
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            Ok(handle.wait_with_output())
+        })
+        .unwrap();
+    let output = left_handle.join().unwrap().unwrap().unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let re = Regex::new(r"time=(\d+)").unwrap();
+    let latency = re
+        .captures_iter(&stdout)
+        .flat_map(|cap| cap[1].parse::<f64>())
+        .collect::<Vec<_>>();
+    info!(?latency);
+
+    // Should all be 250ms.
+    let (&min, &max) = latency.iter().minmax().into_option().unwrap();
+    assert!(min >= 248.0);
+    assert!(max <= 250.0);
 }
