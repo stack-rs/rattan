@@ -82,7 +82,7 @@ where
     }
 
     /// Dequeue a packet from the AQM based on the timestamp.
-    /// The function tries to maintain the queue status at the given timestamp before dequeing a packet,
+    /// The function tries to maintain the queue status at the given timestamp before dequeuing a packet,
     /// by enqueuing any packets that should have been enqueued by that timestamp.
     ///
     /// The caller ensures that:

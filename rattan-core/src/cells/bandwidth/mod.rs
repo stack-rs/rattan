@@ -142,7 +142,7 @@ where
     }
 
     /// If and only if there is enough bandwidth to send a packet which is enqueued into a 0-sized
-    /// queue and thus being returnd, this function returns `Some`. When this happens, the caller
+    /// queue and thus being returned, this function returns `Some`. When this happens, the caller
     /// should send out the packet immediately.
     #[inline(always)]
     #[must_use]
@@ -179,7 +179,7 @@ where
                     break;
                 }
                 // `new_packet` can be None only if `self.egress` is closed.
-                // The new_packet's timestamp is ealier than self.next_available.
+                // The new_packet's timestamp is earlier than self.next_available.
                 new_packet = self.egress.recv() => {
                     let new_packet = crate::check_cell_state!(self.state, new_packet?);
                     if let Some(packet) = self.enqueue_packet(new_packet){
@@ -206,7 +206,7 @@ where
             }
         }
         // Here, either:
-        //    1) No more packets can be retrived from egress, or
+        //    1) No more packets can be retrieved from egress, or
         //    2) A packet, that should enter the queue after `self.next_available` is seen.
         // Thus the `dequeue_at()` sees a correct queue, containing any packet that should
         // enter the AQM at `self.next_available`.
@@ -519,7 +519,7 @@ where
     }
 
     /// If and only if there is enough bandwidth to send a packet which is enqueued into a 0-sized
-    /// queue and thus being returnd, this function returns `Some`. When this happens, the caller
+    /// queue and thus being returned, this function returns `Some`. When this happens, the caller
     /// should send out the packet immediately.
     #[inline(always)]
     fn enqueue_packet(&mut self, new_packet: P) -> Option<P> {
@@ -600,7 +600,7 @@ where
         }
 
         // Here, either:
-        //    1) No more packets can be retrived from egress, or
+        //    1) No more packets can be retrieved from egress, or
         //    2) A packet, that should enter the queue after `self.next_available` is seen.
         // Thus the `dequeue_at()` sees a correct queue, containing any packet that should
         // enter the AQM at `self.next_available`.
@@ -637,7 +637,7 @@ where
             .get_at_timestamp(timestamp)
             .map(|bw| transfer_time(packet.l3_length(), *bw, self.bw_type));
 
-        // release the packet immediately (aka infinity bandwidth) when no avaiable bandwidth has been set.
+        // release the packet immediately (aka infinity bandwidth) when no available bandwidth has been set.
         let transfer_time = transfer_time.unwrap_or_default();
 
         if timestamp >= self.next_available {

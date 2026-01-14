@@ -105,7 +105,7 @@ where
             update_token_bucket(&mut self.token_bucket, burst_size, token_rate, timestamp);
         };
 
-        if let (Some(burst_size), Some(token_rate)) = (config.minburst, config.peakrate) {
+        if let (Some(burst_size), Some(token_rate)) = (config.min_burst, config.peak_rate) {
             new_max_size = new_max_size.min(burst_size);
             update_token_bucket(
                 &mut self.peak_token_bucket,
@@ -191,7 +191,7 @@ where
                     .map(|t| t.reserve(current_size)),
             ) {
                 // None:              The token bucket is not present.
-                // Some(None):        The token bucket is present, but there is not suffcient token.
+                // Some(None):        The token bucket is present, but there is not sufficient token.
                 // Some(Some(token)): The token bucket is present, and there is token to be consumed.
                 (Some(None), _) | (_, Some(None)) => {
                     // We have packets waiting to be sent, yet at least one token bucket is not ready
@@ -221,7 +221,7 @@ where
                 }
                 head_packet.into()
             } else {
-                // Send directly without enque
+                // Send directly without enqueue
                 new_packet
             }
             .expect("There should be a packet here");
@@ -318,7 +318,7 @@ where
     derive(Deserialize, Serialize)
 )]
 #[derive(Debug, Default)]
-/// rate and burst, peakrate and minburst must be provided together
+/// rate and burst, peak_rate and min_burst must be provided together
 pub struct TokenBucketCellConfig {
     /// limit of the queue in bytes, default: unlimited
     #[cfg_attr(feature = "serde", serde(default))]
@@ -330,11 +330,11 @@ pub struct TokenBucketCellConfig {
     /// burst of the bucket in bytes, default: unlimited
     pub burst: Option<ByteSize>,
     #[cfg_attr(feature = "serde", serde(with = "human_bandwidth::serde", default))]
-    /// peakrate of the bucket in bps, default: unlimited
-    pub peakrate: Option<Bandwidth>,
+    /// peak_rate of the bucket in bps, default: unlimited
+    pub peak_rate: Option<Bandwidth>,
     #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde::byte", default))]
-    /// minburst of the bucket in bytes, default: unlimited
-    pub minburst: Option<ByteSize>,
+    /// min_burst of the bucket in bytes, default: unlimited
+    pub min_burst: Option<ByteSize>,
 }
 
 impl Clone for TokenBucketCellConfig {
@@ -343,8 +343,8 @@ impl Clone for TokenBucketCellConfig {
             limit: self.limit,
             rate: self.rate,
             burst: self.burst,
-            peakrate: self.peakrate,
-            minburst: self.minburst,
+            peak_rate: self.peak_rate,
+            min_burst: self.min_burst,
         }
     }
 }
@@ -360,15 +360,15 @@ impl TokenBucketCellConfig {
         limit: L,
         rate: R,
         burst: B,
-        peakrate: PR,
-        minburst: MT,
+        peak_rate: PR,
+        min_burst: MT,
     ) -> Self {
         Self {
             limit: limit.into(),
             rate: rate.into(),
             burst: burst.into(),
-            peakrate: peakrate.into(),
-            minburst: minburst.into(),
+            peak_rate: peak_rate.into(),
+            min_burst: min_burst.into(),
         }
     }
 }
@@ -385,11 +385,11 @@ fn sanity_check(config: TokenBucketCellConfig) -> Result<TokenBucketCellConfig, 
             "rate and burst should be provided together".to_string(),
         ));
     }
-    if (config.peakrate.is_none() && config.minburst.is_some())
-        || (config.peakrate.is_some() && config.minburst.is_none())
+    if (config.peak_rate.is_none() && config.min_burst.is_some())
+        || (config.peak_rate.is_some() && config.min_burst.is_none())
     {
         return Err(Error::ConfigError(
-            "peakrate and minburst should be provided together".to_string(),
+            "peak_rate and min_burst should be provided together".to_string(),
         ));
     }
     if let Some(rate) = config.rate {
@@ -406,17 +406,17 @@ fn sanity_check(config: TokenBucketCellConfig) -> Result<TokenBucketCellConfig, 
             ));
         }
     }
-    if let Some(peakrate) = config.peakrate {
-        if peakrate.as_bps() == 0 {
+    if let Some(peak_rate) = config.peak_rate {
+        if peak_rate.as_bps() == 0 {
             return Err(Error::ConfigError(
-                "peakrate must be greater than 0".to_string(),
+                "peak_rate must be greater than 0".to_string(),
             ));
         }
     }
-    if let Some(minburst) = config.minburst {
-        if minburst.as_u64() == 0 {
+    if let Some(min_burst) = config.min_burst {
+        if min_burst.as_u64() == 0 {
             return Err(Error::ConfigError(
-                "minburst must be greater than 0".to_string(),
+                "min_burst must be greater than 0".to_string(),
             ));
         }
     }
@@ -435,9 +435,9 @@ impl ControlInterface for TokenBucketCellControlInterface {
     }
 }
 
-/// Packets whose size is larger than the smaller one of burst and minburst will be dropped before enqueueing.
+/// Packets whose size is larger than the smaller one of burst and min_burst will be dropped before enqueueing.
 /// If the configuration is modified, packets in the queue whose size is larger than the smaller one of
-/// the new burst and the new minburst will be dropped immediately.
+/// the new burst and the new min_burst will be dropped immediately.
 pub struct TokenBucketCell<P: Packet> {
     ingress: Arc<TokenBucketCellIngress<P>>,
     egress: TokenBucketCellEgress<P>,
@@ -483,8 +483,8 @@ where
         limit: L,
         rate: R,
         burst: B,
-        peakrate: PR,
-        minburst: MT,
+        peak_rate: PR,
+        min_burst: MT,
     ) -> Result<TokenBucketCell<P>, Error> {
         debug!("New TokenBucketCell");
         let (rx, tx) = mpsc::unbounded_channel();
@@ -507,7 +507,7 @@ where
         };
 
         egress.set_config(
-            TokenBucketCellConfig::new(limit, rate, burst, peakrate, minburst),
+            TokenBucketCellConfig::new(limit, rate, burst, peak_rate, min_burst),
             now,
         );
 
@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(expected.len(), logical.len());
         for (idx, expected_delay) in expected.iter().enumerate() {
             assert_eq!(expected_delay, &logical[idx]);
-            // A larger torlerance is needed in paralleled testing
+            // A larger tolerance is needed in paralleled testing
             assert!(
                 expected_delay.saturating_sub(measured[idx]).as_secs_f64()
                     <= DELAY_ACCURACY_TOLERANCE * 2E-3
@@ -568,8 +568,8 @@ mod tests {
             config.limit,
             config.rate,
             config.burst,
-            config.peakrate,
-            config.minburst,
+            config.peak_rate,
+            config.min_burst,
         )?;
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
@@ -654,8 +654,8 @@ mod tests {
             config.limit,
             config.rate,
             config.burst,
-            config.peakrate,
-            config.minburst,
+            config.peak_rate,
+            config.min_burst,
         )?;
         let controller_interface = cell.control_interface.clone();
         let ingress = cell.sender();
@@ -807,9 +807,9 @@ mod tests {
 
     #[test_log::test]
     fn test_token_bucket_cell_prate_low() -> Result<(), Error> {
-        // test peakrate when peakrate is lower than rate
+        // test peak_rate when peak_rate is lower than rate
         let _span = span!(Level::INFO, "test_token_bucket_cell_prate_low").entered();
-        info!("Creating cell with 1024 B burst, 8192 bps rate, 128 B minburst, 4096 bps peakrate and a 1024 bytes limit queue.");
+        info!("Creating cell with 1024 B burst, 8192 bps rate, 128 B min_burst, 4096 bps peak_rate and a 1024 bytes limit queue.");
         let config = TokenBucketCellConfig::new(
             1024,
             Bandwidth::from_bps(8192),
@@ -822,7 +822,7 @@ mod tests {
         let (measured_delays, logical_delays) =
             get_delays(5, 128 + 14, config, Duration::from_millis(10))?;
 
-        // In this test, only minburst and peakrate is the bottleneck
+        // In this test, only min_burst and peak_rate is the bottleneck
         //
         // Initially, the bucket contains tokens for 8 / 1 packets
         // Each packet consumed token that needs 31.25ms / 250ms to refill
@@ -844,9 +844,9 @@ mod tests {
 
     #[test_log::test]
     fn test_token_bucket_cell_prate_high() -> Result<(), Error> {
-        // test peakrate when peakrate is higher than rate
+        // test peak_rate when peak_rate is higher than rate
         let _span = span!(Level::INFO, "test_token_bucket_cell_prate_high").entered();
-        info!("Creating cell with 512 B burst, 4096 bps rate, 256 B minburst, 8192 bps peakrate and a 1024 bytes limit queue.");
+        info!("Creating cell with 512 B burst, 4096 bps rate, 256 B min_burst, 8192 bps peak_rate and a 1024 bytes limit queue.");
         let config = TokenBucketCellConfig::new(
             1024,
             Bandwidth::from_bps(4096),
@@ -857,7 +857,7 @@ mod tests {
 
         let (measured_delays, logical_delays) =
             get_delays(5, 128 + 14, config, Duration::from_millis(10))?;
-        // In this test, rate and minburst is the bottleneck
+        // In this test, rate and min_burst is the bottleneck
         //
         // Initially, the bucket contains tokens for 4 / 2 packets
         // Each packet consumed token that needs 125ms / 62.5ms to refill
