@@ -149,9 +149,9 @@ where
     }
 }
 
-fn build_chunk_prologue(data_length: usize, time_offset: &Option<u64>) -> Vec<u8> {
+fn build_chunk_prologue(data_length: usize, chunk_offset: &Option<u64>) -> Vec<u8> {
     let header = new_log_entry_chunk_prologue(
-        time_offset.unwrap_or_default(),
+        chunk_offset.unwrap_or_default(),
         LOGICAL_CHUNK_SIZE_1M,
         data_length,
     );

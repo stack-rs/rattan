@@ -56,8 +56,8 @@ pub enum RattanLogOp {
     /// its recorded position (represented as a byte range `[offset, offset + len)`).
     /// We use this information (offset and len), along with the flow_id, to construct the raw log entry.
     RawEntry(u32, RawLogEntry, Vec<u8>),
-    /// Represents a flow consists of (flow_id, base_time_ns, flow_desc).
-    Flow(u32, i64, FlowDesc),
+    /// Represents a flow consists of (flow_id, base_time_us, flow_desc).
+    Flow(u32, u64, FlowDesc),
     /// End of Log
     End,
 }

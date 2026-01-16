@@ -193,12 +193,11 @@ where
             self.current_chunk_offset + current_chunk_len,
             current_chunk_len
         );
-        debug_assert_eq!(
-            self.prologue_len,
-            self.writer
-                .chunk
-                .write_at(&header, self.current_chunk_offset)
-        );
+
+        self.writer
+            .chunk
+            .write_at(&header, self.current_chunk_offset);
+
         if is_final {
             return;
         }

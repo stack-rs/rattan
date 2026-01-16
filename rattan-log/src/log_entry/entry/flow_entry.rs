@@ -79,7 +79,7 @@ pub struct TCPFlow {
     pub dst_ip: u32,
     pub src_port: u16,
     pub dst_port: u16,
-    pub base_ts: i64,
+    pub base_ts: u64,
     pub _reserved: u32,
     pub options: TCPOption,
 }
@@ -158,9 +158,9 @@ impl FlowEntryVariant {
     }
 }
 
-impl From<(u32, i64, FlowDesc)> for FlowEntryVariant {
+impl From<(u32, u64, FlowDesc)> for FlowEntryVariant {
     // (flow_id, base_ts, flow_desc)
-    fn from(value: (u32, i64, FlowDesc)) -> Self {
+    fn from(value: (u32, u64, FlowDesc)) -> Self {
         let (flow_id, base_ts, flow_desc) = value;
         let mut entryheader = FlowEntryHeader::default();
         entryheader.set_length(32);
