@@ -193,7 +193,7 @@ impl FlowMap {
         }
     }
 
-    fn get_id(&self, desc: FlowDesc, log_tx: &UnboundedSender<RattanLogOp>, base_ts: i64) -> u32 {
+    fn get_id(&self, desc: FlowDesc, log_tx: &UnboundedSender<RattanLogOp>) -> u32 {
         {
             let map = self.map.read();
             if let Some(meta) = map.get(&desc) {
@@ -204,7 +204,7 @@ impl FlowMap {
         let id = self.id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         map.insert(desc.clone(), id);
 
-        let op = RattanLogOp::Flow(id, base_ts, desc);
+        let op = RattanLogOp::Flow(id, BASE_TS.1, desc);
         if log_tx.send(op).is_err() {
             cnt_log_op_error();
         }
@@ -285,7 +285,7 @@ where
             // Avoid doing so when packet log is not enabled.
             if let (Some(&log_mode), Some(log_tx)) = (packet_log_mode, log_tx.as_ref()) {
                 if let Some(desc) = packet.flow_desc() {
-                    let id = flow_map.get_id(desc, log_tx, base_ts);
+                    let id = flow_map.get_id(desc, log_tx);
                     packet.set_flow_id(id);
                 }
                 log_packet(log_tx, &packet, PktAction::Recv, base_ts, log_mode);
@@ -435,7 +435,7 @@ fn log_packet<T: Packet>(
     // tracing::debug!(target: "veth::egress::packet_log", "At {} veth {} recv pkt len {} desc {}", ts, id, p.length(), p.desc());
 }
 
-fn get_clock_ns() -> i64 {
+pub fn get_clock_ns() -> i64 {
     nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC)
         .map(|ts| ts.tv_sec() * 1_000_000_000 + ts.tv_nsec())
         .unwrap_or(0)
@@ -494,7 +494,7 @@ where
         let driver = D::bind_cell(cell.clone())?;
         let dev_senders = driver.iter().map(|d| d.sender()).collect();
         let log_tx = LOGGING_TX.get().cloned();
-        let base_ts = *BASE_TS.get_or_init(get_clock_ns);
+        let base_ts = BASE_TS.0;
         Ok(Self {
             _cell: cell,
             ingress: Arc::new(VirtualEthernetIngress::new(

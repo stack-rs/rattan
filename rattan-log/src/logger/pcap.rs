@@ -147,7 +147,7 @@ impl PacketWriter {
         let enhanced_packet = EnhancedPacketBlock {
             interface_id: 0,
             timestamp: Duration::from_micros(
-                tcp_entry.general_pkt_entry.ts as u64 + flow_desc.base_ts as u64 / 1000,
+                tcp_entry.general_pkt_entry.ts as u64 + flow_desc.base_ts,
             ),
             original_len: tcp_entry.general_pkt_entry.pkt_length as u32,
             data: Cow::from(data),
@@ -165,13 +165,11 @@ impl PacketWriter {
         &mut self,
         raw_log_entry: &RawLogEntry,
         packet: Vec<u8>,
-        base_ts: i64,
+        base_ts: u64,
     ) -> Result<()> {
         let enhanced_packet = EnhancedPacketBlock {
             interface_id: 0,
-            timestamp: Duration::from_micros(
-                raw_log_entry.general_pkt_entry.ts as u64 + base_ts as u64 / 1000,
-            ),
+            timestamp: Duration::from_micros(raw_log_entry.general_pkt_entry.ts as u64 + base_ts),
             original_len: raw_log_entry.general_pkt_entry.pkt_length as u32,
             data: Cow::from(packet),
             options: vec![],

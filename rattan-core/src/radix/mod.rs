@@ -2,10 +2,11 @@ use std::{
     net::IpAddr,
     sync::{mpsc, Arc},
     thread,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use backon::{BlockingRetryable, ExponentialBuilder};
-use once_cell::sync::OnceCell;
+use once_cell::sync::{Lazy, OnceCell};
 use rattan_log::{file_logging_thread, RattanLogOp, LOGGING_TX};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
@@ -17,7 +18,7 @@ use tracing::{debug, error, info, span, warn, Level};
 
 use crate::{
     cells::{
-        external::{VirtualEthernet, VirtualEthernetId},
+        external::{get_clock_ns, VirtualEthernet, VirtualEthernetId},
         Cell, Packet,
     },
     config::{CellBuildConfig, RattanConfig},
@@ -34,7 +35,17 @@ use crate::{control::http::HttpControlEndpoint, error::HttpServerError};
 use std::net::{Ipv4Addr, SocketAddr};
 
 pub static INSTANCE_ID: OnceCell<String> = OnceCell::new();
-pub static BASE_TS: OnceCell<i64> = OnceCell::new();
+
+pub static BASE_TS: Lazy<(i64, u64)> = Lazy::new(|| {
+    // Internal use
+    let machine_time = get_clock_ns();
+    // Used as base timestamp in Packet Logs.
+    let unix_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_micros();
+    (machine_time, unix_time as u64)
+});
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

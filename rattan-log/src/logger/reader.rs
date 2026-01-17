@@ -26,7 +26,7 @@ type FlowIndex = u16;
 struct ParseContext {
     pub flows: HashMap<FlowId, FlowEntryVariant>,
     pub flow_index: HashMap<FlowIndex, FlowId>,
-    pub base_ts: i64,
+    pub base_ts: u64,
 }
 
 impl ParseContext {
@@ -220,6 +220,13 @@ pub fn convert_log_to_pcapng(
                 let Some(raw_header) = raw.get(offset..(offset + len)) else {
                     continue;
                 };
+
+                if raw_header[0] != 0x45 {
+                    dbg!(offset);
+                    dbg!(pointer.get_offset());
+                    dbg!(chunk_offset);
+                    panic!("Invalid IPv4 Header");
+                }
 
                 let (mut packet_header, mock_l3) =
                     match raw_entry.general_pkt_entry.header.get_type().try_into() {
