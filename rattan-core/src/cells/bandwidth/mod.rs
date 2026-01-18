@@ -157,7 +157,7 @@ where
     }
 
     #[inline(always)]
-    fn set_transmitting_packet(&mut self, mut packet: P) {
+    fn set_transmitting_packet(&mut self, packet: P) {
         if self.transmitting_packet.is_none() {
             let transfer_time = transfer_time(packet.l3_length(), self.bandwidth, self.bw_type);
             self.next_available = self.next_available.max(packet.get_timestamp()) + transfer_time;
@@ -167,7 +167,6 @@ where
                 relative_time(packet.get_timestamp()),
                 self.next_available.duration_since(packet.get_timestamp())
             );
-            packet.delay_until(self.next_available);
             self.transmitting_packet = packet.into();
         } else {
             #[cfg(test)]
@@ -218,7 +217,10 @@ where
         // Thus the `dequeue_at()` sees a correct queue, containing any packet that should
         // enter the AQM at `self.next_available`.
 
-        let packet_to_send = self.transmitting_packet.take();
+        let packet_to_send = self.transmitting_packet.take().map(|mut p| {
+            p.delay_until(self.next_available);
+            p
+        });
         if let Some(next_packet) = self.packet_queue.dequeue_at(self.next_available) {
             // Here, self.transmitting_packet can not be None, thus the next_packet would not be dropped.
             self.set_transmitting_packet(next_packet);
@@ -258,6 +260,10 @@ where
 
         self.transmitting_packet
             .take_if(|_| self.next_available <= Instant::now())
+            .map(|mut p| {
+                p.delay_until(self.next_available);
+                p
+            })
     }
 
     fn change_state(&self, state: CellState) {
@@ -550,7 +556,7 @@ where
     }
 
     #[inline(always)]
-    fn set_transmitting_packet(&mut self, mut packet: P) {
+    fn set_transmitting_packet(&mut self, packet: P) {
         if self.transmitting_packet.is_none() {
             let transfer_time = self
                 .current_bandwidth
@@ -565,7 +571,6 @@ where
                 relative_time(packet.get_timestamp()),
                 self.next_available.duration_since(packet.get_timestamp())
             );
-            packet.delay_until(self.next_available);
             self.transmitting_packet = packet.into();
         } else {
             #[cfg(test)]
@@ -625,7 +630,10 @@ where
         // Thus the `dequeue_at()` sees a correct queue, containing any packet that should
         // enter the AQM at `self.next_available`.
 
-        let packet_to_send = self.transmitting_packet.take();
+        let packet_to_send = self.transmitting_packet.take().map(|mut p| {
+            p.delay_until(self.next_available);
+            p
+        });
         if let Some(next_packet) = self.packet_queue.dequeue_at(self.next_available) {
             // Here, self.transmitting_packet can not be None, thus the next_packet would not be dropped.
             self.set_transmitting_packet(next_packet);
@@ -667,6 +675,10 @@ where
 
         self.transmitting_packet
             .take_if(|_| self.next_available <= Instant::now())
+            .map(|mut p| {
+                p.delay_until(self.next_available);
+                p
+            })
     }
 
     // This must be called before any dequeue
