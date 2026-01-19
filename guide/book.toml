@@ -9,6 +9,6 @@ description = "Rattan is a high-performance modular transport channel emulator r
 [preprocessor.alerts]
 
 [output.html]
-git-repository-url = "https://github.com/stack-rs/rattan/tree/master/guide"
-edit-url-template = "https://github.com/stack-rs/rattan/edit/master/guide/{path}"
+git-repository-url = "https://github.com/stack-rs/rattan/tree/main/guide"
+edit-url-template = "https://github.com/stack-rs/rattan/edit/main/guide/{path}"
 # site-url = "/rattan/"
