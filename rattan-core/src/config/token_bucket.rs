@@ -13,8 +13,8 @@ impl TokenBucketCellBuildConfig {
                 self.limit,
                 self.rate,
                 self.burst,
-                self.peakrate,
-                self.minburst,
+                self.peak_rate,
+                self.min_burst,
             )
         }
     }
