@@ -63,6 +63,11 @@ where
     P: Packet + Send + Sync,
 {
     fn set_config(&mut self, config: DelayCellConfig) {
+        tracing::debug!(
+            before = ?self.delay,
+            after = ?config.delay,
+            "Set inner delay:"
+        );
         self.delay = config.delay;
     }
 }

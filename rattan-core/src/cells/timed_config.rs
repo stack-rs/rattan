@@ -6,6 +6,7 @@ use tokio::time::Instant;
 use super::relative_time;
 
 /// Store last and current config.
+// TODO: Remove this when reordering is handled in shadow cell, and thus there is only one active config in a cell then.
 #[derive(Debug, Default)]
 pub struct TimedConfig<C> {
     last: Option<C>,

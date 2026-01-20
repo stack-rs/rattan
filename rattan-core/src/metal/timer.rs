@@ -60,9 +60,7 @@ impl Timer {
     pub async fn sleep_until(&mut self, instant: Instant) -> Result<Instant, MetalError> {
         let sleep_time = instant.duration_since(Instant::now());
 
-        if sleep_time.is_zero() {
-            tokio::task::yield_now().await;
-        } else {
+        if !sleep_time.is_zero() {
             self.sleep(sleep_time).await?
         }
 

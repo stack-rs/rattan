@@ -187,7 +187,6 @@ where
         // Wait for Start notify if not started yet
         crate::wait_until_started!(self, Start);
 
-        let mut need_to_receive = true;
         // Wait for time
         loop {
             tokio::select! {
@@ -197,13 +196,16 @@ where
                 }
                 // `new_packet` can be None only if `self.egress` is closed.
                 // Do not return None here, as there may be some packets in the AQM.
-                Some(new_packet) = self.egress.recv(), if need_to_receive => {
+                Some(new_packet) = self.egress.recv() => {
                     // XXX: If state change from `Normal` to others, the packets in the AQM may never be sent.
                     let new_packet = crate::check_cell_state!(self.state, new_packet);
-                    if new_packet.get_timestamp() >= self.next_available{
-                        need_to_receive = false;
+                    if new_packet.get_timestamp() < self.next_available{
+                        self.enqueue_packet(new_packet);
+                    }else{
+                        self.enqueue_packet(new_packet);
+                        // Assert that: new_packet.get_timestamp() >= Instant::now()
+                        break;
                     }
-                    self.enqueue_packet(new_packet);
                 }
                 _ = self.timer.sleep(self.next_available - Instant::now()) => {
                     break;
@@ -222,36 +224,52 @@ where
             p
         });
         if let Some(next_packet) = self.packet_queue.dequeue_at(self.next_available) {
-            // Here, self.transmitting_packet can not be None, thus the next_packet would not be dropped.
+            // Here, self.transmitting_packet can not be Some, thus the next_packet would not be dropped.
             self.set_transmitting_packet(next_packet);
         }
         if packet_to_send.is_some() {
             return packet_to_send;
         }
 
-        // Wait for packet to send
+        // Wait for packet to send.
+        // If this loop is entered, the packet_queue in the AQM is empty, and `Instant::now()` >= `self.next_available`.
         while self.transmitting_packet.is_none() {
-            // the queue is empty, wait for the next packet
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                _ = self.timer.sleep(self.packet_queue.next_call_time() - Instant::now()) => {
-                    if let Some(next_packet) = self.packet_queue.dequeue_at(Instant::now()) {
-                        // Here, self.transmitting_packet can not be None, thus the next_packet would not be dropped.
+
+                Ok(time) = self.timer.sleep_until(self.packet_queue.next_call_time()) => {
+                    if let Some(next_packet) = self.packet_queue.dequeue_at(time) {
+                        // Here, self.transmitting_packet can not be Some, thus the next_packet would not be dropped.
                         self.set_transmitting_packet(next_packet);
                     }
                 }
-                // `new_packet` can be None only if `self.egress` is closed.
-                // If egress is closed here, then no further packets can be enqueued, so return None with `?`.
+
+                // If we enter this branch and got a new packet, whose logical timestamp is `np`, we assume that `np` <= Instant::now().
+                //   A) If the inbound buffer AQM is empty (in such case, self.packet_queue.next_call_time() is in 10 years),
+                //     When ever we got a packet, we should send it as soon as possible. As the two buffers in the AQM are
+                //     all empty, the `dequeue_at(timestamp)` shall just return the newly received packet. We set that as
+                //     the `self.transmitting_packet`, during which the self.next_available is updated based on the timestamp
+                //     of the newly received packet.
+                //   B) Otherwise, assume that there are some packets in the inbound buffer of the AQM, and the packet at its head has a timestamp of `hp`.
+                //     We know that :
+                //     1) `np` >= `hp` , as long as the logical timestamp of packets is non-descending.
+                //     2) `Instant::now()` >= `np`, as we shall not receive a packet prior to its logical timestamp
+                //     3) `Instant::now()` < `hp`, or we should have entered the `select!` branch above, who `sleeps_until` `hp`.
+                //     Join them together, and we got `Instant::now()` >= `np` >= `hp` > `Instant::now()`, which is self-conflicting.
+                //     Thus this condition is impossible.
+                // In conclusion, A) is the only possible condition when this branch is entered.
                 new_packet = self.egress.recv() => {
                     // XXX: If state change from `Normal` to others, the packets in the AQM may never be sent.
+                    // `new_packet` can be None only if `self.egress` is closed.`
+                    // If egress is closed here, then no further packets can be enqueued, so return None with `?`.
                     let new_packet = crate::check_cell_state!(self.state, new_packet?);
                     let timestamp = new_packet.get_timestamp();
                     self.enqueue_packet(new_packet);
                     if let Some(next_packet) = self.packet_queue.dequeue_at(timestamp) {
-                        // Here, self.transmitting_packet can not be None, thus the next_packet would not be dropped.
+                        // Here, self.transmitting_packet can not be Some, thus the next_packet would not be dropped.
                         self.set_transmitting_packet(next_packet);
                     }
                 }
@@ -595,7 +613,6 @@ where
         #[cfg(not(feature = "first-packet"))]
         crate::wait_until_started!(self, Start);
 
-        let mut need_to_receive = true;
         // wait until next_available
         loop {
             tokio::select! {
@@ -603,22 +620,23 @@ where
                 Some(config) = self.config_rx.recv() => {
                     self.set_config(config);
                 }
-                _ = self.change_timer.sleep(self.next_change - Instant::now()),
-                    if self.next_change <= self.next_available => {
+                _ = self.change_timer.sleep(self.next_change - Instant::now()), if self.next_change <= self.next_available => {
                     self.update_bw(self.next_change);
                 }
                 // `new_packet` can be None only if `self.egress` is closed.
                 // Do not return None here, as there may be some packets in the AQM.
-                Some(new_packet) = self.egress.recv(), if need_to_receive => {
+                Some(new_packet) = self.egress.recv() => {
                     // XXX: If state change from `Normal` to others, the packets in the AQM may never be sent.
                     let new_packet = crate::check_cell_state!(self.state, new_packet);
-                    if new_packet.get_timestamp() >= self.next_available{
-                        need_to_receive = false;
+                    if new_packet.get_timestamp() < self.next_available{
+                        self.enqueue_packet(new_packet);
+                    }else{
+                        self.enqueue_packet(new_packet);
+                        // Assert that: new_packet.get_timestamp() >= Instant::now()
+                        break;
                     }
-                    self.enqueue_packet(new_packet);
                 }
-                _ = self.send_timer.sleep(self.next_available - Instant::now()),
-                    if self.next_change > self.next_available => {
+                _ = self.send_timer.sleep(self.next_available - Instant::now()), if self.next_change > self.next_available => {
                     break;
                 }
             }
@@ -635,15 +653,16 @@ where
             p
         });
         if let Some(next_packet) = self.packet_queue.dequeue_at(self.next_available) {
-            // Here, self.transmitting_packet can not be None, thus the next_packet would not be dropped.
+            // Here, self.transmitting_packet can not be Some, thus the next_packet would not be dropped.
             self.set_transmitting_packet(next_packet);
         }
         if packet_to_send.is_some() {
             return packet_to_send;
         }
 
+        // Wait for packet to send.
+        // If this loop is entered, the packet_queue in the AQM is empty, and `Instant::now()` >= `self.next_available`.
         while self.transmitting_packet.is_none() {
-            // the queue is empty, wait for the next packet
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
@@ -652,21 +671,36 @@ where
                 _ = self.change_timer.sleep(self.next_change - Instant::now()) => {
                     self.update_bw(self.next_change);
                 }
-                _ = self.send_timer.sleep(self.packet_queue.next_call_time() - Instant::now()) => {
-                    if let Some(next_packet) = self.packet_queue.dequeue_at(Instant::now()) {
-                        // Here, self.transmitting_packet can not be None, thus the next_packet would not be dropped.
+                Ok(time) = self.send_timer.sleep_until(self.packet_queue.next_call_time()) => {
+                     if let Some(next_packet) = self.packet_queue.dequeue_at(time) {
+                        // Here, self.transmitting_packet can not be Some, thus the next_packet would not be dropped.
                         self.set_transmitting_packet(next_packet);
                     }
                 }
-                // `new_packet` can be None only if `self.egress` is closed.
-                //  If egress is closed here, then no further packets can be enqueued, so return None with `?`.
+
+                // If we enter this branch and got a new packet, whose logical timestamp is `np`, we assume that `np` <= Instant::now().
+                //   A) If the inbound buffer AQM is empty (in such case, self.packet_queue.next_call_time() is in 10 years),
+                //     When ever we got a packet, we should send it as soon as possible. As the two buffers in the AQM are
+                //     all empty, the `dequeue_at(timestamp)` shall just return the newly received packet. We set that as
+                //     the `self.transmitting_packet`, during which the self.next_available is updated based on the timestamp
+                //     of the newly received packet.
+                //   B) Otherwise, assume that there are some packets in the inbound buffer of the AQM, and the packet at its head has a timestamp of `hp`.
+                //     We know that :
+                //     1) `np` >= `hp` , as long as the logical timestamp of packets is non-descending.
+                //     2) `Instant::now()` >= `np`, as we shall not receive a packet prior to its logical timestamp
+                //     3) `Instant::now()` < `hp`, or we should have entered the `select!` branch above, who `sleeps_until` `hp`.
+                //     Join them together, and we got `Instant::now()` >= `np` >= `hp` > `Instant::now()`, which is self-conflicting.
+                //     Thus this condition is impossible.
+                // In conclusion, A) is the only possible condition when this branch is entered.
                 new_packet = self.egress.recv() => {
                     // XXX: If state change from `Normal` to others, the packets in the AQM may never be sent.
+                    // `new_packet` can be None only if `self.egress` is closed.
+                    //  If egress is closed here, then no further packets can be enqueued, so return None with `?`.
                     let new_packet = crate::check_cell_state!(self.state, new_packet?);
                     let timestamp = new_packet.get_timestamp();
                     self.enqueue_packet(new_packet);
                     if let Some(next_packet) = self.packet_queue.dequeue_at(timestamp) {
-                        // Here, self.transmitting_packet can not be None, thus the next_packet would not be dropped.
+                        // Here, self.transmitting_packet can not be Some, thus the next_packet would not be dropped.
                         self.set_transmitting_packet(next_packet);
                     }
                 }
@@ -881,6 +915,21 @@ mod tests {
     };
     use crate::cells::{StdPacket, TestPacket};
 
+    async fn pacing_send<const SIZE: usize, P: Packet>(
+        packet_cnt: u8,
+        interval_ms: u64,
+        mut logical_send_time: Instant,
+        ingress: Arc<BwCellIngress<P>>,
+    ) {
+        for i in 0..packet_cnt {
+            tokio::time::sleep_until(logical_send_time).await;
+            ingress
+                .enqueue(P::with_timestamp(&[i; SIZE], logical_send_time))
+                .unwrap();
+            logical_send_time += Duration::from_millis(interval_ms);
+        }
+    }
+
     #[rstest]
     #[case(50)]
     #[case(80)]
@@ -908,19 +957,17 @@ mod tests {
         egress.reset();
         egress.change_state(CellState::Normal);
 
-        let mut logical_send_time = Instant::now() + Duration::from_millis(10);
+        let logical_send_time = Instant::now() + Duration::from_millis(10);
         let logical_start = logical_send_time;
-        for i in 0..16 {
-            tracing::debug!(
-                "Send packet with timestamp {:?}",
-                relative_time(logical_send_time)
-            );
-            ingress.enqueue(TestPacket::<StdPacket>::with_timestamp(
-                &[i; 256 + 14],
-                logical_send_time,
-            ))?;
-            logical_send_time += Duration::from_millis(send_interval);
-        }
+
+        relative_time(logical_start);
+
+        let _handle = rt.spawn(pacing_send::<{ 256 + 14 }, TestPacket<StdPacket>>(
+            16,
+            send_interval,
+            logical_send_time,
+            ingress,
+        ));
 
         let mut actual_receive_time = vec![];
         let mut recv_cnt = 0;
@@ -991,24 +1038,16 @@ mod tests {
         egress.reset();
         egress.change_state(CellState::Normal);
 
-        let mut logical_send_time = Instant::now();
+        let logical_send_time = Instant::now();
         let logical_start = logical_send_time;
         relative_time(logical_start);
 
-        logical_send_time += Duration::from_millis(10);
-
-        let _handle = rt.spawn(async move {
-            for i in 0..16 {
-                tokio::time::sleep_until(logical_send_time).await;
-                ingress
-                    .enqueue(TestPacket::<StdPacket>::with_timestamp(
-                        &[i; 256 + 14],
-                        logical_send_time,
-                    ))
-                    .unwrap();
-                logical_send_time += Duration::from_millis(25);
-            }
-        });
+        let _handle = rt.spawn(pacing_send::<{ 256 + 14 }, TestPacket<StdPacket>>(
+            16,
+            25,
+            logical_send_time + Duration::from_millis(10),
+            ingress,
+        ));
 
         let mut receive_time = vec![];
         let mut recv_cnt = 0;
@@ -1075,24 +1114,16 @@ mod tests {
         egress.reset();
         egress.change_state(CellState::Normal);
 
-        let mut logical_send_time = Instant::now();
+        let logical_send_time = Instant::now();
         let logical_start = logical_send_time;
         relative_time(logical_start);
 
-        logical_send_time += Duration::from_millis(10);
-
-        let _handle = rt.spawn(async move {
-            for i in 0..16 {
-                tokio::time::sleep_until(logical_send_time).await;
-                ingress
-                    .enqueue(TestPacket::<StdPacket>::with_timestamp(
-                        &[i; 256 + 14],
-                        logical_send_time,
-                    ))
-                    .unwrap();
-                logical_send_time += Duration::from_millis(50);
-            }
-        });
+        let _handle = rt.spawn(pacing_send::<{ 256 + 14 }, TestPacket<StdPacket>>(
+            16,
+            50,
+            logical_send_time + Duration::from_millis(10),
+            ingress,
+        ));
 
         let mut expecting = VecDeque::from(vec![
             (0, 80),
