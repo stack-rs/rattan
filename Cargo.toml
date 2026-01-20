@@ -19,6 +19,7 @@ homepage = "https://github.com/stack-rs/rattan"
 repository = "https://github.com/stack-rs/rattan"
 
 [workspace.dependencies]
+derive_more = { version = "2.0.1", features = ["deref", "deref_mut"] }
 bitfield = "0.19.0"
 clap = { version = "4.2.4", features = ["derive"] }
 csv = "1.4.0"

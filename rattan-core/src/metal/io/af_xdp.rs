@@ -1,3 +1,10 @@
+use std::time::Duration;
+use std::{
+    collections::VecDeque,
+    os::fd::{AsFd, AsRawFd},
+    sync::Arc,
+};
+
 use camellia::{
     socket::af_xdp::{XskSocket, XskSocketBuilder},
     umem::{
@@ -8,12 +15,6 @@ use camellia::{
 };
 use etherparse::{Ethernet2Header, Ipv4Header};
 use once_cell::sync::Lazy;
-use std::time::Duration;
-use std::{
-    collections::VecDeque,
-    os::fd::{AsFd, AsRawFd},
-    sync::Arc,
-};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Instant};
 use tracing::debug;
@@ -267,6 +268,13 @@ impl Packet for XDPPacket {
         todo!()
     }
 
+    /// For test code only.
+    #[cfg(any(test, doc))]
+    fn with_timestamp(_buf: &[u8], _timestamp: Instant) -> Self {
+        // Not implemented since from_raw_buffer is not implemented.
+        todo!()
+    }
+
     fn length(&self) -> usize {
         self.buf.len()
     }
@@ -306,6 +314,14 @@ impl Packet for XDPPacket {
     }
 
     fn set_timestamp(&mut self, timestamp: Instant) {
+        self.timestamp = timestamp;
+    }
+
+    fn delay_by(&mut self, delay: Duration) {
+        self.timestamp += delay;
+    }
+
+    fn delay_until(&mut self, timestamp: Instant) {
         self.timestamp = timestamp;
     }
 }
