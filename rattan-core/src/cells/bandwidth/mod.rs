@@ -199,9 +199,9 @@ where
                 Some(new_packet) = self.egress.recv() => {
                     // XXX: If state change from `Normal` to others, the packets in the AQM may never be sent.
                     let new_packet = crate::check_cell_state!(self.state, new_packet);
-                    if new_packet.get_timestamp() < self.next_available{
+                    if new_packet.get_timestamp() < self.next_available {
                         self.enqueue_packet(new_packet);
-                    }else{
+                    } else {
                         self.enqueue_packet(new_packet);
                         // Assert that: new_packet.get_timestamp() >= Instant::now()
                         break;
@@ -216,7 +216,7 @@ where
         // Here, either:
         //    1) No more packets can be retrieved from egress, or
         //    2) A packet, that should enter the queue after `self.next_available` is seen.
-        // Thus the `dequeue_at()` sees a correct queue, containing any packet that should
+        // Thus, the `dequeue_at()` sees a correct queue, containing any packet that should
         // enter the AQM at `self.next_available`.
 
         let packet_to_send = self.transmitting_packet.take().map(|mut p| {
@@ -249,7 +249,7 @@ where
 
                 // If we enter this branch and got a new packet, whose logical timestamp is `np`, we assume that `np` <= Instant::now().
                 //   A) If the inbound buffer AQM is empty (in such case, self.packet_queue.next_call_time() is in 10 years),
-                //     When ever we got a packet, we should send it as soon as possible. As the two buffers in the AQM are
+                //     Whenever we get a packet, we should send it as soon as possible. As the two buffers in the AQM are
                 //     all empty, the `dequeue_at(timestamp)` shall just return the newly received packet. We set that as
                 //     the `self.transmitting_packet`, during which the self.next_available is updated based on the timestamp
                 //     of the newly received packet.
@@ -259,7 +259,7 @@ where
                 //     2) `Instant::now()` >= `np`, as we shall not receive a packet prior to its logical timestamp
                 //     3) `Instant::now()` < `hp`, or we should have entered the `select!` branch above, who `sleeps_until` `hp`.
                 //     Join them together, and we got `Instant::now()` >= `np` >= `hp` > `Instant::now()`, which is self-conflicting.
-                //     Thus this condition is impossible.
+                //     Thus, this condition is impossible.
                 // In conclusion, A) is the only possible condition when this branch is entered.
                 new_packet = self.egress.recv() => {
                     // XXX: If state change from `Normal` to others, the packets in the AQM may never be sent.
@@ -628,9 +628,9 @@ where
                 Some(new_packet) = self.egress.recv() => {
                     // XXX: If state change from `Normal` to others, the packets in the AQM may never be sent.
                     let new_packet = crate::check_cell_state!(self.state, new_packet);
-                    if new_packet.get_timestamp() < self.next_available{
+                    if new_packet.get_timestamp() < self.next_available {
                         self.enqueue_packet(new_packet);
-                    }else{
+                    } else {
                         self.enqueue_packet(new_packet);
                         // Assert that: new_packet.get_timestamp() >= Instant::now()
                         break;
@@ -645,7 +645,7 @@ where
         // Here, either:
         //    1) No more packets can be retrieved from egress, or
         //    2) A packet, that should enter the queue after `self.next_available` is seen.
-        // Thus the `dequeue_at()` sees a correct queue, containing any packet that should
+        // Thus, the `dequeue_at()` sees a correct queue, containing any packet that should
         // enter the AQM at `self.next_available`.
 
         let packet_to_send = self.transmitting_packet.take().map(|mut p| {
@@ -680,7 +680,7 @@ where
 
                 // If we enter this branch and got a new packet, whose logical timestamp is `np`, we assume that `np` <= Instant::now().
                 //   A) If the inbound buffer AQM is empty (in such case, self.packet_queue.next_call_time() is in 10 years),
-                //     When ever we got a packet, we should send it as soon as possible. As the two buffers in the AQM are
+                //     Whenever we get a packet, we should send it as soon as possible. As the two buffers in the AQM are
                 //     all empty, the `dequeue_at(timestamp)` shall just return the newly received packet. We set that as
                 //     the `self.transmitting_packet`, during which the self.next_available is updated based on the timestamp
                 //     of the newly received packet.
@@ -690,7 +690,7 @@ where
                 //     2) `Instant::now()` >= `np`, as we shall not receive a packet prior to its logical timestamp
                 //     3) `Instant::now()` < `hp`, or we should have entered the `select!` branch above, who `sleeps_until` `hp`.
                 //     Join them together, and we got `Instant::now()` >= `np` >= `hp` > `Instant::now()`, which is self-conflicting.
-                //     Thus this condition is impossible.
+                //     Thus, this condition is impossible.
                 // In conclusion, A) is the only possible condition when this branch is entered.
                 new_packet = self.egress.recv() => {
                     // XXX: If state change from `Normal` to others, the packets in the AQM may never be sent.
