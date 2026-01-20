@@ -25,6 +25,7 @@ use tracing::{info, instrument, span, warn, Level};
 
 #[instrument]
 #[test_log::test]
+#[serial_test::serial]
 fn test_compound() {
     let mut config = RattanConfig::<StdPacket> {
         env: StdNetEnvConfig {
