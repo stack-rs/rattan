@@ -1,14 +1,14 @@
-use super::{ControlInterface, Egress, Ingress};
-use crate::cells::{Cell, Packet};
-use crate::error::Error;
+use std::{fmt::Debug, sync::Arc};
+
 use async_trait::async_trait;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::Debug,
-    sync::{atomic::AtomicI32, Arc},
-};
 use tokio::sync::mpsc;
+
+use super::{ControlInterface, Egress, Ingress};
+use crate::cells::{AtomicCellState, Cell, CellState, Packet};
+use crate::check_cell_state;
+use crate::error::Error;
 
 #[derive(Clone)]
 pub struct ShadowCellIngress<P>
@@ -32,7 +32,7 @@ where
 
 pub struct ShadowCellEgress<P: Packet> {
     egress: mpsc::UnboundedReceiver<P>,
-    state: AtomicI32,
+    state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
 }
@@ -45,14 +45,10 @@ where
     async fn dequeue(&mut self) -> Option<P> {
         // Wait for Start notify if not started yet
         crate::wait_until_started!(self, Start);
-
-        match self.state.load(std::sync::atomic::Ordering::Acquire) {
-            0 => None,
-            _ => self.egress.recv().await,
-        }
+        check_cell_state!(self.state, self.egress.recv().await?).into()
     }
 
-    fn change_state(&self, state: i32) {
+    fn change_state(&self, state: CellState) {
         self.state
             .store(state, std::sync::atomic::Ordering::Release);
     }
@@ -125,7 +121,7 @@ where
             ingress: Arc::new(ShadowCellIngress { ingress: rx }),
             egress: ShadowCellEgress {
                 egress: tx,
-                state: AtomicI32::new(0),
+                state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
             },
@@ -136,8 +132,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
-    use crate::cells::StdPacket;
+    use crate::cells::{StdPacket, TestPacket};
     use rand::{rng, Rng};
     use tracing::{span, Level};
 
@@ -153,16 +151,18 @@ mod tests {
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
-        egress.change_state(2);
+        egress.change_state(CellState::Normal);
 
         let mut buffer = [0u8; 256];
         for _ in 0..100 {
             rng().fill(&mut buffer);
-            let test_packet = StdPacket::from_raw_buffer(&buffer);
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&buffer);
             ingress.enqueue(test_packet)?;
 
             let received = rt.block_on(async { egress.dequeue().await });
-            assert_eq!(received.unwrap().as_slice(), buffer);
+            let received = received.unwrap();
+            assert_eq!(received.as_slice(), buffer);
+            assert_eq!(received.delay(), Duration::ZERO)
         }
         Ok(())
     }
