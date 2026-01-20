@@ -12,7 +12,8 @@ pub fn create_cell<C: Cell<P>, P: Packet, Config: CellFactory<C>>(
     handle: &Handle,
 ) -> Result<C, Error> {
     let mut cell = config(handle)?;
-    cell.receiver().change_state(2);
+    cell.receiver()
+        .change_state(rattan_core::cells::CellState::Normal);
     Ok(cell)
 }
 
