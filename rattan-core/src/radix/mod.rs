@@ -260,12 +260,17 @@ where
     }
 
     pub fn init_veth(&mut self) -> Result<(), Error> {
-        // Ignore veth0 for now
-        for i in 1..self.env.left_pairs.len() {
+        // Ignore ext_veth (whose id is 0) for now
+        let left_max_id = self.env.left_max_id();
+        for i in 1..=left_max_id {
+            let Some(veth) = self.env.left_pairs.get(&i) else {
+                tracing::warn!("Expecting but not found veth id={} in left_pairs", i);
+                continue;
+            };
+            let veth = veth.right.clone();
             let rattan_ns = self.env.rattan_ns.clone();
-            let veth = self.env.left_pairs[i].right.clone();
-            let name = if self.env.left_pairs.len() == 2 {
-                // if only one veth pair
+            let name = if left_max_id == 1 {
+                // if only one veth pair except ext_veth
                 "left".to_string()
             } else {
                 format!("left{i}")
@@ -280,10 +285,17 @@ where
             })?;
         }
 
-        for i in 1..self.env.right_pairs.len() {
+        // Ignore ext_veth (whose id is 0) for now
+        let right_max_id = self.env.right_max_id();
+        for i in 1..=right_max_id {
+            let Some(veth) = self.env.right_pairs.get(&i) else {
+                tracing::warn!("Expecting but not found veth id={} in right_pairs", i);
+                continue;
+            };
+            let veth = veth.left.clone();
             let rattan_ns = self.env.rattan_ns.clone();
-            let veth = self.env.right_pairs[i].left.clone();
-            let name = if self.env.right_pairs.len() == 2 {
+            let name = if right_max_id == 1 {
+                // if only one veth pair except ext_veth
                 "right".to_string()
             } else {
                 format!("right{i}")
@@ -423,31 +435,31 @@ where
     ///
     /// 0 is for external connection
     pub fn left_ip(&self, i: usize) -> IpAddr {
-        self.env.left_pairs[i].left.ip_addr.0
+        self.env.left_pairs[&i].left.ip_addr.0
     }
 
     /// IP of i-th veth pair of `ns-right`
     ///
     /// 0 is for external connection
     pub fn right_ip(&self, i: usize) -> IpAddr {
-        self.env.right_pairs[i].right.ip_addr.0
+        self.env.right_pairs[&i].right.ip_addr.0
     }
 
     /// IP list of veth pairs of `ns-left`
-    pub fn left_ip_list(&self) -> Vec<IpAddr> {
+    pub fn left_ip_list(&self) -> Vec<(usize, IpAddr)> {
         self.env
             .left_pairs
             .iter()
-            .map(|e| e.left.ip_addr.0)
+            .map(|(i, e)| (*i, e.left.ip_addr.0))
             .collect()
     }
 
     /// IP list of veth pairs of `ns-right`
-    pub fn right_ip_list(&self) -> Vec<IpAddr> {
+    pub fn right_ip_list(&self) -> Vec<(usize, IpAddr)> {
         self.env
             .right_pairs
             .iter()
-            .map(|e| e.right.ip_addr.0)
+            .map(|(i, e)| (*i, e.right.ip_addr.0))
             .collect()
     }
 
@@ -524,7 +536,7 @@ where
                 "-i",
                 "0.2",
                 "-I",
-                &self.env.left_pairs[left_pair_id].left.name,
+                &self.env.left_pairs.get(&left_pair_id).unwrap().left.name,
             ])
             .stdout(std::process::Stdio::piped())
             .spawn()?;

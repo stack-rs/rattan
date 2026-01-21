@@ -423,7 +423,7 @@ impl VethPairBuilder {
     }
 
     #[instrument(name = "VethPairBuilder", skip_all, ret(level = Level::TRACE), err)]
-    pub fn build(self) -> Result<Arc<VethPair>, VethError> {
+    pub fn build(self, _id: usize) -> Result<Arc<VethPair>, VethError> {
         debug!(?self, "Building veth pair...");
         let build_thread_span = span!(Level::DEBUG, "build_thread").or_current();
         let build_thread = std::thread::spawn(|| {

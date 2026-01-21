@@ -23,6 +23,8 @@ fn test_multipath_ping() {
             right_veth_count: 2,
             client_cores: vec![1],
             server_cores: vec![3],
+            left_external_veth: false,
+            right_external_veth: false,
         },
         ..Default::default()
     };
