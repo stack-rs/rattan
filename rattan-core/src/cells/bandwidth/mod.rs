@@ -103,6 +103,68 @@ where
     transmitting_packet: Option<P>,
 }
 
+/// Handle bandwidth changes for `BwCell` and `BwReplayCell`.
+///
+/// This function adjusts timestamps under the assumption that:
+/// - transmission progress is linear with respect to bandwidth
+/// - the packet is already partially transmitted when the bandwidth changes
+///
+/// Parameters:
+/// - `logical_start_transmission_at`:
+///   The logical time when the current packet *started* transmission,
+///   assuming the **old bandwidth** was used from that moment on.
+/// - `scheduled_to_send_at`:
+///   The logical time when the packet *would have finished* transmission
+///   if the bandwidth change had **not** happened.
+/// - `change_time`:
+///   The logical time at which the bandwidth change occurs.
+/// - `change_ratio`:
+///   `old_bandwidth / new_bandwidth`.
+///   A value < 1 means bandwidth increased; > 1 means bandwidth decreased.
+///
+/// Return:
+/// - `(new_logical_transmission_start, new_next_available)`
+///
+///   These two timestamps preserve the *already-transmitted fraction*
+///   and rescale the *remaining transmission time* according to the new bandwidth.
+///
+/// Intuition:
+/// At `change_time`, the packet is partially transmitted.
+/// We:
+/// 1. Reinterpret the past transmission under the **new bandwidth**
+///    to compute a new logical start time.
+/// 2. Rescale the remaining transmission time to compute the new finish time.
+///
+/// Example:
+/// - A packet started transmission at 100ms with bandwidth = 1 pkt/s
+/// - It was scheduled to finish at 1100ms (total 1 second)
+/// - Bandwidth increases to 5 pkt/s at 300ms
+///
+/// At 300ms:
+/// - 200ms worth of transmission has occurred at the old rate
+/// - That corresponds to `200ms * (1 / 5) = 40ms` at the new rate
+///
+/// So:
+/// - New logical start time = `300ms - 40ms = 260ms`
+/// - Remaining time = `800ms * (1 / 5) = 160ms`
+/// - New finish time = `300ms + 160ms = 460ms`
+fn calculate_bw_change(
+    logical_start_transmission_at: Instant,
+    scheduled_to_send_at: Instant,
+    change_time: Instant,
+    change_ratio: f64,
+) -> (Instant, Instant) {
+    // Fraction already transmitted, rescaled to the new bandwidth
+    let sent_time = change_time
+        .duration_since(logical_start_transmission_at)
+        .mul_f64(change_ratio);
+    // Remaining transmission time, rescaled to the new bandwidth
+    let unsent_time = scheduled_to_send_at
+        .duration_since(change_time)
+        .mul_f64(change_ratio);
+    (change_time - sent_time, change_time + unsent_time)
+}
+
 impl<P, Q> BwCellEgress<P, Q>
 where
     P: Packet + Send + Sync,
@@ -110,26 +172,24 @@ where
 {
     fn set_config(&mut self, config: BwCellConfig<P, Q>) {
         if let Some(bandwidth) = config.bandwidth {
-            let now = Instant::now();
-            tracing::debug!(
-                "Previous next_available distance: {:?}",
-                self.next_available - now
-            );
-            self.next_available = if bandwidth == Bandwidth::from_bps(0) {
-                now + LARGE_DURATION
-            } else {
-                now + (self.next_available - now)
-                    .mul_f64(self.bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64)
-            };
-            tracing::debug!(
-                before = ?self.bandwidth,
-                after = ?bandwidth,
-                "Set inner bandwidth:"
-            );
-            tracing::debug!(
-                "Now next_available distance: {:?}",
-                self.next_available - now
-            );
+            if let Some(transmitting_packet) = self.transmitting_packet.as_mut() {
+                let change_time = Instant::now();
+                let change_ratio = self.bandwidth.as_gbps_f64() / bandwidth.as_gbps_f64();
+                let (new_logical_transmission_start, next_available) = calculate_bw_change(
+                    transmitting_packet.get_timestamp(),
+                    self.next_available,
+                    change_time,
+                    change_ratio,
+                );
+                transmitting_packet.delay_until(new_logical_transmission_start);
+                #[cfg(test)]
+                tracing::debug!(
+                    "Packet scheduled to be sent at {:?} is rescheduled to {:?}",
+                    relative_time(self.next_available),
+                    relative_time(next_available)
+                );
+                self.next_available = next_available;
+            }
             self.bandwidth = bandwidth;
         }
         if let Some(queue_config) = config.queue_config {
@@ -157,15 +217,18 @@ where
     }
 
     #[inline(always)]
-    fn set_transmitting_packet(&mut self, packet: P) {
+    fn set_transmitting_packet(&mut self, mut packet: P) {
         if self.transmitting_packet.is_none() {
+            let start_transmission = self.next_available.max(packet.get_timestamp());
             let transfer_time = transfer_time(packet.l3_length(), self.bandwidth, self.bw_type);
-            self.next_available = self.next_available.max(packet.get_timestamp()) + transfer_time;
+            // For calculation in update_bw. Not the logical sending time.
+            packet.delay_until(start_transmission);
+            self.next_available = start_transmission + transfer_time;
             #[cfg(test)]
             tracing::debug!(
-                "Packet at {:?} is going to be delayed for {:?}",
+                "Packet at {:?} is going to be delayed until {:?}",
                 relative_time(packet.get_timestamp()),
-                self.next_available.duration_since(packet.get_timestamp())
+                relative_time(self.next_available)
             );
             self.transmitting_packet = packet.into();
         } else {
@@ -488,30 +551,41 @@ where
             .current_bandwidth
             .update_get_last(bandwidth, change_time);
 
-        tracing::trace!(
+        tracing::debug!(
             "Changing bandwidth from{:?} to {:?} (should at {:?} ago)",
             last_bandwidth,
             bandwidth,
             change_time.elapsed()
         );
 
-        let last_bandwidth = last_bandwidth.unwrap_or(&bandwidth);
-        tracing::trace!(
-            "Previous next_available distance: {:?}",
-            self.next_available - change_time
+        let Some(transmitting_packet) = self.transmitting_packet.as_mut() else {
+            // If the bw change does not happen during a packet's logical transmission period (i.e. from it being
+            // set as the trasmitting packet to it being logical sent), nothing to do.
+            return;
+        };
+
+        let Some(change_ratio) =
+            last_bandwidth.map(|last| last.as_gbps_f64() / bandwidth.as_gbps_f64())
+        else {
+            // If the last_bandwidth is unknown, nothing to adjust.
+            return;
+        };
+
+        let (new_logical_transmission_start, next_available) = calculate_bw_change(
+            transmitting_packet.get_timestamp(),
+            self.next_available,
+            change_time,
+            change_ratio,
         );
 
-        self.next_available = if bandwidth == Bandwidth::from_bps(0) {
-            Instant::now() + LARGE_DURATION
-        } else {
-            change_time
-                + (self.next_available - change_time)
-                    .mul_f64(last_bandwidth.as_bps() as f64 / bandwidth.as_bps() as f64)
-        };
-        tracing::trace!(
-            "Now next_available distance: {:?}",
-            self.next_available - change_time
+        transmitting_packet.delay_until(new_logical_transmission_start);
+        #[cfg(test)]
+        tracing::debug!(
+            "Packet scheduled to be sent at {:?} is rescheduled to {:?}",
+            relative_time(self.next_available),
+            relative_time(next_available)
         );
+        self.next_available = next_available;
     }
 
     fn set_config(&mut self, config: BwReplayCellConfig<P, Q>) {
@@ -521,7 +595,7 @@ where
             let now = Instant::now();
             if !self.update_bw(now) {
                 // handle null trace outside this function
-                tracing::warn!("Setting null trace");
+                tracing::debug!("Setting null trace");
                 self.next_change = now;
                 // set state to 0 to indicate the trace goes to end and the cell will drop all packets
                 self.change_state(CellState::Drop);
@@ -545,7 +619,7 @@ where
             self.change_bandwidth(bandwidth, change_time);
             self.next_change = change_time + duration;
             #[cfg(test)]
-            tracing::trace!(
+            tracing::debug!(
                 "Bandwidth changed to {:?}, next change after {:?}. now {:?}",
                 bandwidth,
                 self.next_change - Instant::now(),
@@ -574,20 +648,24 @@ where
     }
 
     #[inline(always)]
-    fn set_transmitting_packet(&mut self, packet: P) {
+    fn set_transmitting_packet(&mut self, mut packet: P) {
         if self.transmitting_packet.is_none() {
+            let start_transmission = self.next_available.max(packet.get_timestamp());
             let transfer_time = self
                 .current_bandwidth
-                .get_at_timestamp(packet.get_timestamp())
+                .get_at_timestamp(start_transmission)
                 .map(|bw| transfer_time(packet.l3_length(), *bw, self.bw_type))
                 // release the packet immediately (aka infinity bandwidth) when no available bandwidth has been set.
                 .unwrap_or_default();
-            self.next_available = self.next_available.max(packet.get_timestamp()) + transfer_time;
+
+            // For calculation in update_bw. Not the logical sending time.
+            packet.delay_until(start_transmission);
+            self.next_available = start_transmission + transfer_time;
             #[cfg(test)]
             tracing::debug!(
-                "Packet at {:?} is going to be delayed for {:?}",
+                "Packet at {:?} is going to be delayed until {:?}",
                 relative_time(packet.get_timestamp()),
-                self.next_available.duration_since(packet.get_timestamp())
+                relative_time(self.next_available)
             );
             self.transmitting_packet = packet.into();
         } else {
