@@ -11,7 +11,7 @@ use once_cell::sync::OnceCell;
 use rand::distr::Alphanumeric;
 use rand::{rng, Rng};
 use rtnetlink::packet_route::{address::AddressAttribute, link::LinkAttribute, route::RouteScope};
-use std::{io::Write, sync::Arc};
+use std::{collections::BTreeMap, io::Write, sync::Arc};
 use std::{
     net::{IpAddr, Ipv4Addr},
     str::FromStr,
@@ -142,6 +142,13 @@ pub enum IODriver {
     Xdp,
 }
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Default)]
+pub enum NetDevice {
+    #[default]
+    Veth,
+}
+
 fn default_veth_count() -> usize {
     1
 }
@@ -156,6 +163,12 @@ pub struct StdNetEnvConfig {
     pub left_veth_count: usize,
     #[cfg_attr(feature = "serde", serde(default = "default_veth_count"))]
     pub right_veth_count: usize,
+
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub left_external: Option<NetDevice>,
+
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub right_external: Option<NetDevice>,
 
     // TODO(minhuw): pretty sure these two configs should not be here
     // but let it be for now
@@ -173,6 +186,8 @@ impl Default for StdNetEnvConfig {
             right_veth_count: default_veth_count(),
             client_cores: vec![],
             server_cores: vec![],
+            left_external: None,
+            right_external: None,
         }
     }
 }
@@ -181,22 +196,30 @@ pub struct StdNetEnv {
     pub left_ns: Arc<NetNs>,
     pub rattan_ns: Arc<NetNs>,
     pub right_ns: Arc<NetNs>,
-    pub left_pairs: Vec<Arc<VethPair>>,
-    pub right_pairs: Vec<Arc<VethPair>>,
+    // For legacy reasons, index 0 is reserved for an external veth pair.
+    // This external veth pair is not fully implemented yet and is constructed only optionally.
+    //
+    // If an additional external NIC is required (e.g., a TUN device or extra veth pairs),
+    // it should be represented as a separate field in `StdNetEnv`, rather than being included
+    // in the `left_pairs` or `right_pairs` BTreeMaps.
+    //
+    // TODO: Move the external veth pair out of the BTreeMaps.
+    pub left_pairs: BTreeMap<usize, Arc<VethPair>>,
+    pub right_pairs: BTreeMap<usize, Arc<VethPair>>,
 }
 
 impl StdNetEnv {
-    pub fn left_ext_pair(&self) -> &Arc<VethPair> {
-        &self.left_pairs[0]
-    }
-    pub fn right_ext_pair(&self) -> &Arc<VethPair> {
-        &self.right_pairs[0]
-    }
     pub fn left_default_pair(&self) -> &Arc<VethPair> {
-        &self.left_pairs[1]
+        self.left_pairs.get(&0).unwrap()
     }
     pub fn right_default_pair(&self) -> &Arc<VethPair> {
-        &self.right_pairs[1]
+        self.right_pairs.get(&0).unwrap()
+    }
+    pub fn left_max_id(&self) -> usize {
+        *self.left_pairs.last_key_value().unwrap().0
+    }
+    pub fn right_max_id(&self) -> usize {
+        *self.right_pairs.last_key_value().unwrap().0
     }
 }
 
@@ -293,36 +316,46 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     trace!(?right_netns, "Right netns {right_netns_name} created");
 
     // Build veth0 for left and right, which are reserved for external connection, but ignore it for now
-    let left_veth0 = VethPairBuilder::new()
-        .name(
-            format!("vL0-L-{rand_string}"),
-            format!("vL0-R-{rand_string}"),
-        )
-        .namespace(Some(left_netns.clone()), Some(rattan_netns.clone()))
-        .mac_addr(
-            [0x38, 0x7e, 0x58, 0xe7, 1, 1].into(),
-            [0x38, 0x7e, 0x58, 0xe7, 1, 2].into(),
-        )
-        .ip_addr(
-            (IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 32),
-            (IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 32),
-        )
-        .build()?;
-    let right_veth0 = VethPairBuilder::new()
-        .name(
-            format!("vR0-L-{rand_string}"),
-            format!("vR0-R-{rand_string}"),
-        )
-        .namespace(Some(rattan_netns.clone()), Some(right_netns.clone()))
-        .mac_addr(
-            [0x38, 0x7e, 0x58, 0xe7, 2, 2].into(),
-            [0x38, 0x7e, 0x58, 0xe7, 2, 1].into(),
-        )
-        .ip_addr(
-            (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 2)), 32),
-            (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 32),
-        )
-        .build()?;
+
+    let left_veth0 = match config.left_external {
+        Some(NetDevice::Veth) => VethPairBuilder::new()
+            .name(
+                format!("vL0-L-{rand_string}"),
+                format!("vL0-R-{rand_string}"),
+            )
+            .namespace(Some(left_netns.clone()), Some(rattan_netns.clone()))
+            .mac_addr(
+                [0x38, 0x7e, 0x58, 0xe7, 1, 1].into(),
+                [0x38, 0x7e, 0x58, 0xe7, 1, 2].into(),
+            )
+            .ip_addr(
+                (IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 32),
+                (IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 32),
+            )
+            .build(0)?
+            .into(),
+        None => None,
+    };
+
+    let right_veth0 = match config.right_external {
+        Some(NetDevice::Veth) => VethPairBuilder::new()
+            .name(
+                format!("vR0-L-{rand_string}"),
+                format!("vR0-R-{rand_string}"),
+            )
+            .namespace(Some(rattan_netns.clone()), Some(right_netns.clone()))
+            .mac_addr(
+                [0x38, 0x7e, 0x58, 0xe7, 2, 2].into(),
+                [0x38, 0x7e, 0x58, 0xe7, 2, 1].into(),
+            )
+            .ip_addr(
+                (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 2)), 32),
+                (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 32),
+            )
+            .build(0)?
+            .into(),
+        None => None,
+    };
 
     // lock IPs for right veth pairs
     std::fs::create_dir_all(IP_LOCK_DIR)?;
@@ -342,7 +375,7 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     }
 
     // Build right veth pairs
-    let mut right_veth_pairs = vec![right_veth0];
+    let mut right_veth_pairs = vec![];
     for (pair_id, suffix) in suffixes.iter().enumerate().skip(1) {
         right_veth_pairs.push(
             VethPairBuilder::new()
@@ -359,14 +392,14 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
                     get_veth_ip_address(VethPairGroup::Right, pair_id, 2),
                     get_veth_ip_address(VethPairGroup::Right, pair_id, *suffix),
                 )
-                .build()?,
+                .build(pair_id)?,
         );
     }
 
     // Build left veth pairs
     suffixes.resize(config.left_veth_count + 1, 1);
 
-    let mut left_veth_pairs = vec![left_veth0];
+    let mut left_veth_pairs = vec![];
     for (pair_id, suffix) in suffixes.iter().enumerate().skip(1) {
         left_veth_pairs.push(
             VethPairBuilder::new()
@@ -383,7 +416,7 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
                     get_veth_ip_address(VethPairGroup::Left, pair_id, *suffix),
                     get_veth_ip_address(VethPairGroup::Left, pair_id, 2),
                 )
-                .build()?,
+                .build(pair_id)?,
         );
     }
 
@@ -443,20 +476,20 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
 
     debug!("Set default route for left namespace");
 
-    debug!("Set left interface[1] as default interface");
+    debug!("Set left interface[0] as default interface");
     add_route_with_netns(
-        right_veth_pairs[1].right.ip_addr,
+        right_veth_pairs[0].right.ip_addr,
         None,
-        left_veth_pairs[1].left.index,
+        left_veth_pairs[0].left.index,
         left_netns.clone(),
         RouteScope::Link,
     )?;
 
-    debug!("Set left interface[1]'s ip as default route");
+    debug!("Set left interface[0]'s ip as default route");
     add_route_with_netns(
         None,
-        Some(right_veth_pairs[1].right.ip_addr.0),
-        left_veth_pairs[1].left.index,
+        Some(right_veth_pairs[0].right.ip_addr.0),
+        left_veth_pairs[0].left.index,
         left_netns.clone(),
         RouteScope::Universe,
     )?;
@@ -464,11 +497,11 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     debug!("Set default route for right namespace");
     match config.mode {
         StdNetEnvMode::Compatible => {
-            for left_veth in left_veth_pairs.iter().skip(1) {
+            for left_veth in left_veth_pairs.iter() {
                 add_route_with_netns(
                     left_veth.left.ip_addr,
                     None,
-                    right_veth_pairs[1].right.index,
+                    right_veth_pairs[0].right.index,
                     right_netns.clone(),
                     RouteScope::Link,
                 )?;
@@ -476,16 +509,16 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         }
         _ => {
             add_route_with_netns(
-                left_veth_pairs[1].left.ip_addr,
+                left_veth_pairs[0].left.ip_addr,
                 None,
-                right_veth_pairs[1].right.index,
+                right_veth_pairs[0].right.index,
                 right_netns.clone(),
                 RouteScope::Link,
             )?;
             add_route_with_netns(
                 None,
-                Some(left_veth_pairs[1].left.ip_addr.0),
-                right_veth_pairs[1].right.index,
+                Some(left_veth_pairs[0].left.ip_addr.0),
+                right_veth_pairs[0].right.index,
                 right_netns.clone(),
                 RouteScope::Universe,
             )?;
@@ -494,8 +527,8 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
 
     // Set the default neighbors of left and right namespaces
     info!("Set default neighbors");
-    for left_veth in left_veth_pairs.iter().skip(1) {
-        for right_veth in right_veth_pairs.iter().skip(1) {
+    for left_veth in left_veth_pairs.iter() {
+        for right_veth in right_veth_pairs.iter() {
             add_arp_entry_with_netns(
                 right_veth.right.ip_addr.0,
                 right_veth.right.mac_addr,
@@ -516,12 +549,28 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     set_loopback_up_with_netns(rattan_netns.clone())?;
     set_loopback_up_with_netns(right_netns.clone())?;
 
+    fn build_pairs(
+        veth_0: Option<Arc<VethPair>>,
+        others: Vec<Arc<VethPair>>,
+    ) -> BTreeMap<usize, Arc<VethPair>> {
+        let mut result = BTreeMap::from_iter(
+            others
+                .into_iter()
+                .enumerate()
+                .map(|(id, veth)| (id + 1, veth)),
+        );
+        if let Some(veth_0) = veth_0 {
+            result.insert(0, veth_0);
+        }
+        result
+    }
+
     Ok(StdNetEnv {
         left_ns: left_netns,
         rattan_ns: rattan_netns,
         right_ns: right_netns,
-        left_pairs: left_veth_pairs,
-        right_pairs: right_veth_pairs,
+        left_pairs: build_pairs(left_veth0, left_veth_pairs),
+        right_pairs: build_pairs(right_veth0, right_veth_pairs),
     })
 }
 

@@ -15,9 +15,9 @@ use figment::{
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
-use rattan_core::cells::StdPacket;
+use rattan_core::cells::StdPacket as RattanPacket;
 use rattan_core::env::StdNetEnvMode;
-use rattan_core::metal::io::af_packet::AfPacketDriver;
+use rattan_core::metal::io::af_packet::AfPacketDriver as RattanPacketDriver;
 use rattan_core::radix::PacketLogMode;
 use rattan_core::radix::RattanRadix;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
@@ -34,11 +34,14 @@ use crate::{
 };
 
 mod channel;
+mod env_var;
 mod visualize_trace;
 // mod log_converter;
 #[cfg(feature = "nat")]
 mod nat;
 // mod docker;
+
+use env_var::add_runtime_env_var;
 
 // const CONFIG_PORT_BASE: u16 = 8086;
 
@@ -337,7 +340,7 @@ fn main() -> ExitCode {
                         args.config.display()
                     )));
                 }
-                let config: RattanConfig<StdPacket> = Figment::new()
+                let config: RattanConfig<RattanPacket> = Figment::new()
                     .merge(Toml::file(&args.config))
                     .merge(Env::prefixed("RATTAN_"))
                     .extract()
@@ -372,7 +375,7 @@ fn main() -> ExitCode {
                     .select("commands")
                     .extract::<TaskCommands>()
                     .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
-                let config = args.build_rattan_config::<StdPacket>()?;
+                let config = args.build_rattan_config::<RattanPacket>()?;
                 (config, commands)
             }
             CliCommand::Convert(args) => {
@@ -459,7 +462,7 @@ fn main() -> ExitCode {
         }
 
         // Start Rattan
-        let mut radix = RattanRadix::<AfPacketDriver>::new(config)?;
+        let mut radix = RattanRadix::<RattanPacketDriver>::new(config)?;
         radix.spawn_rattan()?;
         radix.start_rattan()?;
 
@@ -479,7 +482,10 @@ fn main() -> ExitCode {
                 let left_ip_list = radix.left_ip_list();
                 #[cfg(feature = "nat")]
                 let _nat = if !opts.no_nat {
-                    Some(nat::Nat::new(left_ip_list[1]))
+                    left_ip_list
+                        .iter()
+                        .find_map(|&(id, ip)| (id == 1).then_some(ip))
+                        .map(nat::Nat::new)
                 } else {
                     None
                 };
@@ -487,11 +493,7 @@ fn main() -> ExitCode {
                 let right_ip_list = radix.right_ip_list();
                 let left_handle = radix.left_spawn(None, move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    right_ip_list.iter().enumerate().for_each(|(i, ip)| {
-                        client_handle.env(format!("RATTAN_IP_{i}"), ip.to_string());
-                    });
-                    client_handle.env("RATTAN_EXT", right_ip_list[0].to_string());
-                    client_handle.env("RATTAN_BASE", right_ip_list[1].to_string());
+                    add_runtime_env_var(&mut client_handle, right_ip_list);
                     if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     } else {
@@ -549,11 +551,7 @@ fn main() -> ExitCode {
                 let ip_list = radix.left_ip_list();
                 let right_handle = radix.right_spawn(Some(tx_right), move || {
                     let mut server_handle = std::process::Command::new("/usr/bin/env");
-                    ip_list.iter().enumerate().for_each(|(i, ip)| {
-                        server_handle.env(format!("RATTAN_IP_{i}"), ip.to_string());
-                    });
-                    server_handle.env("RATTAN_EXT", ip_list[0].to_string());
-                    server_handle.env("RATTAN_BASE", ip_list[1].to_string());
+                    add_runtime_env_var(&mut server_handle, ip_list);
                     if let Some(arguments) = commands.right {
                         server_handle.args(arguments);
                     }
@@ -581,11 +579,7 @@ fn main() -> ExitCode {
                 let ip_list = radix.right_ip_list();
                 let left_handle = radix.left_spawn(Some(tx_left), move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    ip_list.iter().enumerate().for_each(|(i, ip)| {
-                        client_handle.env(format!("RATTAN_IP_{i}"), ip.to_string());
-                    });
-                    client_handle.env("RATTAN_EXT", ip_list[0].to_string());
-                    client_handle.env("RATTAN_BASE", ip_list[1].to_string());
+                    add_runtime_env_var(&mut client_handle, ip_list);
                     if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     }
