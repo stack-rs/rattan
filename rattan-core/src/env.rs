@@ -206,6 +206,9 @@ pub struct StdNetEnv {
     // TODO: Move the external veth pair out of the BTreeMaps.
     pub left_pairs: BTreeMap<usize, Arc<VethPair>>,
     pub right_pairs: BTreeMap<usize, Arc<VethPair>>,
+    // A random string that is used to identify a Rattan instance.
+    // It is also a part of the names for above network namespaces and devices
+    pub rattan_id: String,
 }
 
 impl StdNetEnv {
@@ -571,6 +574,7 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         right_ns: right_netns,
         left_pairs: build_pairs(left_veth0, left_veth_pairs),
         right_pairs: build_pairs(right_veth0, right_veth_pairs),
+        rattan_id: rand_string,
     })
 }
 
