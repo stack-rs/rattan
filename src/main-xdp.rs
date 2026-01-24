@@ -464,6 +464,7 @@ fn main() -> ExitCode {
         let mut radix = RattanRadix::<RattanPacketDriver>::new(config)?;
         radix.spawn_rattan()?;
         radix.start_rattan()?;
+        let rattan_id = radix.get_rattan_id().clone();
 
         let (tx_left, rx) = std::sync::mpsc::channel();
         let tx_right = tx_left.clone();
@@ -492,7 +493,7 @@ fn main() -> ExitCode {
                 let right_ip_list = radix.right_ip_list();
                 let left_handle = radix.left_spawn(None, move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    add_runtime_env_var(&mut client_handle, right_ip_list);
+                    add_runtime_env_var(&mut client_handle, right_ip_list, &rattan_id);
                     if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     } else {
@@ -548,9 +549,10 @@ fn main() -> ExitCode {
                 }
 
                 let ip_list = radix.left_ip_list();
+                let rattan_id_right = rattan_id.clone();
                 let right_handle = radix.right_spawn(Some(tx_right), move || {
                     let mut server_handle = std::process::Command::new("/usr/bin/env");
-                    add_runtime_env_var(&mut server_handle, ip_list);
+                    add_runtime_env_var(&mut server_handle, ip_list, rattan_id_right);
                     if let Some(arguments) = commands.right {
                         server_handle.args(arguments);
                     }
@@ -578,7 +580,7 @@ fn main() -> ExitCode {
                 let ip_list = radix.right_ip_list();
                 let left_handle = radix.left_spawn(Some(tx_left), move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    add_runtime_env_var(&mut client_handle, ip_list);
+                    add_runtime_env_var(&mut client_handle, ip_list, &rattan_id);
                     if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     }

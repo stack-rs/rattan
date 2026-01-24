@@ -467,6 +467,10 @@ where
         self.mode
     }
 
+    pub fn get_rattan_id(&self) -> &String {
+        &self.env.rattan_id
+    }
+
     // Spawn a thread running task in left namespace
     pub fn left_spawn<R: Send + 'static>(
         &self,
