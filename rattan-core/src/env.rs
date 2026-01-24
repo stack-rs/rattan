@@ -142,6 +142,13 @@ pub enum IODriver {
     Xdp,
 }
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Default)]
+pub enum NetDevice {
+    #[default]
+    Veth,
+}
+
 fn default_veth_count() -> usize {
     1
 }
@@ -158,10 +165,10 @@ pub struct StdNetEnvConfig {
     pub right_veth_count: usize,
 
     #[cfg_attr(feature = "serde", serde(default))]
-    pub left_external_veth: bool,
+    pub left_external_veth: Option<NetDevice>,
 
     #[cfg_attr(feature = "serde", serde(default))]
-    pub right_external_veth: bool,
+    pub right_external_veth: Option<NetDevice>,
 
     // TODO(minhuw): pretty sure these two configs should not be here
     // but let it be for now
@@ -179,8 +186,8 @@ impl Default for StdNetEnvConfig {
             right_veth_count: default_veth_count(),
             client_cores: vec![],
             server_cores: vec![],
-            left_external_veth: false,
-            right_external_veth: false,
+            left_external_veth: None,
+            right_external_veth: None,
         }
     }
 }
@@ -302,8 +309,8 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
 
     // Build veth0 for left and right, which are reserved for external connection, but ignore it for now
 
-    let left_veth0 = if config.left_external_veth {
-        VethPairBuilder::new()
+    let left_veth0 = match config.left_external_veth {
+        Some(NetDevice::Veth) => VethPairBuilder::new()
             .name(
                 format!("vL0-L-{rand_string}"),
                 format!("vL0-R-{rand_string}"),
@@ -318,13 +325,12 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
                 (IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2)), 32),
             )
             .build(0)?
-            .into()
-    } else {
-        None
+            .into(),
+        None => None,
     };
 
-    let right_veth0 = if config.right_external_veth {
-        VethPairBuilder::new()
+    let right_veth0 = match config.right_external_veth {
+        Some(NetDevice::Veth) => VethPairBuilder::new()
             .name(
                 format!("vR0-L-{rand_string}"),
                 format!("vR0-R-{rand_string}"),
@@ -339,10 +345,8 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
                 (IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), 32),
             )
             .build(0)?
-            .into()
-    } else {
-        tracing::warn!("no external right");
-        None
+            .into(),
+        None => None,
     };
 
     // lock IPs for right veth pairs

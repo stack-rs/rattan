@@ -1,9 +1,8 @@
 use std::{
     borrow::Cow,
     fs::File,
-    net::IpAddr,
     path::PathBuf,
-    process::{Command, ExitCode, Stdio, Termination},
+    process::{ExitCode, Stdio, Termination},
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
@@ -21,6 +20,7 @@ use rattan_core::env::StdNetEnvMode;
 use rattan_core::metal::io::af_packet::AfPacketDriver as RattanPacketDriver;
 use rattan_core::radix::PacketLogMode;
 use rattan_core::radix::RattanRadix;
+use rattan_core::utils::env_var::add_runtime_env_var;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
 use rattan_log::convert_log_to_pcapng;
 use serde::{Deserialize, Serialize};
@@ -51,21 +51,6 @@ static RIGHT_PID: OnceCell<i32> = OnceCell::new();
 fn parse_duration(delay: &str) -> Result<Duration, jiff::Error> {
     let span: jiff::Span = delay.parse()?;
     Duration::try_from(span)
-}
-
-fn add_env(handle: &mut Command, ip_list: Vec<(usize, IpAddr)>) {
-    for (i, ip) in ip_list.into_iter() {
-        handle.env(format!("RATTAN_IP_{i}"), ip.to_string());
-        match i {
-            0 => {
-                handle.env("RATTAN_EXT", ip.to_string());
-            }
-            1 => {
-                handle.env("RATTAN_BASE", ip.to_string());
-            }
-            _ => {}
-        };
-    }
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -506,7 +491,7 @@ fn main() -> ExitCode {
                 let right_ip_list = radix.right_ip_list();
                 let left_handle = radix.left_spawn(None, move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    add_env(&mut client_handle, right_ip_list);
+                    add_runtime_env_var(&mut client_handle, right_ip_list);
                     if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     } else {
@@ -564,7 +549,7 @@ fn main() -> ExitCode {
                 let ip_list = radix.left_ip_list();
                 let right_handle = radix.right_spawn(Some(tx_right), move || {
                     let mut server_handle = std::process::Command::new("/usr/bin/env");
-                    add_env(&mut server_handle, ip_list);
+                    add_runtime_env_var(&mut server_handle, ip_list);
                     if let Some(arguments) = commands.right {
                         server_handle.args(arguments);
                     }
@@ -592,7 +577,7 @@ fn main() -> ExitCode {
                 let ip_list = radix.right_ip_list();
                 let left_handle = radix.left_spawn(Some(tx_left), move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    add_env(&mut client_handle, ip_list);
+                    add_runtime_env_var(&mut client_handle, ip_list);
                     if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     }
