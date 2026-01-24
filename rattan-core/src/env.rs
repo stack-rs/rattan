@@ -196,6 +196,14 @@ pub struct StdNetEnv {
     pub left_ns: Arc<NetNs>,
     pub rattan_ns: Arc<NetNs>,
     pub right_ns: Arc<NetNs>,
+    // For legacy reasons, index 0 is reserved for an external veth pair.
+    // This external veth pair is not fully implemented yet and is constructed only optionally.
+    //
+    // If an additional external NIC is required (e.g., a TUN device or extra veth pairs),
+    // it should be represented as a separate field in `StdNetEnv`, rather than being included
+    // in the `left_pairs` or `right_pairs` BTreeMaps.
+    //
+    // TODO: Move the external veth pair out of the BTreeMaps.
     pub left_pairs: BTreeMap<usize, Arc<VethPair>>,
     pub right_pairs: BTreeMap<usize, Arc<VethPair>>,
 }
