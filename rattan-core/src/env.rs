@@ -165,10 +165,10 @@ pub struct StdNetEnvConfig {
     pub right_veth_count: usize,
 
     #[cfg_attr(feature = "serde", serde(default))]
-    pub left_external_veth: Option<NetDevice>,
+    pub left_external: Option<NetDevice>,
 
     #[cfg_attr(feature = "serde", serde(default))]
-    pub right_external_veth: Option<NetDevice>,
+    pub right_external: Option<NetDevice>,
 
     // TODO(minhuw): pretty sure these two configs should not be here
     // but let it be for now
@@ -186,8 +186,8 @@ impl Default for StdNetEnvConfig {
             right_veth_count: default_veth_count(),
             client_cores: vec![],
             server_cores: vec![],
-            left_external_veth: None,
-            right_external_veth: None,
+            left_external: None,
+            right_external: None,
         }
     }
 }
@@ -317,7 +317,7 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
 
     // Build veth0 for left and right, which are reserved for external connection, but ignore it for now
 
-    let left_veth0 = match config.left_external_veth {
+    let left_veth0 = match config.left_external {
         Some(NetDevice::Veth) => VethPairBuilder::new()
             .name(
                 format!("vL0-L-{rand_string}"),
@@ -337,7 +337,7 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         None => None,
     };
 
-    let right_veth0 = match config.right_external_veth {
+    let right_veth0 = match config.right_external {
         Some(NetDevice::Veth) => VethPairBuilder::new()
             .name(
                 format!("vR0-L-{rand_string}"),

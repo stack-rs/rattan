@@ -19,7 +19,6 @@ use rattan_core::env::StdNetEnvMode;
 use rattan_core::metal::io::af_xdp::{XDPDriver as RattanPacketDriver, XDPPacket as RattanPacket};
 use rattan_core::radix::PacketLogMode;
 use rattan_core::radix::RattanRadix;
-use rattan_core::utils::env_var::add_runtime_env_var;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
 use rattan_log::convert_log_to_pcapng;
 use serde::{Deserialize, Serialize};
@@ -34,11 +33,14 @@ use crate::{
 };
 
 mod channel;
+mod env_var;
 mod visualize_trace;
 // mod log_converter;
 #[cfg(feature = "nat")]
 mod nat;
 // mod docker;
+
+use env_var::add_runtime_env_var;
 
 // const CONFIG_PORT_BASE: u16 = 8086;
 

@@ -2,7 +2,6 @@ use std::borrow::Cow;
 
 use regex::Regex;
 
-pub mod env_var;
 #[cfg(feature = "serde")]
 pub(crate) mod serde;
 pub mod sync;
