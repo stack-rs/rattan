@@ -90,6 +90,7 @@ pub struct RattanGeneralConfig {
     #[cfg_attr(feature = "serde", serde(default))]
     pub packet_log: Option<PathBuf>,
     pub packet_log_mode: Option<PacketLogMode>,
+    pub drop_privilege_as: Option<String>,
 }
 
 impl RattanGeneralConfig {

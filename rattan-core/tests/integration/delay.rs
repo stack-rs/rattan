@@ -54,7 +54,7 @@ fn test_delay() {
         info!("try to ping with no delay");
         let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 let handle = std::process::Command::new("ping")
                     .args([&right_ip, "-c", "10", "-i", "0.3"])
                     .stdout(std::process::Stdio::piped())
@@ -102,7 +102,7 @@ fn test_delay() {
 
         let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 let handle = std::process::Command::new("ping")
                     .args([&right_ip, "-c", "10", "-i", "0.3"])
                     .stdout(std::process::Stdio::piped())

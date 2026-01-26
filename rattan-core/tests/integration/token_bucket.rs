@@ -62,7 +62,7 @@ fn test_token_bucket() {
         info!("try to ping with token bucket unset");
         let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 let handle = std::process::Command::new("ping")
                     .args([&right_ip, "-c", "10", "-i", "0.35", "-s", "256"])
                     .stdout(std::process::Stdio::piped())
@@ -109,7 +109,7 @@ fn test_token_bucket() {
 
         let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 let handle = std::process::Command::new("ping")
                     .args([&right_ip, "-c", "10", "-i", "0.35", "-s", "256"])
                     .stdout(std::process::Stdio::piped())

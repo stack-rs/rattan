@@ -30,18 +30,19 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
     build::CLAP_LONG_VERSION,
+    cli_util::{build_command, CowStr},
     visualize_trace::{write_visualize_trace, OutputMode},
 };
 
 mod channel;
-mod env_var;
+mod cli_util;
 mod visualize_trace;
 // mod log_converter;
 #[cfg(feature = "nat")]
 mod nat;
 // mod docker;
 
-use env_var::add_runtime_env_var;
+use cli_util::add_runtime_env_var;
 
 // const CONFIG_PORT_BASE: u16 = 8086;
 
@@ -103,6 +104,15 @@ pub struct Arguments {
         default_value = "human-json"
     )]
     visualize_trace_mode: OutputMode,
+
+    /// Drop privilege when spawn user threads.
+    ///    - not present: do nothing
+    ///    - present without value: use the env var `SUDO_USER` as default
+    ///    - present with value: drop to specified user
+    /// If a user name a specified, or the env var `SUDO_USER` was used as default, this argument overwrites the
+    /// same-named field in config file.
+    #[arg(long, global = true, num_args = 0..=1, value_name = "User Name")]
+    drop_privilege_as: Option<Option<String>>,
 
     /// Used in isolated mode only. If set, stdout of left is passed to output of this program.
     #[arg(long, global = true)]
@@ -244,6 +254,12 @@ fn main() -> ExitCode {
     //     docker::docker_main(opts).unwrap();
     //     return;
     // }
+
+    let drop_privilege_as = match opts.drop_privilege_as {
+        None => None,
+        Some(None) => std::env::var("SUDO_USER").ok(),
+        Some(Some(user)) => Some(user),
+    };
 
     // Install Tracing Subscriber
     let subscriber =
@@ -397,6 +413,9 @@ fn main() -> ExitCode {
             config.general.packet_log = Some(packet_log);
             config.general.packet_log_mode = opts.packet_log_mode.into();
         }
+        if let Some(drop_privilege_as) = drop_privilege_as {
+            config.general.drop_privilege_as = Some(drop_privilege_as);
+        }
 
         tracing::debug!(?config);
 
@@ -492,19 +511,37 @@ fn main() -> ExitCode {
                 };
 
                 let right_ip_list = radix.right_ip_list();
-                let left_handle = radix.left_spawn(None, move || {
-                    let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    add_runtime_env_var(&mut client_handle, right_ip_list, &rattan_id);
-                    if let Some(arguments) = commands.left {
-                        client_handle.args(arguments);
+                let left_handle = radix.left_spawn(None, move |user_name| {
+                    // Build command to run in left ns
+                    let mut command: Vec<CowStr<'_>> = if let Some(user_name) = user_name {
+                        vec![
+                            "/usr/bin/sudo".into(),
+                            "-E".into(),
+                            "-u".into(),
+                            user_name.into(),
+                        ]
                     } else {
-                        let shell = commands.shell.unwrap_or_default();
-                        client_handle.arg(shell.shell().as_ref());
-                        if shell.shell().ends_with("/bash") {
-                            client_handle
-                                .env("PROMPT_COMMAND", "PS1=\"[rattan] $PS1\" PROMPT_COMMAND=");
-                        }
+                        vec![]
+                    };
+                    command.push("/usr/bin/env".into());
+
+                    let prompt = if let Some(arguments) = commands.left {
+                        command.extend(arguments.into_iter().map(CowStr::from));
+                        None
+                    } else {
+                        let shell = commands.shell.unwrap_or_default().shell().to_string();
+                        let is_bash = shell.ends_with("/bash");
+                        command.push(shell.into());
+                        is_bash
+                            .then_some(("PROMPT_COMMAND", "PS1=\"[rattan] $PS1\" PROMPT_COMMAND="))
+                    };
+
+                    let mut client_handle = build_command(command.into_iter());
+                    if let Some((key, val)) = prompt {
+                        client_handle.env(key, val);
                     }
+
+                    add_runtime_env_var(&mut client_handle, right_ip_list, &rattan_id);
                     tracing::info!("Running {:?}", client_handle);
                     let mut client_handle = client_handle
                         .stdin(Stdio::inherit())
@@ -551,12 +588,23 @@ fn main() -> ExitCode {
 
                 let ip_list = radix.left_ip_list();
                 let rattan_id_right = rattan_id.clone();
-                let right_handle = radix.right_spawn(Some(tx_right), move || {
-                    let mut server_handle = std::process::Command::new("/usr/bin/env");
-                    add_runtime_env_var(&mut server_handle, ip_list, rattan_id_right);
+                let right_handle = radix.right_spawn(Some(tx_right), move |user_name| {
+                    let mut command: Vec<CowStr<'_>> = if let Some(user_name) = user_name {
+                        vec![
+                            "/usr/bin/sudo".into(),
+                            "-E".into(),
+                            "-u".into(),
+                            user_name.into(),
+                        ]
+                    } else {
+                        vec![]
+                    };
+                    command.push("/usr/bin/env".into());
                     if let Some(arguments) = commands.right {
-                        server_handle.args(arguments);
+                        command.extend(arguments.into_iter().map(CowStr::from));
                     }
+                    let mut server_handle = build_command(command.into_iter());
+                    add_runtime_env_var(&mut server_handle, ip_list, rattan_id_right);
                     tracing::info!("Running in right NS {server_handle:?}");
                     let mut server_handle = server_handle
                         .stdin(Stdio::null())
@@ -579,12 +627,24 @@ fn main() -> ExitCode {
                     Ok(status)
                 })?;
                 let ip_list = radix.right_ip_list();
-                let left_handle = radix.left_spawn(Some(tx_left), move || {
-                    let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    add_runtime_env_var(&mut client_handle, ip_list, &rattan_id);
+                let left_handle = radix.left_spawn(Some(tx_left), move |user_name| {
+                    let mut command: Vec<CowStr<'_>> = if let Some(user_name) = user_name {
+                        vec![
+                            "/usr/bin/sudo".into(),
+                            "-E".into(),
+                            "-u".into(),
+                            user_name.into(),
+                        ]
+                    } else {
+                        vec![]
+                    };
+                    command.push("/usr/bin/env".into());
                     if let Some(arguments) = commands.left {
-                        client_handle.args(arguments);
+                        command.extend(arguments.into_iter().map(CowStr::from));
                     }
+                    let mut client_handle = build_command(command.into_iter());
+                    add_runtime_env_var(&mut client_handle, ip_list, &rattan_id);
+
                     tracing::info!("Running in left NS {client_handle:?}");
                     let mut client_handle = client_handle
                         .stdin(Stdio::null())

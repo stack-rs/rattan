@@ -54,7 +54,7 @@ fn test_loss() {
         info!("try to ping with no loss");
         let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 let handle = std::process::Command::new("ping")
                     .args([&right_ip, "-c", "20", "-i", "0.3"])
                     .stdout(std::process::Stdio::piped())
@@ -90,7 +90,7 @@ fn test_loss() {
 
         let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 let handle = std::process::Command::new("ping")
                     .args([&right_ip, "-c", "50", "-i", "0.3"])
                     .stdout(std::process::Stdio::piped())

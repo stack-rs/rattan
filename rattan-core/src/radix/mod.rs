@@ -59,9 +59,9 @@ pub static PKT_LOG_MODE: OnceCell<PacketLogMode> = OnceCell::new();
 
 pub type TaskResult<R> = Result<R, Box<dyn std::error::Error + Send + Sync>>;
 
-pub trait Task<R: Send>: FnOnce() -> TaskResult<R> + Send {}
+pub trait Task<R: Send>: FnOnce(Option<String>) -> TaskResult<R> + Send {}
 
-impl<R: Send, T: FnOnce() -> TaskResult<R> + Send> Task<R> for T {}
+impl<R: Send, T: FnOnce(Option<String>) -> TaskResult<R> + Send> Task<R> for T {}
 
 pub enum TaskResultNotify {
     Left,
@@ -83,6 +83,7 @@ where
     log_thread_handle: Option<thread::JoinHandle<std::io::Result<()>>>,
     _rattan_runtime: Arc<Runtime>,
     rattan: RattanCore<D>,
+    drop_privilege_as: Option<String>,
     #[cfg(feature = "http")]
     http_thread_handle: Option<thread::JoinHandle<crate::error::Result<()>>>,
 }
@@ -234,6 +235,7 @@ where
             log_thread_handle,
             _rattan_runtime: rattan_runtime,
             rattan,
+            drop_privilege_as: config.general.drop_privilege_as,
             #[cfg(feature = "http")]
             http_thread_handle,
         };
@@ -479,6 +481,7 @@ where
     ) -> Result<thread::JoinHandle<TaskResult<R>>, Error> {
         let thread_span = span!(Level::INFO, "left_ns").or_current();
         let left_ns = self.env.left_ns.clone();
+        let drop_privilege_as = self.drop_privilege_as.clone();
         Ok(std::thread::spawn(move || {
             let _entered = thread_span.entered();
             left_ns.enter().map_err(|e| {
@@ -488,7 +491,7 @@ where
             })?;
             std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and process spawn
             info!("Run task in left namespace");
-            let res = task();
+            let res = task(drop_privilege_as);
             if let Some(tx) = tx {
                 let _ = tx.send(TaskResultNotify::Left);
             }
@@ -504,6 +507,7 @@ where
     ) -> Result<thread::JoinHandle<TaskResult<R>>, Error> {
         let thread_span = span!(Level::INFO, "right_ns").or_current();
         let right_ns = self.env.right_ns.clone();
+        let drop_privilege_as = self.drop_privilege_as.clone();
         Ok(std::thread::spawn(move || {
             let _entered = thread_span.entered();
             right_ns.enter().map_err(|e| {
@@ -513,7 +517,7 @@ where
             })?;
             std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and process spawn
             info!("Run task in right namespace");
-            let res = task();
+            let res = task(drop_privilege_as);
             if let Some(tx) = tx {
                 let _ = tx.send(TaskResultNotify::Right);
             }

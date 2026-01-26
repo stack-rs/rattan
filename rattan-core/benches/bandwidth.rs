@@ -52,7 +52,7 @@ fn prepare_env() -> RattanRadix<AfPacketDriver> {
 
 fn run_iperf(radix: &mut RattanRadix<AfPacketDriver>) {
     let right_handle = radix
-        .right_spawn(None, || {
+        .right_spawn(None, |_| {
             let mut iperf_server = std::process::Command::new("iperf3")
                 .args(["-s", "-p", "9000", "-1"])
                 .stdout(std::process::Stdio::null())
@@ -66,7 +66,7 @@ fn run_iperf(radix: &mut RattanRadix<AfPacketDriver>) {
     std::thread::sleep(std::time::Duration::from_millis(100));
     let right_ip = radix.right_ip(1).to_string();
     let left_handle = radix
-        .left_spawn(None, move || {
+        .left_spawn(None, move |_| {
             std::process::Command::new("iperf3")
                 .args([
                     "-c", &right_ip, "-p", "9000", "-n", "1024M", "-J", "-C", "reno",

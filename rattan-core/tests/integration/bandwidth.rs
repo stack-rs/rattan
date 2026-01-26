@@ -78,7 +78,7 @@ fn test_bandwidth() {
         let _span = span!(Level::INFO, "iperf_no_limit").entered();
         info!("try to iperf with no bandwidth limit");
         let right_handle = radix
-            .right_spawn(None, || {
+            .right_spawn(None, |_| {
                 let mut iperf_server = std::process::Command::new("iperf3")
                     .args(["-s", "-p", "9000", "-1"])
                     .stdout(std::process::Stdio::null())
@@ -91,7 +91,7 @@ fn test_bandwidth() {
         sleep(Duration::from_millis(500));
         let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 let client_handle = std::process::Command::new("iperf3")
                     .args([
                         "-c", &right_ip, "-p", "9000", "--cport", "10000", "-t", "10", "-J", "-R",
@@ -145,7 +145,7 @@ fn test_bandwidth() {
             .unwrap();
 
         let right_handle = radix
-            .right_spawn(None, || {
+            .right_spawn(None, |_| {
                 let mut iperf_server = std::process::Command::new("iperf3")
                     .args(["-s", "-p", "9001", "-1"])
                     .stdout(std::process::Stdio::null())
@@ -158,7 +158,7 @@ fn test_bandwidth() {
         sleep(Duration::from_millis(500));
         let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 let client_handle = std::process::Command::new("iperf3")
                     .args([
                         "-c", &right_ip, "-p", "9001", "--cport", "10000", "-t", "10", "-J", "-R",
@@ -244,7 +244,7 @@ fn test_droptail_queue() {
         let server_cancel_token = cancel_token_inner.clone();
 
         let right_handle = radix
-            .right_spawn(None, || {
+            .right_spawn(None, |_| {
                 std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -271,7 +271,7 @@ fn test_droptail_queue() {
         let op_endpoint = radix.op_endpoint();
         let right_ip = radix.right_ip(1);
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -416,7 +416,7 @@ fn test_drophead_queue() {
         let server_cancel_token = cancel_token_inner.clone();
 
         let right_handle = radix
-            .right_spawn(None, || {
+            .right_spawn(None, |_| {
                 std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -443,7 +443,7 @@ fn test_drophead_queue() {
         let op_endpoint = radix.op_endpoint();
         let right_ip = radix.right_ip(1);
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -598,7 +598,7 @@ fn test_codel_queue() {
         let server_cancel_token = cancel_token_inner.clone();
 
         let right_handle = radix
-            .right_spawn(None, || {
+            .right_spawn(None, |_| {
                 std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -625,7 +625,7 @@ fn test_codel_queue() {
         let op_endpoint = radix.op_endpoint();
         let right_ip = radix.right_ip(1);
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -803,7 +803,7 @@ fn test_replay() {
     {
         let _span = span!(Level::INFO, "test_replay").entered();
         let right_handle = radix
-            .right_spawn(None, || {
+            .right_spawn(None, |_| {
                 let mut iperf_server = std::process::Command::new("iperf3")
                     .args(["-s", "-p", "9000", "-1"])
                     .stdout(std::process::Stdio::null())
@@ -834,7 +834,7 @@ fn test_replay() {
             .unwrap();
         let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 let client_handle = std::process::Command::new("iperf3")
                     .args([
                         "-c", &right_ip, "-p", "9000", "--cport", "10000", "-t", "12", "-J", "-R",
@@ -940,7 +940,7 @@ fn test_low_rate() {
     info!("try to ping 128B packets in a 4096bps link");
     let right_ip = radix.right_ip(1).to_string();
     let left_handle = radix
-        .left_spawn(None, move || {
+        .left_spawn(None, move |_| {
             let handle = std::process::Command::new("ping")
                 .args([&right_ip, "-c", "10", "-i", "0.3", "-s", "100"])
                 .stdout(std::process::Stdio::piped())

@@ -83,7 +83,7 @@ fn main() {
     // Before config the BwCell, the bandwidth should be around 1Gbps
     {
         let right_handle = radix
-            .right_spawn(None, || {
+            .right_spawn(None, |_| {
                 let mut iperf_server = std::process::Command::new("taskset")
                     .args(["-c", "0", "iperf3", "-s", "-p", "9000", "-1"])
                     .stdout(std::process::Stdio::null())
@@ -98,7 +98,7 @@ fn main() {
 
         let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 let client_handle = std::process::Command::new("taskset")
                     .args([
                         "-c", "3", "iperf3", "-c", &right_ip, "-p", "9000", "--cport", "10000",

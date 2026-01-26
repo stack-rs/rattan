@@ -91,7 +91,7 @@ fn test_http() {
         let _span = span!(Level::INFO, "iperf_no_limit").entered();
         info!("try to iperf with no bandwidth limit");
         let right_handle = radix
-            .right_spawn(None, || {
+            .right_spawn(None, |_| {
                 let mut iperf_server = std::process::Command::new("iperf3")
                     .args(["-s", "-p", "9000", "-1"])
                     .stdout(std::process::Stdio::null())
@@ -104,7 +104,7 @@ fn test_http() {
         sleep(Duration::from_millis(500));
         let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 let client_handle = std::process::Command::new("iperf3")
                     .args([
                         "-c", &right_ip, "-p", "9000", "--cport", "10000", "-t", "10", "-J", "-R",
@@ -254,7 +254,7 @@ fn test_http() {
         assert!(resp.status().is_success());
 
         let right_handle = radix
-            .right_spawn(None, || {
+            .right_spawn(None, |_| {
                 let mut iperf_server = std::process::Command::new("iperf3")
                     .args(["-s", "-p", "9001", "-1"])
                     .stdout(std::process::Stdio::null())
@@ -267,7 +267,7 @@ fn test_http() {
         sleep(Duration::from_millis(500));
         let right_ip = radix.right_ip(1).to_string();
         let left_handle = radix
-            .left_spawn(None, move || {
+            .left_spawn(None, move |_| {
                 let client_handle = std::process::Command::new("iperf3")
                     .args([
                         "-c", &right_ip, "-p", "9001", "--cport", "10000", "-t", "10", "-J", "-R",
