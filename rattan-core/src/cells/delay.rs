@@ -1,10 +1,13 @@
 use std::{fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
-use netem_trace::{model::DelayTraceConfig, Delay, DelayTrace};
+use netem_trace::{model::DelayTraceConfig, peek::Peekable, Delay, DelayTrace};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use tokio::{sync::mpsc, time::Instant};
+use tokio::{
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 use super::{TimedConfig, LARGE_DURATION, TRACE_START_INSTANT};
 #[cfg(test)]
@@ -13,6 +16,8 @@ use crate::cells::{AtomicCellState, Cell, CellState, ControlInterface, Egress, I
 use crate::core::CALIBRATED_START_INSTANT;
 use crate::error::Error;
 use crate::metal::timer::Timer;
+
+type PeekableDelayTrace = Peekable<Box<dyn DelayTrace>, (Delay, Duration)>;
 
 pub struct DelayCellIngress<P>
 where
@@ -78,6 +83,15 @@ where
     P: Packet + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
+        if cfg!(feature = "first-payload") && TRACE_START_INSTANT.get().is_none() {
+            let mut packet = self.egress.recv().await?;
+            self.timer
+                .sleep(packet.get_timestamp() + self.delay - Instant::now())
+                .await
+                .ok();
+            packet.delay_by(self.delay);
+            return Some(packet);
+        }
         // Wait for Start notify if not started yet
         crate::wait_until_started!(self, Start);
 
@@ -233,7 +247,7 @@ where
     P: Packet,
 {
     egress: mpsc::UnboundedReceiver<P>,
-    trace: Box<dyn DelayTrace>,
+    trace: PeekableDelayTrace,
     delays: TimedConfig<Delay>,
     next_change: Instant,
     config_rx: mpsc::UnboundedReceiver<DelayReplayCellConfig>,
@@ -251,7 +265,7 @@ where
 {
     fn set_config(&mut self, config: DelayReplayCellConfig) {
         tracing::debug!("Set inner trace config");
-        self.trace = config.trace_config.into_model();
+        self.trace = config.trace_config.into_model().peekable();
     }
 
     /// If the trace does not go to end and a new config was set, returns true and update self.next_change.
@@ -283,6 +297,16 @@ where
     P: Packet + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
+        if cfg!(feature = "first-payload") && TRACE_START_INSTANT.get().is_none() {
+            let mut packet = self.egress.recv().await?;
+            let delay = self.trace.peek().map(|t| t.0).unwrap_or_default();
+            self.send_timer
+                .sleep(packet.get_timestamp() + delay - Instant::now())
+                .await
+                .ok();
+            packet.delay_by(delay);
+            return Some(packet);
+        }
         // Wait for FirstPacket notify if not started yet
         #[cfg(feature = "first-packet")]
         crate::wait_until_started!(self, FirstPacket);
@@ -446,11 +470,12 @@ where
         tracing::debug!("New DelayReplayCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
+
         Ok(DelayReplayCell {
             ingress: Arc::new(DelayReplayCellIngress { ingress: rx }),
             egress: DelayReplayCellEgress {
                 egress: tx,
-                trace,
+                trace: trace.peekable(),
                 delays: TimedConfig::default(),
                 next_change: Instant::now(),
                 config_rx,
