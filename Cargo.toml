@@ -127,6 +127,7 @@ shadow-rs = "1.7.0"
 [features]
 default = ["first-packet"]
 first-packet = ["rattan-core/first-packet"]
+first-payload = ["rattan-core/first-payload"]
 http = ["rattan-core/http"]
 nat = ["dep:mnl", "dep:nftnl"]
 packet-dump = ["rattan-core/packet-dump"]

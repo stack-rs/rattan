@@ -89,6 +89,7 @@ tracing-subscriber = { workspace = true }
 default = []
 xdp = ["dep:camellia-net"]
 first-packet = []
+first-payload = []
 http = ["dep:axum", "serde"]
 packet-dump = []
 serde = [
