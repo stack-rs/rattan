@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::sync::Arc;
+use std::sync::{atomic::AtomicU64, Arc};
 
 use async_trait::async_trait;
 use netem_trace::model::LossTraceConfig;
@@ -18,11 +18,27 @@ use crate::cells::{AtomicCellState, Cell, CellState, Packet, LARGE_DURATION};
 use crate::error::Error;
 use crate::utils::sync::AtomicRawCell;
 
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ByteTriggerDirection {
+    Input,
+    Output,
+}
+
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ByteTriggerLossConfig {
+    pub direction: ByteTriggerDirection,
+    pub trigger_bytes: u64,
+    pub drop_count: usize,
+}
+
 pub struct LossCellIngress<P>
 where
     P: Packet,
 {
     ingress: mpsc::UnboundedSender<P>,
+    input_bytes: Arc<AtomicU64>,
 }
 
 impl<P> Clone for LossCellIngress<P>
@@ -32,6 +48,7 @@ where
     fn clone(&self) -> Self {
         Self {
             ingress: self.ingress.clone(),
+            input_bytes: self.input_bytes.clone(),
         }
     }
 }
@@ -41,6 +58,8 @@ where
     P: Packet + Send,
 {
     fn enqueue(&self, packet: P) -> Result<(), Error> {
+        self.input_bytes
+            .fetch_add(packet.length() as u64, std::sync::atomic::Ordering::Relaxed);
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -57,6 +76,12 @@ where
     /// This `Arc` is shared with the `LossCellControlInterface`.
     pattern_to_set: Arc<AtomicRawCell<LossPattern>>,
     pattern_in_use: Box<LossPattern>,
+    input_bytes: Arc<AtomicU64>,
+    output_bytes: u64,
+    byte_trigger: Option<ByteTriggerLossConfig>,
+    // None: has not been triggered
+    // Some(x): has been triggered, and remains x to be dropped.
+    dropping_remaining: Option<usize>,
     /// How many packets have been lost consecutively
     prev_loss: usize,
     rng: R,
@@ -77,7 +102,42 @@ where
 
         // It could be None only if the other end of the channel has closed.
         let packet = self.egress.recv().await?;
-        let packet = crate::check_cell_state!(self.state, packet);
+        let packet = match self.state.load(std::sync::atomic::Ordering::Acquire) {
+            CellState::Drop => return None,
+            CellState::PassThrough => {
+                self.output_bytes += packet.length() as u64;
+                return Some(packet);
+            }
+            CellState::Normal => packet,
+        };
+
+        //  pattern
+        if let Some(trigger) = &self.byte_trigger {
+            match self.dropping_remaining {
+                Some(0) => {}
+                Some(x) => {
+                    self.dropping_remaining = Some(x - 1);
+                    return None;
+                }
+                None => {
+                    let current_bytes = match trigger.direction {
+                        ByteTriggerDirection::Input => {
+                            self.input_bytes.load(std::sync::atomic::Ordering::Relaxed)
+                        }
+                        ByteTriggerDirection::Output => self.output_bytes,
+                    };
+                    if current_bytes >= trigger.trigger_bytes {
+                        let drop_count = trigger.drop_count;
+                        if drop_count > 0 {
+                            self.dropping_remaining = Some(drop_count - 1);
+                            return None;
+                        } else {
+                            self.dropping_remaining = Some(0);
+                        }
+                    }
+                }
+            }
+        }
 
         // Try to update the config.
         if let Some(pattern) = self.pattern_to_set.swap_null() {
@@ -95,8 +155,17 @@ where
             None
         } else {
             self.prev_loss = 0;
+            self.output_bytes += packet.length() as u64;
             Some(packet)
         }
+    }
+
+    fn reset(&mut self) {
+        self.output_bytes = 0;
+        self.dropping_remaining = None; // have not been triggered
+        self.prev_loss = 0;
+        self.input_bytes
+            .store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn change_state(&self, state: CellState) {
@@ -120,12 +189,14 @@ where
 #[derive(Debug, Default, Clone)]
 pub struct LossCellConfig {
     pub pattern: LossPattern,
+    pub byte_trigger: Option<ByteTriggerLossConfig>,
 }
 
 impl LossCellConfig {
     pub fn new<T: Into<LossPattern>>(pattern: T) -> Self {
         Self {
             pattern: pattern.into(),
+            byte_trigger: None,
         }
     }
 }
@@ -138,7 +209,7 @@ impl ControlInterface for LossCellControlInterface {
     type Config = LossCellConfig;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
-        info!("Setting loss pattern to: {:?}", config.pattern);
+        info!("Setting loss config: {:?}", config);
         self.pattern_to_set.store(Box::new(config.pattern));
         Ok(())
     }
@@ -182,16 +253,27 @@ where
     R: RngExt,
 {
     pub fn new<L: Into<LossPattern>>(pattern: L, rng: R) -> Result<LossCell<P, R>, Error> {
-        let pattern = pattern.into();
-        debug!(?pattern, "New LossCell");
+        Self::from_config(LossCellConfig::new(pattern), rng)
+    }
+
+    pub fn from_config(config: LossCellConfig, rng: R) -> Result<LossCell<P, R>, Error> {
+        debug!(?config, "New LossCell");
         let (rx, tx) = mpsc::unbounded_channel();
-        let pattern_to_set = Arc::new(AtomicRawCell::new(Box::new(pattern)));
+        let input_bytes = Arc::new(AtomicU64::new(0));
+        let pattern_to_set = Arc::new(AtomicRawCell::new(Box::new(config.pattern.clone())));
         Ok(LossCell {
-            ingress: Arc::new(LossCellIngress { ingress: rx }),
+            ingress: Arc::new(LossCellIngress {
+                ingress: rx,
+                input_bytes: input_bytes.clone(),
+            }),
             egress: LossCellEgress {
                 egress: tx,
                 pattern_to_set: Arc::clone(&pattern_to_set),
                 pattern_in_use: Box::default(),
+                input_bytes,
+                output_bytes: 0,
+                byte_trigger: config.byte_trigger,
+                dropping_remaining: None,
                 prev_loss: 0,
                 rng,
                 state: AtomicCellState::new(CellState::Drop),
@@ -221,6 +303,12 @@ where
     state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
+    input_bytes: Arc<AtomicU64>,
+    output_bytes: u64,
+    byte_trigger: Option<ByteTriggerLossConfig>,
+    // None: has not been triggered
+    // Some(x): has been triggered, and remains x to be dropped.
+    dropping_remaining: Option<usize>,
 }
 
 impl<P, R> LossReplayCellEgress<P, R>
@@ -245,6 +333,7 @@ where
     fn set_config(&mut self, trace_config: Box<dyn LossTraceConfig>) {
         tracing::debug!("Set inner trace config");
         self.trace = trace_config.into_model();
+        self.dropping_remaining = None;
         let now = Instant::now();
         if !self.update_loss(now) {
             tracing::warn!("Setting null trace");
@@ -291,7 +380,42 @@ where
 
         // It could be None only if the other end of the channel has closed.
         let packet = self.egress.recv().await?;
-        let packet = crate::check_cell_state!(self.state, packet);
+        let packet = match self.state.load(std::sync::atomic::Ordering::Acquire) {
+            CellState::Drop => return None,
+            CellState::PassThrough => {
+                self.output_bytes += packet.length() as u64;
+                return Some(packet);
+            }
+            CellState::Normal => packet,
+        };
+
+        //  pattern
+        if let Some(trigger) = &self.byte_trigger {
+            match self.dropping_remaining {
+                Some(0) => {}
+                Some(x) => {
+                    self.dropping_remaining = Some(x - 1);
+                    return None;
+                }
+                None => {
+                    let current_bytes = match trigger.direction {
+                        ByteTriggerDirection::Input => {
+                            self.input_bytes.load(std::sync::atomic::Ordering::Relaxed)
+                        }
+                        ByteTriggerDirection::Output => self.output_bytes,
+                    };
+                    if current_bytes >= trigger.trigger_bytes {
+                        let drop_count = trigger.drop_count;
+                        if drop_count > 0 {
+                            self.dropping_remaining = Some(drop_count - 1);
+                            return None;
+                        } else {
+                            self.dropping_remaining = Some(0);
+                        }
+                    }
+                }
+            }
+        }
 
         // Try to update the config.
         if let Some(trace) = self.trace_to_set.swap_null() {
@@ -325,6 +449,7 @@ where
             None
         } else {
             self.prev_loss = 0;
+            self.output_bytes += packet.length() as u64;
             Some(packet)
         }
     }
@@ -344,18 +469,24 @@ where
         notify_rx: tokio::sync::broadcast::Receiver<crate::control::RattanNotify>,
     ) {
         self.notify_rx = Some(notify_rx);
+        self.output_bytes = 0;
+        self.dropping_remaining = None;
+        self.input_bytes
+            .store(0, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct LossReplayCellConfig {
     pub trace_config: Box<dyn LossTraceConfig>,
+    pub byte_trigger: Option<ByteTriggerLossConfig>,
 }
 
 impl Clone for LossReplayCellConfig {
     fn clone(&self) -> Self {
         Self {
             trace_config: self.trace_config.clone(),
+            byte_trigger: self.byte_trigger.clone(),
         }
     }
 }
@@ -364,6 +495,7 @@ impl LossReplayCellConfig {
     pub fn new<T: Into<Box<dyn LossTraceConfig>>>(trace_config: T) -> Self {
         Self {
             trace_config: trace_config.into(),
+            byte_trigger: None,
         }
     }
 }
@@ -419,11 +551,16 @@ where
     P: Packet,
     R: RngExt,
 {
-    pub fn new(trace: Box<dyn LossTrace>, rng: R) -> Result<LossReplayCell<P, R>, Error> {
+    pub fn new(config: LossReplayCellConfig, rng: R) -> Result<LossReplayCell<P, R>, Error> {
         let (rx, tx) = mpsc::unbounded_channel();
         let trace_to_set = Arc::new(AtomicRawCell::new_null());
+        let input_bytes = Arc::new(AtomicU64::new(0));
+        let trace = config.trace_config.into_model();
         Ok(LossReplayCell {
-            ingress: Arc::new(LossReplayCellIngress { ingress: rx }),
+            ingress: Arc::new(LossReplayCellIngress {
+                ingress: rx,
+                input_bytes: input_bytes.clone(),
+            }),
             egress: LossReplayCellEgress {
                 egress: tx,
                 trace,
@@ -435,6 +572,10 @@ where
                 state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
                 started: false,
+                input_bytes,
+                output_bytes: 0,
+                byte_trigger: config.byte_trigger,
+                dropping_remaining: None,
             },
             control_interface: Arc::new(LossReplayCellControlInterface { trace_to_set }),
         })
@@ -449,6 +590,8 @@ mod tests {
     use rand::{rngs::StdRng, SeedableRng};
     use std::time::Duration;
     use tracing::{span, Level};
+
+    use rstest::rstest;
 
     use crate::cells::{StdPacket, TestPacket};
 
@@ -677,10 +820,11 @@ mod tests {
         ];
         let loss_trace_config = Box::new(RepeatedLossPatternConfig::new().pattern(pattern).count(0))
             as Box<dyn LossTraceConfig>;
-        let loss_trace = loss_trace_config.into_model();
 
-        let cell: LossReplayCell<TestPacket<StdPacket>, StdRng> =
-            LossReplayCell::new(loss_trace, StdRng::seed_from_u64(42))?;
+        let cell: LossReplayCell<TestPacket<StdPacket>, StdRng> = LossReplayCell::new(
+            LossReplayCellConfig::new(loss_trace_config),
+            StdRng::seed_from_u64(42),
+        )?;
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
         egress.reset();
@@ -736,6 +880,159 @@ mod tests {
             );
             assert!((loss_rate - calibrated_loss_rate).abs() <= LOSS_RATE_ACCURACY_TOLERANCE);
         }
+        Ok(())
+    }
+
+    #[rstest]
+    #[case(ByteTriggerDirection::Input)]
+    #[case(ByteTriggerDirection::Output)]
+    #[test_log::test]
+    fn test_loss_payload(#[case] direction: ByteTriggerDirection) -> Result<(), Error> {
+        let _span = tracing::info_span!("test_loss_payload", ?direction).entered();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let _guard = rt.enter();
+
+        info!(
+            "Creating loss cell that drops 10 packets after 1024 bytes {:?}",
+            direction
+        );
+
+        let config = LossCellConfig {
+            pattern: vec![],
+            byte_trigger: Some(ByteTriggerLossConfig {
+                direction,
+                trigger_bytes: 1536,
+                drop_count: 10,
+            }),
+        };
+
+        let cell = LossCell::from_config(config, StdRng::seed_from_u64(42))?;
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
+        egress.reset();
+        egress.change_state(CellState::Normal);
+
+        info!(
+            "Testing loss for loss cell that drops 10 packets after 1024 bytes {:?}",
+            direction
+        );
+
+        let expected_start_loss = match direction {
+            ByteTriggerDirection::Input => 1536 / 256 - 1,
+            ByteTriggerDirection::Output => 1536 / 256,
+        };
+
+        let mut total_loss = 0;
+
+        for p in 0..100 {
+            let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
+            ingress.enqueue(test_packet)?;
+            let received = rt.block_on(async { egress.dequeue().await });
+
+            match received {
+                Some(content) => {
+                    assert_eq!(content.length(), 256);
+                    assert_eq!(content.delay(), Duration::ZERO);
+                }
+                None => {
+                    total_loss += 1;
+                    tracing::info!("Dropped {}th packet by payload as expected", p);
+                    assert!(expected_start_loss <= p);
+                    assert!(expected_start_loss + 10 > p);
+                }
+            }
+        }
+        assert_eq!(total_loss, 10);
+        Ok(())
+    }
+    #[rstest]
+    #[case(ByteTriggerDirection::Input)]
+    #[case(ByteTriggerDirection::Output)]
+    #[test_log::test]
+    fn test_loss_replay_payload(#[case] direction: ByteTriggerDirection) -> Result<(), Error> {
+        let _span = tracing::info_span!("test_loss_replay_payload", ?direction).entered();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let _guard = rt.enter();
+
+        let pattern = vec![
+            Box::new(
+                StaticLossConfig::new()
+                    .loss(vec![0.0])
+                    .duration(Duration::from_secs(1)),
+            ) as Box<dyn LossTraceConfig>,
+            Box::new(
+                StaticLossConfig::new()
+                    .loss(vec![0.5])
+                    .duration(Duration::from_secs(1)),
+            ) as Box<dyn LossTraceConfig>,
+        ];
+        let loss_trace_config = Box::new(RepeatedLossPatternConfig::new().pattern(pattern).count(0))
+            as Box<dyn LossTraceConfig>;
+
+        let mut loss_replay_cell_config = LossReplayCellConfig::new(loss_trace_config);
+        loss_replay_cell_config.byte_trigger = Some(ByteTriggerLossConfig {
+            direction,
+            trigger_bytes: 1536,
+            drop_count: 10,
+        });
+
+        let cell: LossReplayCell<TestPacket<StdPacket>, StdRng> =
+            LossReplayCell::new(loss_replay_cell_config, StdRng::seed_from_u64(42))?;
+        let expected_start_loss = match direction {
+            ByteTriggerDirection::Input => 1536 / 256 - 1,
+            ByteTriggerDirection::Output => 1536 / 256,
+        };
+
+        // Expected behaviour:
+        // [0s, 1s), no random loss, and drop 10 packets since `expected_start_loss`.
+        // [1s, 2s), 0.5 random loss.
+        // [2s, 3s), no random loss.
+
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
+        egress.reset();
+        let start_time = tokio::time::Instant::now();
+        egress.change_state(CellState::Normal);
+
+        let expected_loss_rate = [0.1, 0.5, 0.0];
+
+        for (t, expected_loss) in expected_loss_rate.into_iter().enumerate() {
+            let logical_send_time = start_time + Duration::from_secs(t as u64);
+            rt.block_on(async {
+                tokio::time::sleep_until(logical_send_time).await;
+            });
+
+            let mut statistics = PacketStatistics::new();
+            for p in 0..100 {
+                let test_packet = TestPacket::<StdPacket>::from_raw_buffer(&[0; 256]);
+                ingress.enqueue(test_packet)?;
+                let received = rt.block_on(async { egress.dequeue().await });
+                match received {
+                    Some(content) => {
+                        assert_eq!(content.length(), 256);
+                        assert_eq!(content.delay(), Duration::ZERO);
+                        statistics.recv_normal_packet();
+                    }
+                    None => {
+                        statistics.recv_loss_packet();
+                        if t == 0 {
+                            // drop based on payload
+                            tracing::info!("Dropped {}th packet by payload as expected", p);
+                            assert!(expected_start_loss <= p);
+                            assert!(expected_start_loss + 10 > p);
+                        }
+                    }
+                }
+            }
+            let loss_rate = statistics.get_lost_rate();
+            info!("Tested loss at {}s: {}", t, loss_rate);
+            assert!((loss_rate - expected_loss).abs() <= LOSS_RATE_ACCURACY_TOLERANCE);
+        }
+
         Ok(())
     }
 }
