@@ -961,6 +961,6 @@ fn test_low_rate() {
 
     // Should all be 250ms.
     let (&min, &max) = latency.iter().minmax().into_option().unwrap();
-    assert!(min >= 248.0);
-    assert!(max <= 250.0);
+    assert!(min >= 249.0);
+    assert!(max <= 251.0);
 }
