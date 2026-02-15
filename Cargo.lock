@@ -1819,9 +1819,9 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "memmap2"
-version = "0.9.9"
+version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "744133e4a0e0a658e1374cf3bf8e415c4052a15a111acd372764c55b4177d490"
+checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
 dependencies = [
  "libc",
 ]
@@ -2533,7 +2533,6 @@ checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
 dependencies = [
  "rand_chacha",
  "rand_core",
- "serde",
 ]
 
 [[package]]
@@ -2553,7 +2552,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
- "serde",
 ]
 
 [[package]]
@@ -2564,8 +2562,6 @@ checksum = "6a8615d50dcf34fa31f7ab52692afec947c4dd0ab803cc87cb3b0b4570ff7463"
 dependencies = [
  "num-traits",
  "rand",
- "serde",
- "serde_with",
 ]
 
 [[package]]
@@ -2644,7 +2640,6 @@ dependencies = [
  "pcap-file",
  "pnet",
  "rand",
- "rand_distr",
  "rattan-log",
  "regex",
  "reqwest",
@@ -2670,7 +2665,6 @@ version = "0.1.0"
 dependencies = [
  "binread",
  "bitfield",
- "clap",
  "derive_more",
  "hex",
  "memmap2",

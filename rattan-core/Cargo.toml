@@ -47,7 +47,6 @@ once_cell = { workspace = true }
 parking_lot = "0.12.1"
 pcap-file = { workspace = true }
 rand = { workspace = true }
-rand_distr = "0.5"
 rattan-log = { path = "../rattan-log" }
 regex = "1.7.3"
 rtnetlink = "0.17.0"
@@ -87,10 +86,4 @@ camellia = ["dep:camellia"]
 first-packet = []
 http = ["dep:axum", "serde"]
 packet-dump = []
-serde = [
-  "bandwidth/serde",
-  "bytesize/serde",
-  "dep:serde",
-  "dep:serde_json",
-  "rand_distr/serde"
-]
+serde = ["bandwidth/serde", "bytesize/serde", "dep:serde", "dep:serde_json"]
