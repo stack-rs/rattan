@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use netem_trace::model::LossTraceConfig;
 use netem_trace::{LossPattern, LossTrace};
-use rand::Rng;
+use rand::RngExt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -51,7 +51,7 @@ where
 pub struct LossCellEgress<P, R>
 where
     P: Packet,
-    R: Rng,
+    R: RngExt,
 {
     egress: mpsc::UnboundedReceiver<P>,
     /// This `Arc` is shared with the `LossCellControlInterface`.
@@ -69,7 +69,7 @@ where
 impl<P, R> Egress<P> for LossCellEgress<P, R>
 where
     P: Packet + Send + Sync,
-    R: Rng + Send + Sync,
+    R: RngExt + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
         // Wait for Start notify if not started yet
@@ -144,7 +144,7 @@ impl ControlInterface for LossCellControlInterface {
     }
 }
 
-pub struct LossCell<P: Packet, R: Rng> {
+pub struct LossCell<P: Packet, R: RngExt> {
     ingress: Arc<LossCellIngress<P>>,
     egress: LossCellEgress<P, R>,
     control_interface: Arc<LossCellControlInterface>,
@@ -153,7 +153,7 @@ pub struct LossCell<P: Packet, R: Rng> {
 impl<P, R> Cell<P> for LossCell<P, R>
 where
     P: Packet + Send + Sync + 'static,
-    R: Rng + Send + Sync + 'static,
+    R: RngExt + Send + Sync + 'static,
 {
     type IngressType = LossCellIngress<P>;
     type EgressType = LossCellEgress<P, R>;
@@ -179,7 +179,7 @@ where
 impl<P, R> LossCell<P, R>
 where
     P: Packet,
-    R: Rng,
+    R: RngExt,
 {
     pub fn new<L: Into<LossPattern>>(pattern: L, rng: R) -> Result<LossCell<P, R>, Error> {
         let pattern = pattern.into();
@@ -208,7 +208,7 @@ type LossReplayCellIngress<P> = LossCellIngress<P>;
 pub struct LossReplayCellEgress<P, R>
 where
     P: Packet,
-    R: Rng,
+    R: RngExt,
 {
     egress: mpsc::UnboundedReceiver<P>,
     trace: Box<dyn LossTrace>,
@@ -226,7 +226,7 @@ where
 impl<P, R> LossReplayCellEgress<P, R>
 where
     P: Packet + Send + Sync,
-    R: Rng + Send + Sync,
+    R: RngExt + Send + Sync,
 {
     fn change_loss(&mut self, loss: LossPattern, change_time: Instant) {
         tracing::trace!(
@@ -280,7 +280,7 @@ where
 impl<P, R> Egress<P> for LossReplayCellEgress<P, R>
 where
     P: Packet + Send + Sync,
-    R: Rng + Send + Sync,
+    R: RngExt + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
         // Wait for FirstPacket notify if not started yet
@@ -382,7 +382,7 @@ impl ControlInterface for LossReplayCellControlInterface {
     }
 }
 
-pub struct LossReplayCell<P: Packet, R: Rng> {
+pub struct LossReplayCell<P: Packet, R: RngExt> {
     ingress: Arc<LossReplayCellIngress<P>>,
     egress: LossReplayCellEgress<P, R>,
     control_interface: Arc<LossReplayCellControlInterface>,
@@ -391,7 +391,7 @@ pub struct LossReplayCell<P: Packet, R: Rng> {
 impl<P, R> Cell<P> for LossReplayCell<P, R>
 where
     P: Packet + Send + Sync + 'static,
-    R: Rng + Send + Sync + 'static,
+    R: RngExt + Send + Sync + 'static,
 {
     type IngressType = LossReplayCellIngress<P>;
     type EgressType = LossReplayCellEgress<P, R>;
@@ -417,7 +417,7 @@ where
 impl<P, R> LossReplayCell<P, R>
 where
     P: Packet,
-    R: Rng,
+    R: RngExt,
 {
     pub fn new(trace: Box<dyn LossTrace>, rng: R) -> Result<LossReplayCell<P, R>, Error> {
         let (rx, tx) = mpsc::unbounded_channel();
