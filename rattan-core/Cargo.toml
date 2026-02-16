@@ -49,7 +49,7 @@ pcap-file = { workspace = true }
 rand = { workspace = true }
 rattan-log = { path = "../rattan-log" }
 regex = "1.7.3"
-rtnetlink = "0.17.0"
+rtnetlink = "0.20.0"
 serde = { workspace = true, optional = true }
 serde_json = { version = "1.0.96", optional = true }
 serde_with = "3"
