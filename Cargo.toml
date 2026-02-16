@@ -25,7 +25,7 @@ clap = { version = "4.2.4", features = ["derive"] }
 csv = "1.4.0"
 ctrlc = "3.2.5"
 figment = { version = "0.10", features = ["env", "json", "toml"] }
-futures = "0.3.29"
+futures = "0.3.32"
 human-bandwidth = { version = "0.1.4", features = ["binary-system", "serde"] }
 jiff = "0.2.15"
 netem-trace = { version = "0.4.4", features = [
