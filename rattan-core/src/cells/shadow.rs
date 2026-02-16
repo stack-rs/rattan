@@ -136,7 +136,7 @@ mod tests {
 
     use super::*;
     use crate::cells::{StdPacket, TestPacket};
-    use rand::{rng, Rng};
+    use rand::{rng, RngExt};
     use tracing::{span, Level};
 
     #[test_log::test]

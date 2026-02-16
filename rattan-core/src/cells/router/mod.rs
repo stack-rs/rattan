@@ -205,7 +205,7 @@ mod tests {
     use crate::cells::{shadow::ShadowCell, StdPacket};
     use etherparse::{PacketBuilder, SlicedPacket, TransportSlice};
     use ipnet::IpNet;
-    use rand::{rng, Rng};
+    use rand::{rng, RngExt};
     use tracing::{span, Level};
 
     use super::*;
