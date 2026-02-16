@@ -2092,7 +2092,6 @@ dependencies = [
  "cfg-if",
  "cfg_aliases 0.2.1",
  "libc",
- "memoffset 0.9.1",
 ]
 
 [[package]]
@@ -2117,6 +2116,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases 0.2.1",
  "libc",
+ "memoffset 0.9.1",
 ]
 
 [[package]]
@@ -2656,7 +2656,7 @@ dependencies = [
  "mnl",
  "netem-trace",
  "nftnl",
- "nix 0.29.0",
+ "nix 0.31.1",
  "once_cell",
  "paste",
  "rand 0.10.0",
@@ -2703,7 +2703,7 @@ dependencies = [
  "libc",
  "netem-trace",
  "netns-rs",
- "nix 0.29.0",
+ "nix 0.31.1",
  "num_enum 0.7.5",
  "once_cell",
  "parking_lot",
