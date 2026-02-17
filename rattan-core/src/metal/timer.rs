@@ -1,4 +1,4 @@
-use std::os::fd::{AsFd, AsRawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 
 use nix::sys::{
     time::TimeSpec,
@@ -18,6 +18,12 @@ pub struct WrapperTimer(pub TimerFd);
 impl AsRawFd for WrapperTimer {
     fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
         self.0.as_fd().as_raw_fd()
+    }
+}
+
+impl AsFd for WrapperTimer {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.0.as_fd()
     }
 }
 
@@ -45,9 +51,7 @@ impl Timer {
         let mut buf = [0; 16];
         loop {
             let mut guard = self.timer.readable().await?;
-            match guard
-                .try_io(|timer| Ok(nix::unistd::read(timer.get_ref().as_raw_fd(), &mut buf)?))
-            {
+            match guard.try_io(|timer| Ok(nix::unistd::read(timer.get_ref(), &mut buf)?)) {
                 Ok(timer) => match timer {
                     Ok(_) => return Ok(()),
                     Err(e) => return Err(MetalError::from(e)),
