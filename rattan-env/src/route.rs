@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::error::Error;
 
-use super::{
+use crate::{
     netns::{NetNs, NetNsGuard},
     veth::MacAddr,
 };
@@ -167,7 +167,7 @@ pub fn add_route_with_netns<
                 })
                 .unwrap_or_else(|e| e.to_string());
             println!("ip route: {output}");
-            Error::MetalError(e.into())
+            Error::RtnetlinkError(e)
         })
     })
 }
@@ -202,7 +202,7 @@ pub fn add_arp_entry_with_netns(
                 })
                 .unwrap_or_else(|e| e.to_string());
             println!("arp -n: {output}");
-            Error::MetalError(e.into())
+            Error::RtnetlinkError(e)
         })
     })
 }
@@ -239,7 +239,7 @@ pub fn set_loopback_up_with_netns(netns: Arc<NetNs>) -> Result<(), Error> {
                         })
                         .map_err(|e| {
                             error!("Failed to set loopback up: {e}");
-                            Error::MetalError(e.into())
+                            Error::RtnetlinkError(e)
                         });
                 }
             }

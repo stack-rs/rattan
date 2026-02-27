@@ -12,6 +12,7 @@ use std::{
 use async_trait::async_trait;
 use bitfield::{BitRange, BitRangeMut};
 use parking_lot::RwLock;
+use rattan_env::veth::VethCell;
 use rattan_log::{
     log_entry::general_packet::GeneralPacketType, log_entry::PktAction, FlowDesc, PlainBytes,
     RattanLogOp, RawLogEntry, LOGGING_TX,
@@ -24,10 +25,7 @@ use tracing::{debug, error, instrument, warn};
 use crate::{
     cells::{Cell, ControlInterface, Egress, Ingress, Packet},
     error::{Error, TokioRuntimeError},
-    metal::{
-        io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender},
-        veth::VethCell,
-    },
+    metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender},
     radix::{PacketLogMode, BASE_TS, PKT_LOG_MODE},
 };
 

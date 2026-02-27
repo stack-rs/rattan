@@ -8,12 +8,13 @@ use nix::{
     errno::Errno,
     sys::socket::{AddressFamily, SockFlag, SockType},
 };
+use rattan_env::veth::VethCell;
 use tracing::{debug, error, trace, warn};
 
 use super::common::PacketType;
 use crate::cells::{Packet, StdPacket};
+use crate::metal::error::MetalError;
 use crate::metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender};
-use crate::metal::{error::MetalError, veth::VethCell};
 
 pub struct AfPacketSender {
     raw_fd: Mutex<i32>,

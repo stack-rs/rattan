@@ -2067,18 +2067,6 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
-dependencies = [
- "bitflags 2.11.0",
- "cfg-if",
- "cfg_aliases 0.2.1",
- "libc",
-]
-
-[[package]]
-name = "nix"
 version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
@@ -2682,7 +2670,6 @@ dependencies = [
  "ipnet",
  "itertools 0.14.0",
  "jiff",
- "lazy_static",
  "libc",
  "netem-trace",
  "netns-rs",
@@ -2693,6 +2680,7 @@ dependencies = [
  "pcap-file",
  "pnet",
  "rand 0.10.0",
+ "rattan-env",
  "rattan-log",
  "regex",
  "reqwest",
@@ -2710,6 +2698,26 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "rattan-env"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "ipnet",
+ "lazy_static",
+ "libc",
+ "nix 0.31.1",
+ "once_cell",
+ "parking_lot",
+ "rand 0.10.0",
+ "rtnetlink",
+ "serde",
+ "test-log",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

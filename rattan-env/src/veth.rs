@@ -1,5 +1,5 @@
 use crate::error::{Error, MacParseError, VethError};
-use crate::metal::netns::{NetNs, NetNsGuard};
+use crate::netns::{NetNs, NetNsGuard};
 use nix::net::if_::if_nametoindex;
 use once_cell::sync::OnceCell;
 use rtnetlink::{LinkMessageBuilder, LinkUnspec, LinkVeth};
@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, Weak};
 // use tempfile::TempDir;
 use tracing::{debug, error, info, instrument, span, Level};
 
-use super::ioctl::disable_checksum_offload;
+use crate::ioctl::disable_checksum_offload;
 
 pub struct IpVethPair {
     pub left: Arc<Mutex<IpVethCell>>,
@@ -472,7 +472,7 @@ impl Drop for VethPair {
                 })
                 .map_err(|e| {
                     error!("Failed to delete veth pair: {}", e);
-                    Error::MetalError(e.into())
+                    Error::RtnetlinkError(e)
                 })
         });
         if let Err(e) = build_thread.join().unwrap() {

@@ -1,17 +1,15 @@
 use crate::{
     error::{Error, VethError},
-    metal::{
-        netns::NetNs,
-        route::{add_arp_entry_with_netns, add_route_with_netns, set_loopback_up_with_netns},
-        veth::{MacAddr, VethCell, VethPair, VethPairBuilder},
-    },
+    netns::NetNs,
+    route::{add_arp_entry_with_netns, add_route_with_netns, set_loopback_up_with_netns},
+    veth::{MacAddr, VethCell, VethPair, VethPairBuilder},
 };
 use futures::TryStreamExt;
 use once_cell::sync::OnceCell;
 use rand::distr::Alphanumeric;
 use rand::{rng, RngExt};
 use rtnetlink::packet_route::{address::AddressAttribute, link::LinkAttribute, route::RouteScope};
-use std::{collections::BTreeMap, io::Write, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 use std::{
     net::{IpAddr, Ipv4Addr},
     str::FromStr,
@@ -289,18 +287,6 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
         .take(6)
         .map(char::from)
         .collect();
-    let mut kmesg_logger = std::fs::OpenOptions::new().write(true).open("/dev/kmsg")?;
-    let instance_id = crate::radix::INSTANCE_ID.get_or_init(|| {
-        // get env var from RATTAN_INSTANCE_ID
-        std::env::var("RATTAN_INSTANCE_ID").unwrap_or_else(|_| uuid::Uuid::new_v4().to_string())
-    });
-    let mut buf = Vec::new();
-    writeln!(
-        buf,
-        "rattan instance id {instance_id} create ns with rand_string {rand_string}"
-    )?;
-    kmesg_logger.write_all(&buf)?;
-    kmesg_logger.flush()?;
 
     let left_netns_name = format!("ns-left-{rand_string}");
     let left_netns = NetNs::new(&left_netns_name)?;

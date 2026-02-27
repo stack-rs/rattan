@@ -22,5 +22,5 @@ tracing = { workspace = true }
 [dev-dependencies]
 hex = "0.4.3"
 random = "0.14.1"
-tempfile = "3.23.0"
+tempfile = { workspace = true }
 test-log = { workspace = true }
