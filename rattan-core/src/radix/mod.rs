@@ -7,6 +7,7 @@ use std::{
 
 use backon::{BlockingRetryable, ExponentialBuilder};
 use once_cell::sync::{Lazy, OnceCell};
+use rattan_env::netns::NetNsGuard;
 use rattan_log::{file_logging_thread, RattanLogOp, LOGGING_TX};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
@@ -26,7 +27,7 @@ use crate::{
     core::{CellFactory, RattanCore},
     env::{get_std_env, StdNetEnv, StdNetEnvMode},
     error::Error,
-    metal::{io::common::InterfaceDriver, netns::NetNsGuard},
+    metal::io::common::InterfaceDriver,
 };
 
 #[cfg(feature = "http")]
@@ -114,6 +115,18 @@ where
                     .with_max_times(3),
             )
             .call()?;
+        // Log env creation to kmsg for system-level observability
+        if let Ok(mut kmesg_logger) = std::fs::OpenOptions::new().write(true).open("/dev/kmsg") {
+            use std::io::Write;
+            let mut buf = Vec::new();
+            let _ = writeln!(
+                buf,
+                "rattan instance id {instance_id} create ns with rand_string {}",
+                env.rattan_id
+            );
+            let _ = kmesg_logger.write_all(&buf);
+            let _ = kmesg_logger.flush();
+        }
         let cancel_token = CancellationToken::new();
 
         let rattan_thread_span = span!(Level::ERROR, "rattan_thread").or_current();

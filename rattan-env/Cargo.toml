@@ -1,0 +1,29 @@
+[package]
+name = "rattan-env"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+futures = { workspace = true }
+ipnet = { workspace = true }
+lazy_static = "1.5.0"
+libc = { workspace = true }
+nix = { workspace = true }
+once_cell = { workspace = true }
+parking_lot = { workspace = true }
+rand = { workspace = true }
+rtnetlink = { workspace = true }
+serde = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+test-log = { workspace = true }
+
+[features]
+default = []
+serde = ["dep:serde"]

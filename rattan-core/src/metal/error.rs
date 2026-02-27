@@ -10,8 +10,6 @@ pub enum MetalError {
     #[cfg_attr(feature = "camellia", error("Encounter XDP error, {0}"))]
     #[cfg(feature = "camellia")]
     XDPError(#[from] CamelliaError),
-    #[error("Encounter Rtnetlink error, {0}")]
-    RtnetlinkError(#[from] rtnetlink::Error),
     #[error("not interested packet")]
     NotInterestedPacket,
 }

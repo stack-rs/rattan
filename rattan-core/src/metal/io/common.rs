@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
-use crate::{
-    cells::Packet,
-    metal::{error::MetalError, veth::VethCell},
-};
+use rattan_env::veth::VethCell;
+
+use crate::{cells::Packet, metal::error::MetalError};
 
 pub enum PacketType {
     PacketHost = 0,

@@ -6,12 +6,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("MacParseError: {0}")]
-    MacParseError(#[from] MacParseError),
-    #[error("NsError: {0}")]
-    NsError(#[from] NsError),
-    #[error("VethError: {0}")]
-    VethError(#[from] VethError),
+    #[error("RattanEnvError: {0}")]
+    RattanEnvError(#[from] rattan_env::Error),
     #[error("RoutingTableError: {0}")]
     RoutingTableError(#[from] RoutingTableError),
     #[error("Encounter IO error, {0}")]
@@ -42,65 +38,6 @@ pub enum Error {
     VisualizeTraceError(#[from] VisualizeTraceError),
     #[error("Error: {0}")]
     Custom(String),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum NsError {
-    #[error("Can not create netns directory, {0}")]
-    CreateNsDirError(std::io::Error),
-
-    #[error("Can not create netns, {0}")]
-    CreateNsError(std::io::Error),
-
-    #[error("Can not open netns {0}, {1}")]
-    OpenNsError(std::path::PathBuf, std::io::Error),
-
-    #[error("Failed to close netns, {0}")]
-    CloseNsError(nix::Error),
-
-    #[error("Failed to mount {0}, {1}")]
-    MountError(String, nix::Error),
-
-    #[error("Failed to unmount {0}, {1}")]
-    UnmountError(std::path::PathBuf, nix::Error),
-
-    #[error("Failed to unshare, {0}")]
-    UnshareError(nix::Error),
-
-    #[error("Failed to join thread, {0}")]
-    JoinThreadError(String),
-
-    #[error("Can not setns, {0}")]
-    SetNsError(nix::Error),
-}
-
-/// An error that may occur when parsing a MAC address string.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, thiserror::Error)]
-pub enum MacParseError {
-    /// Parsing of the MAC address contained an invalid digit.
-    #[error("Invalid digit")]
-    InvalidDigit,
-    /// The MAC address did not have the correct length.
-    #[error("Invalid length")]
-    InvalidLength,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum VethError {
-    #[error("Can not create veth pair, {0}")]
-    CreateVethPairError(String),
-    #[error("Encounter namespace error, {0}")]
-    NsError(#[from] NsError),
-    #[error("Encounter IO error, {0}")]
-    IoError(#[from] std::io::Error),
-    #[error("Encounter system error, {0}")]
-    SystemError(#[from] nix::errno::Errno),
-    #[error("Already in namespace {0}")]
-    AlreadyInNamespace(String),
-    #[error("Set Veth error, {0}")]
-    SetError(String),
-    #[error("Failed to build veth, {0}")]
-    TokioRuntimeError(#[from] TokioRuntimeError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -167,6 +104,12 @@ impl From<csv::Error> for VisualizeTraceError {
     }
 }
 
+impl From<rattan_env::NsError> for Error {
+    fn from(e: rattan_env::NsError) -> Self {
+        Error::RattanEnvError(e.into())
+    }
+}
+
 #[cfg(feature = "http")]
 impl axum::response::IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
@@ -175,9 +118,7 @@ impl axum::response::IntoResponse for Error {
         use serde_json::json;
 
         let status = match self {
-            Error::MacParseError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Error::NsError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Error::VethError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Error::RattanEnvError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::RoutingTableError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::IoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::MetalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -204,9 +145,7 @@ impl axum::response::IntoResponse for Error {
 impl Termination for Error {
     fn report(self) -> ExitCode {
         match self {
-            Error::MacParseError(_) => ExitCode::from(78),
-            Error::NsError(_) => ExitCode::from(71),
-            Error::VethError(_) => ExitCode::from(71),
+            Error::RattanEnvError(e) => e.report(),
             Error::RoutingTableError(_) => ExitCode::from(78),
             Error::IoError(_) => ExitCode::from(74),
             Error::MetalError(_) => ExitCode::from(74),

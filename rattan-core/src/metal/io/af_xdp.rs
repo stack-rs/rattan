@@ -15,6 +15,7 @@ use camellia::{
 };
 use etherparse::{Ethernet2Header, Ipv4Header};
 use once_cell::sync::Lazy;
+use rattan_env::veth::VethCell;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Instant};
 use tracing::debug;
@@ -25,9 +26,8 @@ static UMEM: Lazy<Arc<std::sync::Mutex<UMem>>> = Lazy::new(|| {
     ))
 });
 
-use crate::{cells::Packet, metal::veth::VethCell};
-
-use super::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender};
+use crate::cells::Packet;
+use crate::metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender};
 
 type XDPSocketRef = Arc<Mutex<XskSocket<SharedAccessorRef>>>;
 
