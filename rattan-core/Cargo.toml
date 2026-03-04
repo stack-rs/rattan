@@ -75,7 +75,7 @@ reqwest = { version = "0.13.2", default-features = false, features = [
 ] }
 rstest = "0.26.1"
 rtnetlink = { workspace = true }
-serial_test = "3.2.0"
+serial_test = "3.4.0"
 tempfile = { workspace = true }
 test-log = { workspace = true }
 tracing-subscriber = { workspace = true }
