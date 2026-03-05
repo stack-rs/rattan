@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 homepage.workspace = true
 repository.workspace = true
+license.workspace = true
+readme.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
 default-run = "rattan"
 
 [workspace]
@@ -17,6 +22,16 @@ edition = "2021"
 rust-version = "1.86"
 homepage = "https://github.com/stack-rs/rattan"
 repository = "https://github.com/stack-rs/rattan"
+license = "Apache-2.0"
+readme = "README.md"
+description = "An Extensible and Scalable Modular Internet Path Emulator"
+keywords = ["network", "emulation", "utility", "transport", "evaluation"]
+categories = [
+  "network-programming",
+  "command-line-utilities",
+  "development-tools",
+  "emulators",
+]
 
 [workspace.dependencies]
 derive_more = { version = "2.0.1", features = ["deref", "deref_mut"] }
@@ -71,10 +86,10 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 name = "rattan"
 path = "src/main.rs"
 
-[[bin]]
-name = "rattan-xdp"
-path = "src/main-xdp.rs"
-required-features = ["rattan-core/camellia"]
+# [[bin]]
+# name = "rattan-xdp"
+# path = "src/main-xdp.rs"
+# required-features = ["rattan-core/camellia"]
 
 [dependencies]
 # anyhow = "1.0.75"
