@@ -112,4 +112,4 @@ Then you can find the binary in `target/release/rattan` and install or run it as
 
 If you are interested in making modifications to Rattan itself, check out the [Contributing Guide] for more information.
 
-[Contributing Guide]: https://github.com/stack-rs/mitosis/blob/master/CONTRIBUTING.md
+[Contributing Guide]: https://github.com/stack-rs/rattan/blob/master/CONTRIBUTING.md

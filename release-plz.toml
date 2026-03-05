@@ -1,0 +1,113 @@
+# configuration for https://github.com/MarcoIeni/release-plz
+
+[workspace]
+# path of the git-cliff configuration
+# changelog_config = "cliff.toml"
+# enable changelog updates
+changelog_update = true
+# update dependencies with `cargo update`
+dependencies_update = true
+# create tags for the releases
+git_tag_enable = true
+# disable GitHub releases
+git_release_enable = false
+# labels for the release PR
+pr_labels = ["release"]
+pr_name = "chore: release v{{ version }}"
+# disallow updating repositories with uncommitted changes
+allow_dirty = true
+# disallow packaging with uncommitted changes
+publish_allow_dirty = true
+# disable running `cargo-semver-checks`
+semver_check = true
+
+[changelog]
+header = """# Changelog
+
+All notable changes to this project will be documented in this file.
+
+"""
+
+body = """
+{%- macro remote_url() -%}
+  https://github.com/stack-rs/rattan
+{%- endmacro -%}
+
+{% macro print_commit(commit) -%}
+    - {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
+        {% if commit.breaking %}[**breaking**] {% endif %}\
+        {{ commit.message | upper_first }} - \
+        ([{{ commit.id | truncate(length=7, end="") }}]({{ self::remote_url() }}/commit/{{ commit.id }}))\
+{% endmacro -%}
+
+{% if version %}\
+    ## [{{ version | trim_start_matches(pat="v") }}]\
+    {%- if release_link -%}\
+        ({{ release_link }})\
+    {% endif %} \
+    - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+    ## [unreleased]
+{% endif %}\
+
+{% for group, commits in commits | group_by(attribute="group") %}
+    ### {{ group | striptags | trim | upper_first }}
+    {% for commit in commits
+    | filter(attribute="scope")
+    | sort(attribute="scope") %}
+        {{ self::print_commit(commit=commit) }}
+    {%- endfor %}
+    {% for commit in commits %}
+        {%- if not commit.scope -%}
+            {{ self::print_commit(commit=commit) }}
+        {% endif -%}
+    {% endfor -%}
+{% endfor -%}
+{%- if github -%}
+{% if github.contributors | filter(attribute="is_first_time", value=true) | length != 0 %}
+  ## New Contributors
+{% endif %}\
+{% for contributor in github.contributors | filter(attribute="is_first_time", value=true) %}
+  - @{{ contributor.username }} made their first contribution
+    {%- if contributor.pr_number %} in \
+      [#{{ contributor.pr_number }}]({{ self::remote_url() }}/pull/{{ contributor.pr_number }}) \
+    {%- endif %}
+{%- endfor -%}
+{%- endif %}
+
+"""
+
+commit_parsers = [
+  { message = "^feat", group = "<!-- 0 -->Features" },
+  { message = "^fix", group = "<!-- 1 -->Bug Fixes" },
+  { message = "^doc", group = "<!-- 3 -->Documentation" },
+  { message = "^perf", group = "<!-- 4 -->Performance" },
+  { message = "^refactor\\(clippy\\)", skip = true },
+  { message = "^refactor", group = "<!-- 2 -->Refactor" },
+  { message = "^style", group = "<!-- 5 -->Styling" },
+  { message = "^test", group = "<!-- 6 -->Testing" },
+  { message = "^chore\\(release\\): prepare for", skip = true },
+  { message = "^chore\\(deps.*\\)", skip = true },
+  { message = "^chore\\(pr\\)", skip = true },
+  { message = "^chore\\(pull\\)", skip = true },
+  { message = "^chore\\(npm\\).*yarn\\.lock", skip = true },
+  { message = "^chore|^ci", group = "<!-- 7 -->Miscellaneous Tasks" },
+  { body = ".*security", group = "<!-- 8 -->Security" },
+  { message = "^revert", group = "<!-- 9 -->Revert" },
+]
+
+[[package]]
+name = "rattan"
+changelog_include = ["rattan-core", "rattan-env", "rattan-log"]
+
+[[package]]
+name = "rattan-core"
+changelog_update = false
+
+[[package]]
+name = "rattan-env"
+changelog_update = false
+
+[[package]]
+name = "rattan-log"
+changelog_update = false
