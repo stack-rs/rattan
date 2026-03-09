@@ -1835,9 +1835,9 @@ to get the internal IP of Rattan so to set forwarding rules on the host machine.
 <h1 id="packet-io"><a class="header" href="#packet-io">Packet I/O</a></h1>
 <p>Currently, we support two packet I/O mechanisms: <code>AF_PACKET</code> and <code>AF_XDP</code>. The former is a socket-based mechanism, while the latter is a driver-based mechanism. The <code>AF_PACKET</code> version is more portable, while the <code>AF_XDP</code> version is more performant.</p>
 <h2 id="example"><a class="header" href="#example">Example</a></h2>
-<p>By default, the <code>AF_PACKET</code> version is used. To use the <code>AF_XDP</code> version, you need to enable the <code>camellia</code> feature.</p>
+<p>By default, the <code>AF_PACKET</code> version is used. To use the <code>AF_XDP</code> version, you need to enable the <code>xdp</code> feature.</p>
 <pre><code class="language-bash">cargo run --example channel --release # AF_PACKET version
-cargo run --example channel-xdp --release --features="camellia" # AF_XDP version
+cargo run --example channel-xdp --release --features="xdp" # AF_XDP version
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div><style>
 .mdbook-alerts {
