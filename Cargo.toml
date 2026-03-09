@@ -86,10 +86,10 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 name = "rattan"
 path = "src/main.rs"
 
-[[bin]]
-name = "rattan-xdp"
-path = "src/main-xdp.rs"
-required-features = ["rattan-core/xdp"]
+# [[bin]]
+# name = "rattan-xdp"
+# path = "src/main-xdp.rs"
+# required-features = ["xdp"]
 
 [dependencies]
 # anyhow = "1.0.75"
@@ -130,6 +130,7 @@ first-packet = ["rattan-core/first-packet"]
 http = ["rattan-core/http"]
 nat = ["dep:mnl", "dep:nftnl"]
 packet-dump = ["rattan-core/packet-dump"]
+xdp = ["rattan-core/xdp"]
 
 # required for cargo flamegraph
 [profile.dev]
