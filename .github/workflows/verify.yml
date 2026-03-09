@@ -33,7 +33,7 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt update && sudo apt install ethtool iputils-ping iperf iperf3 pkg-config m4 clang llvm libelf-dev libpcap-dev gcc-multilib libnftnl-dev libmnl-dev autoconf automake autopoint libtool -y
+      - run: sudo apt update && sudo apt install ethtool iputils-ping iperf iperf3 pkg-config m4 clang llvm libelf-dev libpcap-dev gcc-multilib libnftnl-dev libmnl-dev autoconf automake autopoint flex bison gawk libtool -y
       - name: Cache LLVM and Clang
         id: cache-llvm
         uses: maxnowack/local-cache@v2
