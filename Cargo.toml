@@ -44,7 +44,7 @@ futures = "0.3.32"
 human-bandwidth = { version = "0.1.4", features = ["binary-system", "serde"] }
 ipnet = { version = "2.11.0", features = ["serde"] }
 jiff = "0.2.15"
-libc = "0.2.141"
+libc = "0.2.183"
 netem-trace = { version = "0.4.4", features = [
   "human",
   "mahimahi",
