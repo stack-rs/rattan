@@ -4,9 +4,9 @@ Currently, we support two packet I/O mechanisms: `AF_PACKET` and `AF_XDP`. The f
 
 ## Example
 
-By default, the `AF_PACKET` version is used. To use the `AF_XDP` version, you need to enable the `camellia` feature.
+By default, the `AF_PACKET` version is used. To use the `AF_XDP` version, you need to enable the `xdp` feature.
 
 ```bash
 cargo run --example channel --release # AF_PACKET version
-cargo run --example channel-xdp --release --features="camellia" # AF_XDP version
+cargo run --example channel-xdp --release --features="xdp" # AF_XDP version
 ```

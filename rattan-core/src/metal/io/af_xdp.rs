@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use camellia::{
+use camellia_net::{
     socket::af_xdp::{XskSocket, XskSocketBuilder},
     umem::{
         base::{UMem, UMemBuilder},
@@ -181,7 +181,7 @@ impl XDPDriver {
             .lock()
             .await
             .send_bulk(packets)
-            .map_err(|_| std::io::Error::other("camellia error"))?;
+            .map_err(|_| std::io::Error::other("xdp error"))?;
 
         Ok(len - remaining.len())
     }

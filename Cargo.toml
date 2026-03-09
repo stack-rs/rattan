@@ -86,10 +86,10 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 name = "rattan"
 path = "src/main.rs"
 
-# [[bin]]
-# name = "rattan-xdp"
-# path = "src/main-xdp.rs"
-# required-features = ["rattan-core/camellia"]
+[[bin]]
+name = "rattan-xdp"
+path = "src/main-xdp.rs"
+required-features = ["rattan-core/xdp"]
 
 [dependencies]
 # anyhow = "1.0.75"

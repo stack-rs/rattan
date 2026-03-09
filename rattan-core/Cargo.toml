@@ -15,7 +15,7 @@ categories.workspace = true
 
 [[example]]
 name = "channel-xdp"
-required-features = ["camellia"]
+required-features = ["xdp"]
 
 [[bench]]
 harness = false
@@ -32,7 +32,7 @@ backon = "1.2.0"
 bandwidth = "0.3.0"
 bitfield = { workspace = true }
 bytesize = "2.0.1"
-camellia = { git = "https://github.com/minhuw/camellia.git", optional = true }
+camellia-net = { version = "0.0.1", optional = true }
 clap = { workspace = true }
 csv = { workspace = true }
 derive_more = { workspace = true }
@@ -87,7 +87,7 @@ tracing-subscriber = { workspace = true }
 
 [features]
 default = []
-camellia = ["dep:camellia"]
+xdp = ["dep:camellia-net"]
 first-packet = []
 http = ["dep:axum", "serde"]
 packet-dump = []
