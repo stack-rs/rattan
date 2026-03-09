@@ -29,7 +29,7 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
-    build::CLAP_LONG_VERSION,
+    build::{CARGO_FEATURES, CLAP_LONG_VERSION},
     visualize_trace::{write_visualize_trace, OutputMode},
 };
 
@@ -50,6 +50,9 @@ shadow!(build);
 static LEFT_PID: OnceCell<i32> = OnceCell::new();
 static RIGHT_PID: OnceCell<i32> = OnceCell::new();
 
+const RATTAN_LONG_VERSION: &str =
+    shadow_rs::formatcp!("{}\nbuild_features:{}", CLAP_LONG_VERSION, CARGO_FEATURES);
+
 fn parse_duration(delay: &str) -> Result<Duration, jiff::Error> {
     let span: jiff::Span = delay.parse()?;
     Duration::try_from(span)
@@ -57,7 +60,7 @@ fn parse_duration(delay: &str) -> Result<Duration, jiff::Error> {
 
 #[derive(Debug, Parser, Clone)]
 #[command(rename_all = "kebab-case")]
-#[command(version, propagate_version = true, long_version = CLAP_LONG_VERSION)]
+#[command(version, propagate_version = true, long_version = RATTAN_LONG_VERSION)]
 pub struct Arguments {
     // Verbose debug output
     // #[arg(short, long)]
