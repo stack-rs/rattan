@@ -11,6 +11,8 @@ ci = "github"
 installers = []
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
+# Specify feature-flags that should be passed to a Cargo package when building it
+features = ["xdp"]
 # Which actions to run on pull requests
 pr-run-mode = "plan"
 # Whether to install an updater program
