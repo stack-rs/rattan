@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1](https://github.com/stack-rs/rattan/compare/rattan-v0.1.0...rattan-v0.1.1) - 2026-03-10
+
+### Features
+
+- *(cli)* Add build_features to long_version - ([906dae5](https://github.com/stack-rs/rattan/commit/906dae57e336863fe6eefcd6c6a091d25a3bc7ca))
+
+### Miscellaneous Tasks
+
+- *(build)* Adjust dependencies - ([caf112b](https://github.com/stack-rs/rattan/commit/caf112b7c954b95b5b07bed98fbb5cf9a78d0d51))
+- *(test)* Add build deps - ([71e821b](https://github.com/stack-rs/rattan/commit/71e821bda84e6fe431e5133e0bb5ef328ffc1068))
+- *(test)* Change feature to use - ([96711b4](https://github.com/stack-rs/rattan/commit/96711b4d0a8708ba3c510d2cfbd2eee8e30f07a7))
+
+### Build
+
+- *(musl)* Disable xdp binary for now - ([d0bb6b4](https://github.com/stack-rs/rattan/commit/d0bb6b4ff2367ad0882b09260c98deb2f6b3646a))
+- *(xdp)* Add missing pkg deps for libbpf-sys - ([7bf91dc](https://github.com/stack-rs/rattan/commit/7bf91dcb6e29b2ca51b4f5f9130c4e5074c1fb0f))
+
+
 ## [0.1.0](https://github.com/stack-rs/rattan/releases/tag/rattan-v0.1.0) - 2026-03-05
 
 ### Features
