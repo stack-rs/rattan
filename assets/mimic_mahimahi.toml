@@ -1,0 +1,39 @@
+[env]
+mode = "Compatible"
+left_veth_count = 1
+right_veth_count = 1
+client_cores = [1]
+server_cores = [3]
+
+[cells.down_delay]
+type = "Delay"
+delay = "20ms"
+
+[cells.up_bw]
+type = "Bw"
+queue = "Infinite"
+bandwidth = "30Mbps"
+
+[cells.up_bw.queue_config]
+
+[cells.up_delay]
+type = "Delay"
+delay = "20ms"
+# type = "DelayReplay"
+# trace = "./assets/dynamic-delay.json"
+ingress_round_up = "1ms"
+
+[links]
+left = "up_bw"
+up_bw = "up_delay"
+up_delay = "right"
+right = "down_delay"
+down_delay = "left"
+
+[resource]
+cpu = [2, 3, 4, 5]
+
+[general]
+
+[commands]
+shell = "Default"

@@ -12,10 +12,12 @@ use tokio::{
 use super::{TimedConfig, LARGE_DURATION, TRACE_START_INSTANT};
 #[cfg(test)]
 use crate::cells::relative_time;
-use crate::cells::{AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, Packet};
-use crate::core::CALIBRATED_START_INSTANT;
 use crate::error::Error;
 use crate::metal::timer::Timer;
+use crate::{
+    cells::{AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, Packet},
+    core::CALIBRATED_START_INSTANT,
+};
 
 struct PeekableDelayTrace {
     next: Option<(Delay, Duration)>,
@@ -41,6 +43,11 @@ where
     P: Packet,
 {
     ingress: mpsc::UnboundedSender<P>,
+    /// If this is set, the logical timestamps of packets going through the ingress, is rounded up,
+    /// relative to `TRACE_START_INSTANT`. If it is set to Some(1ms), and the Delay[Reply]Cell is placed after
+    /// the Bw[Replay]Cell, then we can mimic the behaviour of Mahimahi, who calculates bandwidth based on
+    /// per-millisecond sending opportunities.
+    round_up: Option<Duration>,
 }
 
 impl<P> Clone for DelayCellIngress<P>
@@ -50,7 +57,33 @@ where
     fn clone(&self) -> Self {
         Self {
             ingress: self.ingress.clone(),
+            round_up: self.round_up,
         }
+    }
+}
+
+fn ingress_round_up(
+    packet_timestamp: Instant,
+    trace_start: Instant,
+    round_up: Duration,
+) -> Instant {
+    if round_up.is_zero() {
+        return packet_timestamp;
+    }
+    let packet_time = packet_timestamp.duration_since(trace_start);
+    // Safety: 2^64ns is approximately 584 years.
+    let packet_time_ns = packet_time.as_nanos() as u64;
+    let round_up_ns = round_up.as_nanos() as u64;
+    let remainder = packet_time_ns % round_up_ns;
+    if remainder > 0 {
+        tracing::trace!(
+            target: "mimic_mahimahi",
+            "Delayed for {}ns at ingress round up",
+            round_up_ns - remainder
+        );
+        packet_timestamp + Duration::from_nanos(round_up_ns - remainder)
+    } else {
+        packet_timestamp
     }
 }
 
@@ -58,7 +91,17 @@ impl<P> Ingress<P> for DelayCellIngress<P>
 where
     P: Packet + Send,
 {
-    fn enqueue(&self, packet: P) -> Result<(), Error> {
+    fn enqueue(&self, mut packet: P) -> Result<(), Error> {
+        let packet_timestamp = packet.get_timestamp();
+        if let Some(round_up) = self.round_up {
+            if let Some(trace_start) = TRACE_START_INSTANT.get() {
+                packet.delay_until(ingress_round_up(packet_timestamp, *trace_start, round_up));
+            } else {
+                tracing::trace!(
+                    target: "mimic_mahimahi",
+                    "Skipped ingress round up as not started");
+            }
+        }
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -85,7 +128,7 @@ where
     P: Packet + Send + Sync,
 {
     fn set_config(&mut self, config: DelayCellConfig) {
-        tracing::debug!(
+        tracing::trace!(
             before = ?self.delay,
             after = ?config.delay,
             "Set inner delay:"
@@ -170,13 +213,31 @@ where
 #[derive(Debug, Default, Clone)]
 pub struct DelayCellConfig {
     #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde::duration"))]
-    pub delay: Delay,
+    pub delay: Duration,
+
+    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "crate::utils::serde::duration::option")
+    )]
+    pub ingress_round_up: Option<Duration>,
 }
 
 impl DelayCellConfig {
     pub fn new<T: Into<Delay>>(delay: T) -> Self {
         Self {
             delay: delay.into(),
+            ingress_round_up: None,
+        }
+    }
+
+    pub fn with_round_up<T: Into<Delay>, R: Into<Duration>>(
+        delay: T,
+        ingress_round_up: Option<R>,
+    ) -> Self {
+        Self {
+            delay: delay.into(),
+            ingress_round_up: ingress_round_up.map(R::into),
         }
     }
 }
@@ -233,14 +294,26 @@ where
     P: Packet,
 {
     pub fn new<D: Into<Option<Delay>>>(delay: D) -> Result<DelayCell<P>, Error> {
+        Self::with_ingress_round_up::<D, Duration>(delay, None)
+    }
+
+    pub fn with_ingress_round_up<D: Into<Option<Delay>>, R: Into<Duration>>(
+        delay: D,
+        ingress_round_up: Option<R>,
+    ) -> Result<DelayCell<P>, Error> {
         let delay = delay.into().unwrap_or_default();
         tracing::debug!(?delay, "New DelayCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
 
+        let ingress_round_up = ingress_round_up.map(R::into);
+
         let logical_time = *CALIBRATED_START_INSTANT.get_or_init(Instant::now);
         Ok(DelayCell {
-            ingress: Arc::new(DelayCellIngress { ingress: rx }),
+            ingress: Arc::new(DelayCellIngress {
+                ingress: rx,
+                round_up: ingress_round_up,
+            }),
             egress: DelayCellEgress {
                 egress: tx,
                 delay,
@@ -411,15 +484,19 @@ where
     }
 }
 
+/// It is [`rattan-core::config::delay::DelayReplayCellBuildConfig`], rather than this,
+/// that is actually deserialized from config file.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DelayReplayCellConfig {
     pub trace_config: Box<dyn DelayTraceConfig>,
+    pub ingress_round_up: Option<Duration>,
 }
 
 impl Clone for DelayReplayCellConfig {
     fn clone(&self) -> Self {
         Self {
             trace_config: self.trace_config.clone(),
+            ingress_round_up: self.ingress_round_up,
         }
     }
 }
@@ -428,6 +505,17 @@ impl DelayReplayCellConfig {
     pub fn new<T: Into<Box<dyn DelayTraceConfig>>>(trace_config: T) -> Self {
         Self {
             trace_config: trace_config.into(),
+            ingress_round_up: None,
+        }
+    }
+
+    pub fn with_round_up<T: Into<Box<dyn DelayTraceConfig>>, R: Into<Duration>>(
+        trace_config: T,
+        ingress_round_up: Option<R>,
+    ) -> Self {
+        Self {
+            trace_config: trace_config.into(),
+            ingress_round_up: ingress_round_up.map(R::into),
         }
     }
 }
@@ -484,12 +572,22 @@ where
     P: Packet,
 {
     pub fn new(trace: Box<dyn DelayTrace>) -> Result<DelayReplayCell<P>, Error> {
+        Self::with_ingress_round_up::<Duration>(trace, None)
+    }
+
+    pub fn with_ingress_round_up<R: Into<Duration>>(
+        trace: Box<dyn DelayTrace>,
+        ingress_round_up: Option<R>,
+    ) -> Result<DelayReplayCell<P>, Error> {
         tracing::debug!("New DelayReplayCell");
         let (rx, tx) = mpsc::unbounded_channel();
         let (config_tx, config_rx) = mpsc::unbounded_channel();
 
         Ok(DelayReplayCell {
-            ingress: Arc::new(DelayReplayCellIngress { ingress: rx }),
+            ingress: Arc::new(DelayReplayCellIngress {
+                ingress: rx,
+                round_up: ingress_round_up.map(R::into),
+            }),
             egress: DelayReplayCellEgress {
                 egress: tx,
                 trace: PeekableDelayTrace::new(trace),
@@ -524,6 +622,20 @@ mod tests {
     const DELAY_ACCURACY_TOLERANCE: f64 = 1.0;
     // List of delay times to be tested
     const DELAY_TEST_TIME: [u64; 8] = [0, 2, 5, 10, 20, 50, 100, 500];
+
+    #[test_log::test]
+    fn test_ingress_roundup() {
+        let start_instant = Instant::now();
+        let round_up = Duration::from_millis(1);
+        for i in 0..100 {
+            let packet_timestamp = start_instant + Duration::from_micros(100 * i);
+            let after_ingress = ingress_round_up(packet_timestamp, start_instant, round_up);
+            let logically_delayed = after_ingress.duration_since(packet_timestamp);
+            let expected_delay = (10 - (i % 10)) % 10;
+            let expected_delay = Duration::from_micros(100 * expected_delay);
+            assert_eq!(logically_delayed, expected_delay);
+        }
+    }
 
     #[test_log::test]
     fn test_delay_cell() -> Result<(), Error> {
