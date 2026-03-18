@@ -1,8 +1,9 @@
 use std::{
     collections::HashMap,
+    fmt::{Display, Write},
     fs::File,
     io::{Cursor, Result},
-    net::IpAddr,
+    net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
 };
 
@@ -19,21 +20,47 @@ use crate::{
     },
 };
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct TCPTuple {
+    pub src_ip: Ipv4Addr,
+    pub dst_ip: Ipv4Addr,
+    pub src_port: u16,
+    pub dst_port: u16,
+}
+
+impl Display for TCPTuple {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.src_ip.fmt(f)?;
+        f.write_char(':')?;
+        self.src_port.fmt(f)?;
+        f.write_str(" -> ")?;
+        self.dst_ip.fmt(f)?;
+        f.write_char(':')?;
+        self.dst_port.fmt(f)
+    }
+}
+
 type FlowId = u32;
 type FlowIndex = u16;
 
 #[derive(Clone)]
-struct ParseContext {
+pub struct ParseContext {
     pub flows: HashMap<FlowId, FlowEntryVariant>,
     pub flow_index: HashMap<FlowIndex, FlowId>,
+    pub tuple_to_flow: HashMap<TCPTuple, FlowId>,
+
     pub base_ts: u64,
+    // This may be not set!
+    pub trace_start_ts: Option<u64>,
 }
 
 impl ParseContext {
     pub fn new(input: Vec<FlowEntryVariant>) -> Self {
         let mut flows = HashMap::new();
         let mut flow_index = HashMap::new();
+        let mut tuple_to_flow = HashMap::new();
         let mut base_ts = None;
+        let mut trace_start_ts = None;
 
         if input.len() > u16::MAX as usize {
             tracing::error!("No more than 65535 flows are supported in current version. It will not be recorded from the 65,536th stream forward.");
@@ -48,6 +75,18 @@ impl ParseContext {
                     flows.insert(flow_id, entry);
                     base_ts.get_or_insert(tcp.base_ts);
                     flow_index.insert(index, tcp.flow_id);
+
+                    let tuple = TCPTuple {
+                        src_ip: Ipv4Addr::from_bits(tcp.src_ip),
+                        dst_ip: Ipv4Addr::from_bits(tcp.dst_ip),
+                        src_port: tcp.src_port,
+                        dst_port: tcp.dst_port,
+                    };
+
+                    tuple_to_flow.insert(tuple, flow_id);
+                }
+                FlowEntryVariant::TraceStart(trace_start) => {
+                    trace_start_ts = Some(trace_start.trace_start_timestamp);
                 }
             }
         }
@@ -58,6 +97,8 @@ impl ParseContext {
             flows,
             flow_index,
             base_ts,
+            trace_start_ts,
+            tuple_to_flow,
         }
     }
 }
@@ -109,11 +150,12 @@ pub fn convert_log_to_pcapng(
 
     let mut flows = Cursor::new(flow_file);
     while let Ok(entry) = LogEntry::read(&mut flows) {
-        if let LogEntry::TCPFlow(flow) = entry {
-            flow_entry.push(FlowEntryVariant::TCP(flow.tcp_flow));
+        match entry {
+            LogEntry::TCPFlow(flow) => flow_entry.push(flow.into()),
+            LogEntry::TraceStart(trace_start) => flow_entry.push(trace_start.into()),
+            _ => (),
         }
     }
-
     let context = ParseContext::new(flow_entry);
 
     let mut writers: HashMap<IpAddr, PacketWriter> = HashMap::new();

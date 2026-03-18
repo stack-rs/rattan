@@ -39,6 +39,7 @@ bitfield = "0.19.0"
 clap = { version = "4.2.4", features = ["derive"] }
 csv = "1.4.0"
 ctrlc = "3.5.2"
+etherparse = "0.19.0"
 figment = { version = "0.10", features = ["env", "json", "toml"] }
 futures = "0.3.32"
 human-bandwidth = { version = "0.1.4", features = ["binary-system", "serde"] }
@@ -126,6 +127,7 @@ shadow-rs = "1.7.0"
 
 [features]
 default = ["first-packet"]
+drift-log = ["rattan-core/drift-log"]
 first-packet = ["rattan-core/first-packet"]
 first-payload = ["rattan-core/first-payload"]
 http = ["rattan-core/http"]
