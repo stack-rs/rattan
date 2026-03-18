@@ -144,11 +144,12 @@ where
 {
     async fn dequeue(&mut self) -> Option<P> {
         if cfg!(feature = "first-payload") && TRACE_START_INSTANT.get().is_none() {
-            let packet = self.egress.recv().await?;
+            let mut packet = self.egress.recv().await?;
             self.timer
                 .sleep(packet.get_timestamp() + self.delay - Instant::now())
                 .await
                 .ok();
+            packet.delay_by(self.delay);
             return Some(packet);
         }
         // Wait for Start notify if not started yet
@@ -387,14 +388,13 @@ where
 {
     async fn dequeue(&mut self) -> Option<P> {
         if cfg!(feature = "first-payload") && TRACE_START_INSTANT.get().is_none() {
-            let packet = self.egress.recv().await?;
+            let delay = self.trace.next.map(|t| t.0).unwrap_or_default();
+            let mut packet = self.egress.recv().await?;
             self.send_timer
-                .sleep(
-                    packet.get_timestamp() + self.trace.next.map(|t| t.0).unwrap_or_default()
-                        - Instant::now(),
-                )
+                .sleep(packet.get_timestamp() + delay - Instant::now())
                 .await
                 .ok();
+            packet.delay_by(delay);
             return Some(packet);
         }
         // Wait for FirstPacket notify if not started yet

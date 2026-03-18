@@ -37,7 +37,7 @@ clap = { workspace = true }
 csv = { workspace = true }
 derive_more = { workspace = true }
 dyn-clone = "1.0"
-etherparse = "0.19.0"
+etherparse = {workspace = true}
 figment = { workspace = true }
 futures = { workspace = true }
 human-bandwidth = { workspace = true }
@@ -88,6 +88,7 @@ tracing-subscriber = { workspace = true }
 [features]
 default = []
 xdp = ["dep:camellia-net"]
+drift-log = []
 first-packet = []
 first-payload = []
 http = ["dep:axum", "serde"]

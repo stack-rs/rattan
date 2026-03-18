@@ -2538,6 +2538,7 @@ dependencies = [
  "binread",
  "bitfield",
  "derive_more",
+ "etherparse",
  "hex",
  "memmap2",
  "num_enum",
