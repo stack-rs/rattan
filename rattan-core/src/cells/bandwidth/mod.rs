@@ -247,14 +247,30 @@ where
     Q: PacketQueue<P>,
 {
     async fn dequeue(&mut self) -> Option<P> {
+        let mut first_payload_packet = None;
         if cfg!(feature = "first-payload") && TRACE_START_INSTANT.get().is_none() {
-            return self.egress.recv().await;
+            let packet = self.egress.recv().await?;
+            if TRACE_START_INSTANT.get().is_none() {
+                return Some(packet);
+            }
+            tracing::info!(
+                target = "first-payload",
+                "Special handling: first payload packet of L3 length {}",
+                packet.l3_length()
+            );
+            first_payload_packet = Some(packet);
         }
         // Wait for Start notify if not started yet
         crate::wait_until_started!(self, Start);
 
         // Wait for time
         loop {
+            if let Some(first_payload_packet) = first_payload_packet.take() {
+                // As this is the first packet the cell actually handles,
+                // we can enqueue it directly without waiting for `next_available`.
+                self.enqueue_packet(first_payload_packet);
+                break;
+            }
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
@@ -688,8 +704,18 @@ where
     Q: PacketQueue<P>,
 {
     async fn dequeue(&mut self) -> Option<P> {
+        let mut first_payload_packet = None;
         if cfg!(feature = "first-payload") && TRACE_START_INSTANT.get().is_none() {
-            return self.egress.recv().await;
+            let packet = self.egress.recv().await?;
+            if TRACE_START_INSTANT.get().is_none() {
+                return Some(packet);
+            }
+            tracing::info!(
+                target = "first-payload",
+                "Special handling: first payload packet of L3 length {}",
+                packet.l3_length()
+            );
+            first_payload_packet = Some(packet);
         }
         // Wait for FirstPacket notify if not started yet
         #[cfg(feature = "first-packet")]
@@ -699,6 +725,13 @@ where
 
         // wait until next_available
         loop {
+            if let Some(first_payload_packet) = first_payload_packet.take() {
+                // As this is the first packet the cell actually handles,
+                // we can enqueue it directly without waiting for `next_available`.
+                self.update_bw(self.next_change);
+                self.enqueue_packet(first_payload_packet);
+                break;
+            }
             tokio::select! {
                 biased;
                 Some(config) = self.config_rx.recv() => {
