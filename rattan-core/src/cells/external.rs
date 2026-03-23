@@ -318,7 +318,7 @@ fn cnt_log_op_error() {
 }
 
 #[cfg(feature = "drift-log")]
-static TRACE_START_IN_UNIX : OnceCell<u64> = OnceCell::new();
+static TRACE_START_IN_UNIX: OnceCell<u64> = OnceCell::new();
 
 fn log_packet<T: Packet>(
     tx: &UnboundedSender<RattanLogOp>,
@@ -327,28 +327,26 @@ fn log_packet<T: Packet>(
     base_ts: i64,
     mode: PacketLogMode,
 ) {
-    
     #[cfg(feature = "drift-log")]
     {
         use crate::cells::TRACE_START_INSTANT;
-        if TRACE_START_IN_UNIX.get().is_none(){
-            if let Some(trace_start_instart) =  TRACE_START_INSTANT.get(){
+        if TRACE_START_IN_UNIX.get().is_none() {
+            if let Some(trace_start_instart) = TRACE_START_INSTANT.get() {
                 let since_base = trace_start_instart.duration_since(BASE_TS.2);
                 let unix_time_base = BASE_TS.1;
                 let trace_start_in_unix = unix_time_base + since_base.as_micros() as u64;
                 debug!(trace_start_in_unix, unix_time_base, "Trace start");
-                if TRACE_START_IN_UNIX.set(trace_start_in_unix).is_ok(){
-                    if tx
+                if TRACE_START_IN_UNIX.set(trace_start_in_unix).is_ok()
+                    && tx
                         .send(RattanLogOp::TraceStart(trace_start_in_unix))
                         .is_err()
-                    {
-                        cnt_log_op_error();
-                    }
+                {
+                    cnt_log_op_error();
                 }
             }
         }
     }
-    
+
     let time_drift = p
         .get_timestamp()
         .elapsed()
@@ -577,4 +575,3 @@ where
         self.control_interface.clone()
     }
 }
-
