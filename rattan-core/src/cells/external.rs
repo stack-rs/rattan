@@ -110,13 +110,19 @@ where
         let mut senders: Vec<tokio::sync::mpsc::Sender<D::Packet>> = vec![];
         let (dev_tx, dev_rx) = tokio::sync::mpsc::channel(SEND_CHANNEL_PACKETS);
 
-        for s in dev_sender.iter() {
-            let (tx, rx) = tokio::sync::mpsc::channel(SEND_CHANNEL_PACKETS);
-            tokio::spawn(Self::send(rx, s.clone()));
-            senders.push(tx);
+        if dev_sender.len() == 1 {
+            tracing::info!("Only one sender, skipping demux");
+            tokio::spawn(Self::send(dev_rx, dev_sender[0].clone()));
+        } else {
+            tracing::info!("Sender count = {}, using demux", dev_sender.len());
+            for s in dev_sender.iter() {
+                let (tx, rx) = tokio::sync::mpsc::channel(SEND_CHANNEL_PACKETS);
+                tokio::spawn(Self::send(rx, s.clone()));
+                senders.push(tx);
+            }
+            tokio::spawn(Self::demux(dev_rx, senders.clone()));
         }
 
-        tokio::spawn(Self::demux(dev_rx, senders.clone()));
         Self {
             sender: dev_tx,
             id,
