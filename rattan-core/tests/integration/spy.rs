@@ -1,10 +1,11 @@
 /// This test need to be run as root (CAP_NET_ADMIN, CAP_SYS_ADMIN and CAP_SYS_RAW)
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test spy --all-features -- --nocapture
-use rattan_core::cells::StdPacket;
 use rattan_core::config::{CellBuildConfig, RattanConfig, SpyCellBuildConfig};
-use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
-use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
+use rattan_env::{
+    env::standard::{AfPacketDriver, StdNetEnv, StdNetEnvConfig, StdPacket},
+    RattanEnv, RattanEnvConfig,
+};
 use regex::Regex;
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -15,13 +16,8 @@ use tracing::{info, instrument, span, Level};
 #[test_log::test]
 #[serial_test::parallel]
 fn test_spy() {
-    let mut config = RattanConfig::<StdPacket> {
-        env: StdNetEnvConfig {
-            mode: StdNetEnvMode::Isolated,
-            client_cores: vec![1],
-            server_cores: vec![3],
-            ..Default::default()
-        },
+    let mut config = RattanConfig::<StdPacket, StdNetEnvConfig> {
+        env: StdNetEnvConfig::default_isolated(),
         ..Default::default()
     };
     let file = NamedTempFile::new().unwrap();
@@ -41,7 +37,7 @@ fn test_spy() {
         ("right".to_string(), "down_spy".to_string()),
         ("down_spy".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver, StdNetEnv>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
@@ -52,7 +48,7 @@ fn test_spy() {
     {
         let _span = span!(Level::INFO, "ping_no_spy").entered();
         info!("try to ping with no spy");
-        let right_ip = radix.right_ip(1).to_string();
+        let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1).to_string();
         let left_handle = radix
             .left_spawn(None, move || {
                 let handle = std::process::Command::new("ping")

@@ -1,12 +1,13 @@
 use std::{collections::HashMap, path::PathBuf};
 
+use rattan_env::env::RattanEnvConfig;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::cells::Packet;
 #[cfg(feature = "http")]
 use crate::control::http::HttpConfig;
 use crate::radix::PacketLogMode;
-use crate::{cells::Packet, env::StdNetEnvConfig};
 
 mod bandwidth;
 mod delay;
@@ -29,9 +30,9 @@ pub use token_bucket::*;
 /// Configuration for the whole Rattan system.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
 #[derive(Clone, Debug)]
-pub struct RattanConfig<P: Packet> {
+pub struct RattanConfig<P: Packet, EC: RattanEnvConfig> {
     #[cfg_attr(feature = "serde", serde(default))]
-    pub env: StdNetEnvConfig,
+    pub env: EC,
     #[cfg(feature = "http")]
     #[cfg_attr(feature = "http", serde(default))]
     pub http: HttpConfig,
@@ -45,10 +46,10 @@ pub struct RattanConfig<P: Packet> {
     pub general: RattanGeneralConfig,
 }
 
-impl<P: Packet> Default for RattanConfig<P> {
+impl<P: Packet, E: RattanEnvConfig> Default for RattanConfig<P, E> {
     fn default() -> Self {
         Self {
-            env: StdNetEnvConfig::default(),
+            env: E::default(),
             #[cfg(feature = "http")]
             http: HttpConfig::default(),
             cells: HashMap::new(),

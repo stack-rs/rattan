@@ -6,7 +6,7 @@ use nix::sys::{
 };
 use tokio::{io::unix::AsyncFd, time::Instant};
 
-use crate::metal::error::MetalError;
+use rattan_env::error::MetalError;
 
 // High-resolution timer
 pub struct Timer {
