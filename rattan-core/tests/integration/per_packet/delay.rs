@@ -4,11 +4,12 @@ use netem_trace::{model::StaticDelayPerPacketConfig, Delay};
 #[cfg(feature = "serde")]
 use rattan_core::{cells::per_packet::delay::DelayPerPacketCellConfig, control::RattanOp};
 use rattan_core::{
-    cells::StdPacket,
     config::{CellBuildConfig, DelayPerPacketCellBuildConfig, RattanConfig},
-    env::{StdNetEnvConfig, StdNetEnvMode},
-    metal::io::af_packet::AfPacketDriver,
     radix::RattanRadix,
+};
+use rattan_env::{
+    env::standard::{AfPacketDriver, StdNetEnv, StdNetEnvConfig, StdPacket},
+    RattanEnv, StdNetEnvMode,
 };
 use regex::Regex;
 use std::collections::HashMap;
@@ -18,7 +19,7 @@ use tracing::{info, instrument, span, Level};
 #[test_log::test]
 #[serial_test::parallel]
 fn test_delay() {
-    let mut config = RattanConfig::<StdPacket> {
+    let mut config = RattanConfig::<StdPacket, StdNetEnvConfig> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
@@ -45,7 +46,7 @@ fn test_delay() {
         ("right".to_string(), "down_delay".to_string()),
         ("down_delay".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver, StdNetEnv>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
@@ -56,7 +57,7 @@ fn test_delay() {
     {
         let _span = span!(Level::INFO, "ping_no_delay").entered();
         info!("try to ping with no delay");
-        let right_ip = radix.right_ip(1).to_string();
+        let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1).to_string();
         let left_handle = radix
             .left_spawn(None, move || {
                 let handle = std::process::Command::new("ping")
@@ -110,7 +111,7 @@ fn test_delay() {
             ))
             .unwrap();
 
-        let right_ip = radix.right_ip(1).to_string();
+        let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1).to_string();
         let left_handle = radix
             .left_spawn(None, move || {
                 let handle = std::process::Command::new("ping")

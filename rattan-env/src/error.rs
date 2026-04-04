@@ -1,5 +1,8 @@
 use std::process::{ExitCode, Termination};
 
+#[cfg(feature = "xdp")]
+use camellia_net::error::CamelliaError;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
@@ -40,6 +43,19 @@ pub enum NsError {
     JoinThreadError(String),
     #[error("Can not setns, {0}")]
     SetNsError(nix::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum MetalError {
+    #[error("Encounter system error, {0}")]
+    SystemError(#[from] nix::errno::Errno),
+    #[error("Encounter IO error, {0}")]
+    IoError(#[from] std::io::Error),
+    #[cfg_attr(feature = "xdp", error("Encounter XDP error, {0}"))]
+    #[cfg(feature = "xdp")]
+    XDPError(#[from] CamelliaError),
+    #[error("not interested packet")]
+    NotInterestedPacket,
 }
 
 /// An error that may occur when parsing a MAC address string.

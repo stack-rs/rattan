@@ -87,10 +87,10 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 name = "rattan"
 path = "src/main.rs"
 
-# [[bin]]
-# name = "rattan-xdp"
-# path = "src/main-xdp.rs"
-# required-features = ["xdp"]
+[[bin]]
+name = "rattan-xdp"
+path = "src/main-xdp.rs"
+required-features = ["xdp"]
 
 [dependencies]
 # anyhow = "1.0.75"
@@ -112,6 +112,7 @@ once_cell = { workspace = true }
 paste = "1.0.14"
 rand = { workspace = true }
 rattan-core = { path = "rattan-core", features = ["serde"], version = "0.1.1" }
+rattan-env = { path = "rattan-env" }
 rattan-log = { path = "rattan-log", version = "0.1.1" }
 serde = { workspace = true }
 serde_json = "1.0.114"
@@ -133,7 +134,7 @@ first-payload = ["rattan-core/first-payload"]
 http = ["rattan-core/http"]
 nat = ["dep:mnl", "dep:nftnl"]
 packet-dump = ["rattan-core/packet-dump"]
-xdp = ["rattan-core/xdp"]
+xdp = ["rattan-env/xdp"]
 
 # required for cargo flamegraph
 [profile.dev]

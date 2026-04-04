@@ -1036,12 +1036,12 @@ mod tests {
         packet_cnt: u8,
         interval_ms: u64,
         mut logical_send_time: Instant,
-        ingress: Arc<BwCellIngress<P>>,
+        ingress: Arc<BwCellIngress<TestPacket<P>>>,
     ) {
         for i in 0..packet_cnt {
             tokio::time::sleep_until(logical_send_time).await;
             ingress
-                .enqueue(P::with_timestamp(&[i; SIZE], logical_send_time))
+                .enqueue(TestPacket::with_timestamp(&[i; SIZE], logical_send_time))
                 .unwrap();
             logical_send_time += Duration::from_millis(interval_ms);
         }

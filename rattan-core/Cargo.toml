@@ -15,7 +15,6 @@ categories.workspace = true
 
 [[example]]
 name = "channel-xdp"
-required-features = ["xdp"]
 
 [[bench]]
 harness = false
@@ -32,7 +31,6 @@ backon = "1.2.0"
 bandwidth = "0.3.0"
 bitfield = { workspace = true }
 bytesize = "2.0.1"
-camellia-net = { version = "0.0.1", optional = true }
 clap = { workspace = true }
 csv = { workspace = true }
 derive_more = { workspace = true }
@@ -87,7 +85,6 @@ tracing-subscriber = { workspace = true }
 
 [features]
 default = []
-xdp = ["dep:camellia-net"]
 drift-log = []
 first-packet = []
 first-payload = []

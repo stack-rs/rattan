@@ -2447,6 +2447,7 @@ dependencies = [
  "paste",
  "rand 0.10.1",
  "rattan-core",
+ "rattan-env",
  "rattan-log",
  "serde",
  "serde_json",
@@ -2469,7 +2470,6 @@ dependencies = [
  "bandwidth",
  "bitfield",
  "bytesize",
- "camellia-net",
  "clap",
  "criterion",
  "csv",
@@ -2519,6 +2519,8 @@ dependencies = [
 name = "rattan-env"
 version = "0.1.1"
 dependencies = [
+ "camellia-net",
+ "etherparse",
  "futures",
  "ipnet",
  "lazy_static",
@@ -2527,6 +2529,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "rand 0.10.1",
+ "rattan-log",
  "rtnetlink",
  "serde",
  "test-log",

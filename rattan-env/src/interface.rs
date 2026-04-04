@@ -1,16 +1,6 @@
 use std::sync::Arc;
 
-use rattan_env::veth::VethCell;
-
-use crate::{cells::Packet, metal::error::MetalError};
-
-pub enum PacketType {
-    PacketHost = 0,
-    _PacketBroadcast = 1,
-    _PacketMulticast = 2,
-    PacketOtherhost = 3,
-    _PacketOutgoing = 4,
-}
+use crate::common::Packet;
 
 pub trait InterfaceSender<P> {
     fn send(&self, packet: P) -> std::io::Result<()>;
@@ -31,11 +21,15 @@ pub trait InterfaceDriver: Send + 'static {
     type Sender: InterfaceSender<Self::Packet>;
     type Receiver: InterfaceReceiver<Self::Packet> + Send;
 
-    fn bind_cell(cell: Arc<VethCell>) -> Result<Vec<Self>, MetalError>
-    where
-        Self: Sized;
     fn raw_fd(&self) -> i32;
     fn sender(&self) -> Arc<Self::Sender>;
     fn receiver(&mut self) -> &mut Self::Receiver;
     fn into_receiver(self) -> Self::Receiver;
+}
+
+pub struct InterfaceBuildArtifact<D: InterfaceDriver> {
+    pub ns_id: u8,
+    pub veth_id: u8,
+    pub name: String,
+    pub drivers: Vec<D>,
 }

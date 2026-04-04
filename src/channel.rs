@@ -12,7 +12,6 @@ use rattan_core::{
         BwCellBuildConfig, BwReplayCellBuildConfig, BwReplayQueueConfig, CellBuildConfig,
         DelayCellBuildConfig, LossCellBuildConfig, RattanConfig, RattanResourceConfig,
     },
-    env::{StdNetEnvConfig, StdNetEnvMode},
 };
 
 use crate::TaskShell;
@@ -143,9 +142,10 @@ macro_rules! bwreplay_q_args_into_config {
 }
 
 impl ChannelArgs {
-    pub fn build_rattan_config<P>(self) -> rattan_core::error::Result<RattanConfig<P>>
+    pub fn build_rattan_config<P, EC>(self) -> rattan_core::error::Result<RattanConfig<P, EC>>
     where
         P: rattan_core::cells::Packet,
+        EC: rattan_env::RattanEnvConfig,
     {
         let mut cells_config = HashMap::<String, CellBuildConfig<P>>::new();
         let mut links_config = HashMap::<String, String>::new();
@@ -300,13 +300,8 @@ impl ChannelArgs {
             links_config.insert("right".to_string(), "left".to_string());
         }
 
-        Ok(RattanConfig::<P> {
-            env: StdNetEnvConfig {
-                mode: StdNetEnvMode::Compatible,
-                client_cores: vec![1],
-                server_cores: vec![3],
-                ..Default::default()
-            },
+        Ok(RattanConfig::<P, EC> {
+            env: EC::default_compatible(),
             cells: cells_config,
             links: links_config,
             resource: RattanResourceConfig {

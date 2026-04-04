@@ -15,12 +15,17 @@ use figment::{
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
-use rattan_core::cells::StdPacket as RattanPacket;
-use rattan_core::env::StdNetEnvMode;
-use rattan_core::metal::io::af_packet::AfPacketDriver as RattanPacketDriver;
+
+use rattan_env::env::standard::{
+    AfPacketDriver as RattanPacketDriver, StdNetEnv as RattanNetEnv,
+    StdNetEnvConfig as RattanEnvConfig, StdPacket as RattanPacket,
+};
+use rattan_env::StdNetEnvMode;
+
 use rattan_core::radix::PacketLogMode;
 use rattan_core::radix::RattanRadix;
 use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
+use rattan_env::RattanEnv;
 use rattan_log::convert_log_to_pcapng;
 use serde::{Deserialize, Serialize};
 use shadow_rs::shadow;
@@ -343,7 +348,7 @@ fn main() -> ExitCode {
                         args.config.display()
                     )));
                 }
-                let config: RattanConfig<RattanPacket> = Figment::new()
+                let config: RattanConfig<RattanPacket, RattanEnvConfig> = Figment::new()
                     .merge(Toml::file(&args.config))
                     .merge(Env::prefixed("RATTAN_"))
                     .extract()
@@ -378,7 +383,7 @@ fn main() -> ExitCode {
                     .select("commands")
                     .extract::<TaskCommands>()
                     .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
-                let config = args.build_rattan_config::<RattanPacket>()?;
+                let config = args.build_rattan_config::<RattanPacket, RattanEnvConfig>()?;
                 (config, commands)
             }
             CliCommand::Convert(args) => {
@@ -465,15 +470,16 @@ fn main() -> ExitCode {
         }
 
         // Start Rattan
-        let mut radix = RattanRadix::<RattanPacketDriver>::new(config)?;
+        let mut radix = RattanRadix::<RattanPacketDriver, RattanNetEnv>::new(config)?;
         radix.spawn_rattan()?;
         radix.start_rattan()?;
-        let rattan_id = radix.get_rattan_id().clone();
+        let rattan_id =
+            <RattanNetEnv as RattanEnv<RattanPacketDriver>>::get_rattan_id(&radix).to_string();
 
         let (tx_left, rx) = std::sync::mpsc::channel();
         let tx_right = tx_left.clone();
 
-        match radix.get_mode() {
+        match <RattanNetEnv as RattanEnv<RattanPacketDriver>>::get_mode(&radix) {
             StdNetEnvMode::Compatible => {
                 if opts.left_stdout | opts.left_stderr | opts.right_stdout | opts.right_stderr {
                     warn!(
@@ -483,7 +489,8 @@ fn main() -> ExitCode {
                 }
 
                 #[cfg(feature = "nat")]
-                let left_ip_list = radix.left_ip_list();
+                let left_ip_list =
+                    <RattanNetEnv as RattanEnv<RattanPacketDriver>>::left_ip_list(&radix);
                 #[cfg(feature = "nat")]
                 let _nat = if !opts.no_nat {
                     left_ip_list
@@ -494,10 +501,11 @@ fn main() -> ExitCode {
                     None
                 };
 
-                let right_ip_list = radix.right_ip_list();
+                let right_ip_list =
+                    <RattanNetEnv as RattanEnv<RattanPacketDriver>>::right_ip_list(&radix);
                 let left_handle = radix.left_spawn(None, move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    add_runtime_env_var(&mut client_handle, right_ip_list, &rattan_id);
+                    add_runtime_env_var(&mut client_handle, right_ip_list, rattan_id);
                     if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     } else {
@@ -552,7 +560,7 @@ fn main() -> ExitCode {
                     warn!("--no-nat is only for compatible mode and thus ignored in current isolated mode.");
                 }
 
-                let ip_list = radix.left_ip_list();
+                let ip_list = <RattanNetEnv as RattanEnv<RattanPacketDriver>>::left_ip_list(&radix);
                 let rattan_id_right = rattan_id.clone();
                 let right_handle = radix.right_spawn(Some(tx_right), move || {
                     let mut server_handle = std::process::Command::new("/usr/bin/env");
@@ -581,10 +589,11 @@ fn main() -> ExitCode {
                     right_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
                     Ok(status)
                 })?;
-                let ip_list = radix.right_ip_list();
+                let ip_list =
+                    <RattanNetEnv as RattanEnv<RattanPacketDriver>>::right_ip_list(&radix);
                 let left_handle = radix.left_spawn(Some(tx_left), move || {
                     let mut client_handle = std::process::Command::new("/usr/bin/env");
-                    add_runtime_env_var(&mut client_handle, ip_list, &rattan_id);
+                    add_runtime_env_var(&mut client_handle, ip_list, rattan_id);
                     if let Some(arguments) = commands.left {
                         client_handle.args(arguments);
                     }

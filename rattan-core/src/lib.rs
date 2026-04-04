@@ -7,4 +7,3 @@ pub mod metal;
 pub mod radix;
 pub mod utils;
 pub use netem_trace;
-pub use rattan_env::env;

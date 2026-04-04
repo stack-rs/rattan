@@ -1,5 +1,6 @@
+#[cfg(feature = "http")]
+use std::net::IpAddr;
 use std::{
-    net::IpAddr,
     sync::{mpsc, Arc},
     thread,
     time::{SystemTime, UNIX_EPOCH},
@@ -7,7 +8,12 @@ use std::{
 
 use backon::{BlockingRetryable, ExponentialBuilder};
 use once_cell::sync::{Lazy, OnceCell};
-use rattan_env::netns::NetNsGuard;
+use rattan_env::{env::standard::AfPacketDriver, InterfaceDriver, StdNetEnv};
+use rattan_env::{
+    env::{RattanEnv, RattanEnvConfig},
+    netns::NetNsGuard,
+    InterfaceBuildArtifact,
+};
 use rattan_log::{file_logging_thread, RattanLogOp, LOGGING_TX};
 use tokio::{runtime::Runtime, time::Instant};
 use tokio_util::sync::CancellationToken;
@@ -25,9 +31,7 @@ use crate::{
     config::{CellBuildConfig, RattanConfig},
     control::{RattanOp, RattanOpEndpoint, RattanOpResult},
     core::{CellFactory, RattanCore},
-    env::{get_std_env, StdNetEnv, StdNetEnvMode},
     error::Error,
-    metal::io::common::InterfaceDriver,
 };
 
 #[cfg(feature = "http")]
@@ -70,15 +74,17 @@ pub enum TaskResultNotify {
 }
 
 // Manage environment and resources
-pub struct RattanRadix<D>
+#[derive(derive_more::Deref)]
+pub struct RattanRadix<D, E>
 where
     D: InterfaceDriver + Send,
     D::Packet: Packet + Send + Sync,
     D::Sender: Send + Sync,
     D::Receiver: Send,
+    E: RattanEnv<D>,
 {
-    env: StdNetEnv,
-    mode: StdNetEnvMode,
+    #[deref]
+    env: E,
     cancel_token: CancellationToken,
     rattan_thread_handle: Option<thread::JoinHandle<()>>, // Use option to allow take ownership in drop
     log_thread_handle: Option<thread::JoinHandle<std::io::Result<()>>>,
@@ -88,25 +94,29 @@ where
     http_thread_handle: Option<thread::JoinHandle<crate::error::Result<()>>>,
 }
 
-impl<D> RattanRadix<D>
+impl<D, E> RattanRadix<D, E>
 where
     D: InterfaceDriver,
     D::Packet: Packet + Send + Sync,
     D::Sender: Send + Sync,
     D::Receiver: Send,
+    E: RattanEnv<D>,
 {
-    pub fn new(config: RattanConfig<D::Packet>) -> crate::error::Result<Self> {
+    pub fn new<EC>(config: RattanConfig<D::Packet, EC>) -> crate::error::Result<Self>
+    where
+        EC: RattanEnvConfig<BuildOutput = E>,
+    {
         let instance_id = INSTANCE_ID.get_or_init(|| {
             // get env var from RATTAN_INSTANCE_ID
             std::env::var("RATTAN_INSTANCE_ID").unwrap_or_else(|_| uuid::Uuid::new_v4().to_string())
         });
         info!("New RattanRadix with instance id: {}", instance_id);
         let build_env = || {
-            get_std_env(&config.env).inspect_err(|_| {
+            config.env.build().map_err(|e| {
                 warn!("Failed to build environment, retrying");
+                e.into()
             })
         };
-        let running_core = config.resource.cpu.clone().unwrap_or(vec![1]);
 
         let env = build_env
             .retry(
@@ -115,6 +125,9 @@ where
                     .with_max_times(3),
             )
             .call()?;
+
+        let running_core = config.env.get_running_cpu();
+
         // Log env creation to kmsg for system-level observability
         if let Ok(mut kmesg_logger) = std::fs::OpenOptions::new().write(true).open("/dev/kmsg") {
             use std::io::Write;
@@ -122,7 +135,7 @@ where
             let _ = writeln!(
                 buf,
                 "rattan instance id {instance_id} create ns with rand_string {}",
-                env.rattan_id
+                env.get_rattan_id()
             );
             let _ = kmesg_logger.write_all(&buf);
             let _ = kmesg_logger.flush();
@@ -130,17 +143,21 @@ where
         let cancel_token = CancellationToken::new();
 
         let rattan_thread_span = span!(Level::ERROR, "rattan_thread").or_current();
-        let rattan_ns = env.rattan_ns.clone();
+        let rattan_ns = env.get_rattan_ns();
         let (runtime_tx, runtime_rx) = std::sync::mpsc::channel();
         let rt_cancel_token = CancellationToken::new();
         let rt_cancel_token_dup = rt_cancel_token.clone();
         let rattan_thread_handle = std::thread::spawn(move || {
             let _entered = rattan_thread_span.entered();
             info!("Rattan thread started");
-            if let Err(e) = rattan_ns.enter() {
-                error!("Failed to enter rattan namespace: {:?}", e);
-                runtime_tx.send(Err(e.into())).unwrap();
-                return;
+
+            // Enter the network namespace specified by the environment
+            if let Some(rattan_ns) = rattan_ns {
+                if let Err(e) = rattan_ns.enter() {
+                    error!("Failed to enter rattan namespace: {:?}", e);
+                    runtime_tx.send(Err(e.into())).unwrap();
+                    return;
+                }
             }
             std::thread::sleep(std::time::Duration::from_millis(10)); // BUG: sleep between namespace enter and runtime build
 
@@ -241,7 +258,6 @@ where
 
         let mut radix = Self {
             env,
-            mode: config.env.mode,
             cancel_token: cancel_token.clone(),
             rattan_thread_handle: Some(rattan_thread_handle),
             log_thread_handle,
@@ -250,7 +266,8 @@ where
             #[cfg(feature = "http")]
             http_thread_handle,
         };
-        radix.init_veth()?; // build veth pair at the beginning
+        // This could be veth pairs, or rvnic
+        radix.init_iterfaces()?;
         radix.load_cells_config(config.cells)?;
         radix.link_cells(config.links)?;
         Ok(radix)
@@ -272,57 +289,34 @@ where
         self.rattan.link_cell(rx_id, tx_id);
     }
 
-    pub fn init_veth(&mut self) -> Result<(), Error> {
-        // Ignore ext_veth (whose id is 0) for now
-        let left_max_id = self.env.left_max_id();
-        for i in 1..=left_max_id {
-            let Some(veth) = self.env.left_pairs.get(&i) else {
-                tracing::warn!("Expecting but not found veth id={} in left_pairs", i);
-                continue;
-            };
-            let veth = veth.right.clone();
-            let rattan_ns = self.env.rattan_ns.clone();
-            let name = if left_max_id == 1 {
-                // if only one veth pair except ext_veth
-                "left".to_string()
-            } else {
-                format!("left{i}")
-            };
-            self.build_cell(name.clone(), move |rt| {
-                let _guard = rt.enter();
-                let _ns_guard = NetNsGuard::new(rattan_ns);
-                let mut id = VirtualEthernetId::new();
-                id.set_ns_id(1);
-                id.set_veth_id(i as u8);
-                VirtualEthernet::<D>::new(veth, id)
-            })?;
-        }
+    pub fn init_interface(&mut self, interface: InterfaceBuildArtifact<D>) -> Result<(), Error> {
+        let InterfaceBuildArtifact {
+            ns_id,
+            veth_id,
+            name,
+            drivers,
+        } = interface;
 
-        // Ignore ext_veth (whose id is 0) for now
-        let right_max_id = self.env.right_max_id();
-        for i in 1..=right_max_id {
-            let Some(veth) = self.env.right_pairs.get(&i) else {
-                tracing::warn!("Expecting but not found veth id={} in right_pairs", i);
-                continue;
-            };
-            let veth = veth.left.clone();
-            let rattan_ns = self.env.rattan_ns.clone();
-            let name = if right_max_id == 1 {
-                // if only one veth pair except ext_veth
-                "right".to_string()
-            } else {
-                format!("right{i}")
-            };
-            self.build_cell(name.clone(), move |rt| {
-                let _guard = rt.enter();
-                let _ns_guard = NetNsGuard::new(rattan_ns);
-                let mut id = VirtualEthernetId::new();
-                id.set_ns_id(2);
-                id.set_veth_id(i as u8);
-                VirtualEthernet::<D>::new(veth, id)
-            })?;
-        }
+        self.build_cell(name.clone(), move |rt| {
+            let _guard = rt.enter();
+            let mut id = VirtualEthernetId::new();
+            id.set_ns_id(ns_id);
+            id.set_veth_id_copied(veth_id);
+            VirtualEthernet::<D>::new(drivers, id)
+        })?;
 
+        Ok(())
+    }
+
+    pub fn init_iterfaces(&mut self) -> Result<(), Error> {
+        // If the interfaces need sepcified netns to be built in, it is the Env's
+        // responsibility to do so in `build_interfaces`.
+        let interfaces = self
+            .env
+            .build_interfaces(self.rattan.get_runtime_handle())?;
+        for interface in interfaces.into_iter() {
+            self.init_interface(interface)?;
+        }
         Ok(())
     }
 
@@ -444,46 +438,6 @@ where
         self.rattan.op_block_exec(op)
     }
 
-    /// IP of i-th veth pair of `ns-left`
-    ///
-    /// 0 is for external connection
-    pub fn left_ip(&self, i: usize) -> IpAddr {
-        self.env.left_pairs[&i].left.ip_addr.0
-    }
-
-    /// IP of i-th veth pair of `ns-right`
-    ///
-    /// 0 is for external connection
-    pub fn right_ip(&self, i: usize) -> IpAddr {
-        self.env.right_pairs[&i].right.ip_addr.0
-    }
-
-    /// IP list of veth pairs of `ns-left`
-    pub fn left_ip_list(&self) -> Vec<(usize, IpAddr)> {
-        self.env
-            .left_pairs
-            .iter()
-            .map(|(i, e)| (*i, e.left.ip_addr.0))
-            .collect()
-    }
-
-    /// IP list of veth pairs of `ns-right`
-    pub fn right_ip_list(&self) -> Vec<(usize, IpAddr)> {
-        self.env
-            .right_pairs
-            .iter()
-            .map(|(i, e)| (*i, e.right.ip_addr.0))
-            .collect()
-    }
-
-    pub fn get_mode(&self) -> StdNetEnvMode {
-        self.mode
-    }
-
-    pub fn get_rattan_id(&self) -> &String {
-        &self.env.rattan_id
-    }
-
     // Spawn a thread running task in left namespace
     pub fn left_spawn<R: Send + 'static>(
         &self,
@@ -491,7 +445,7 @@ where
         task: impl Task<R> + 'static,
     ) -> Result<thread::JoinHandle<TaskResult<R>>, Error> {
         let thread_span = span!(Level::INFO, "left_ns").or_current();
-        let left_ns = self.env.left_ns.clone();
+        let left_ns = self.env.get_left_ns();
         Ok(std::thread::spawn(move || {
             let _entered = thread_span.entered();
             left_ns.enter().map_err(|e| {
@@ -516,7 +470,7 @@ where
         task: impl Task<R> + 'static,
     ) -> Result<thread::JoinHandle<TaskResult<R>>, Error> {
         let thread_span = span!(Level::INFO, "right_ns").or_current();
-        let right_ns = self.env.right_ns.clone();
+        let right_ns = self.env.get_right_ns();
         Ok(std::thread::spawn(move || {
             let _entered = thread_span.entered();
             right_ns.enter().map_err(|e| {
@@ -533,15 +487,17 @@ where
             res
         }))
     }
+}
 
+impl RattanRadix<AfPacketDriver, StdNetEnv> {
     // ping specialized right veth from left NS through specialized left veth
     pub fn ping_right_from_left(
         &self,
         left_pair_id: usize,
         right_pair_id: usize,
     ) -> Result<bool, Error> {
-        let src_ip = self.left_ip(left_pair_id);
-        let dest_ip = self.right_ip(right_pair_id);
+        let src_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::left_ip(self, left_pair_id);
+        let dest_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(self, right_pair_id);
         info!("Ping testing {} from {} ...", dest_ip, src_ip);
 
         let _left_ns_guard = NetNsGuard::new(self.env.left_ns.clone())?;
@@ -564,12 +520,13 @@ where
     }
 }
 
-impl<D> Drop for RattanRadix<D>
+impl<D, E> Drop for RattanRadix<D, E>
 where
     D: InterfaceDriver + Send,
     D::Packet: Packet + Send + Sync,
     D::Sender: Send + Sync,
     D::Receiver: Send,
+    E: RattanEnv<D>,
 {
     fn drop(&mut self) {
         debug!("Cancelling RattanRadix");
