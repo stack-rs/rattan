@@ -706,11 +706,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cells::StdPacket;
+    use crate::cells::{StdPacket, TestPacket};
 
-    fn create_packet(size: usize) -> StdPacket {
+    fn create_packet(size: usize) -> TestPacket<StdPacket> {
         let buf = vec![0u8; size];
-        StdPacket::with_timestamp(&buf, Instant::now())
+        TestPacket::with_timestamp(&buf, Instant::now())
     }
 
     #[test_log::test]
@@ -720,7 +720,7 @@ mod tests {
             max_th: 2000,
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
+        let mut queue: RedQueue<TestPacket<StdPacket>> = RedQueue::new(config).unwrap();
 
         assert!(queue.is_empty());
 
@@ -742,7 +742,7 @@ mod tests {
             max_th: 200000,
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
+        let mut queue: RedQueue<TestPacket<StdPacket>> = RedQueue::new(config).unwrap();
 
         queue.enqueue(create_packet(100));
         queue.enqueue(create_packet(100));
@@ -761,7 +761,7 @@ mod tests {
             max_th: 200000,
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
+        let mut queue: RedQueue<TestPacket<StdPacket>> = RedQueue::new(config).unwrap();
 
         queue.enqueue(create_packet(100)); // l3 length 86.
         assert_eq!(queue.length(), 1);
@@ -779,7 +779,7 @@ mod tests {
             w_q: 1.0, // max weight, avg matches instantly
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
+        let mut queue: RedQueue<TestPacket<StdPacket>> = RedQueue::new(config).unwrap();
 
         // First packet
         queue.enqueue(create_packet(100));
@@ -806,7 +806,7 @@ mod tests {
             w_q: 1.0, // Instantly reach exact byte size
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
+        let mut queue: RedQueue<TestPacket<StdPacket>> = RedQueue::new(config).unwrap();
 
         // First packet: queue empty, avg remains 0.
         queue.enqueue(create_packet(514)); // L3 size = 514 - 14 (Ethernet header) = 500
@@ -830,7 +830,7 @@ mod tests {
             w_q: 1.0,
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
+        let mut queue: RedQueue<TestPacket<StdPacket>> = RedQueue::new(config).unwrap();
 
         // First packet: queue empty, avg = 0. L3 size = 200.
         queue.enqueue(create_packet(214));
@@ -894,7 +894,7 @@ mod tests {
             adaptive: true,
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
+        let mut queue: RedQueue<TestPacket<StdPacket>> = RedQueue::new(config).unwrap();
 
         // enqueue to make average_queue_length > target_max
         // target_max = min_th + 0.6 * (max_th - min_th) = 100 + 60 = 160
@@ -932,7 +932,7 @@ mod tests {
             adaptive: true,
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
+        let mut queue: RedQueue<TestPacket<StdPacket>> = RedQueue::new(config).unwrap();
 
         // enqueue to make average_queue_length < target_min
         // target_min = min_th + 0.4 * (max_th - min_th) = 100 + 40 = 140

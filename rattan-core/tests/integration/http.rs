@@ -12,22 +12,23 @@ use rattan_core::cells::{
     },
     delay::DelayCellConfig,
     loss::LossCellConfig,
-    StdPacket,
 };
 use rattan_core::config::{
     BwCellBuildConfig, CellBuildConfig, DelayCellBuildConfig, LossCellBuildConfig, RattanConfig,
 };
 use rattan_core::control::http::HttpConfig;
-use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
-use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
+use rattan_env::{
+    env::standard::{AfPacketDriver, StdNetEnv, StdNetEnvConfig, StdPacket},
+    RattanEnv, StdNetEnvMode,
+};
 use regex::Regex;
 use tracing::{error, info, instrument, span, warn, Level};
 
 #[instrument]
 #[test_log::test]
 fn test_http() {
-    let mut config = RattanConfig::<StdPacket> {
+    let mut config = RattanConfig::<StdPacket, StdNetEnvConfig> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
@@ -82,7 +83,7 @@ fn test_http() {
         ("down_delay".to_string(), "down_loss".to_string()),
         ("down_loss".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver, StdNetEnv>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
@@ -102,7 +103,7 @@ fn test_http() {
             })
             .unwrap();
         sleep(Duration::from_millis(500));
-        let right_ip = radix.right_ip(1).to_string();
+        let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1).to_string();
         let left_handle = radix
             .left_spawn(None, move || {
                 let client_handle = std::process::Command::new("iperf3")
@@ -265,7 +266,7 @@ fn test_http() {
             })
             .unwrap();
         sleep(Duration::from_millis(500));
-        let right_ip = radix.right_ip(1).to_string();
+        let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1).to_string();
         let left_handle = radix
             .left_spawn(None, move || {
                 let client_handle = std::process::Command::new("iperf3")

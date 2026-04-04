@@ -1,23 +1,29 @@
 use crate::{
+    env::standard::{AfPacketDriver, VethLikeDriver},
     error::{Error, VethError},
     netns::NetNs,
     route::{add_arp_entry_with_netns, add_route_with_netns, set_loopback_up_with_netns},
     veth::{MacAddr, VethCell, VethPair, VethPairBuilder},
+    NetNsGuard,
 };
 use futures::TryStreamExt;
 use once_cell::sync::OnceCell;
 use rand::distr::Alphanumeric;
 use rand::{rng, RngExt};
 use rtnetlink::packet_route::{address::AddressAttribute, link::LinkAttribute, route::RouteScope};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
 use std::{
     net::{IpAddr, Ipv4Addr},
     str::FromStr,
 };
+use tokio::runtime::Handle;
 use tracing::{debug, error, info, instrument, trace};
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use crate::env::{RattanEnv, RattanEnvConfig};
+use crate::error::MetalError;
+use crate::InterfaceBuildArtifact;
 
 //    ns-left                                                           ns-right
 // +-----------+ [Internet]                               [Internet] +-----------+
@@ -39,14 +45,18 @@ use serde::{Deserialize, Serialize};
 // 3. If `ns-right` is NOT Compatible, `b` = 1;
 // 4. If `ns-right` is Compatible, `b` is chosen without conflicting with existing IP.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum VethPairGroup {
+pub(crate) enum VethPairGroup {
     Left = 1,
     Right = 2,
 }
 
 const VETH_COUNT_MAX: usize = 254;
 
-fn get_veth_ip_address(pair_group: VethPairGroup, pair_id: usize, suffix: u8) -> (IpAddr, u8) {
+pub(crate) fn get_veth_ip_address(
+    pair_group: VethPairGroup,
+    pair_id: usize,
+    suffix: u8,
+) -> (IpAddr, u8) {
     assert!((1..=VETH_COUNT_MAX).contains(&pair_id));
     (
         IpAddr::V4(Ipv4Addr::new(10, pair_group as u8, pair_id as u8, suffix)),
@@ -134,14 +144,6 @@ pub enum StdNetEnvMode {
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Default)]
-pub enum IODriver {
-    #[default]
-    Packet,
-    Xdp,
-}
-
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Default)]
 pub enum NetDevice {
     #[default]
     Veth,
@@ -190,7 +192,34 @@ impl Default for StdNetEnvConfig {
     }
 }
 
+impl RattanEnvConfig for StdNetEnvConfig {
+    type BuildOutput = StdNetEnv;
+    type BuildError = crate::error::Error;
+    type Driver = AfPacketDriver;
+
+    fn build(&self) -> Result<Self::BuildOutput, Self::BuildError> {
+        get_std_env(self)
+    }
+
+    fn default_with_mode(mode: StdNetEnvMode) -> Self {
+        StdNetEnvConfig {
+            mode,
+            client_cores: vec![1],
+            server_cores: vec![3],
+            ..Default::default()
+        }
+    }
+    fn default_compatible() -> Self {
+        Self::default_with_mode(StdNetEnvMode::Compatible)
+    }
+
+    fn default_isolated() -> Self {
+        Self::default_with_mode(StdNetEnvMode::Isolated)
+    }
+}
+
 pub struct StdNetEnv {
+    pub mode: StdNetEnvMode,
     pub left_ns: Arc<NetNs>,
     pub rattan_ns: Arc<NetNs>,
     pub right_ns: Arc<NetNs>,
@@ -216,11 +245,114 @@ impl StdNetEnv {
     pub fn right_default_pair(&self) -> &Arc<VethPair> {
         self.right_pairs.get(&0).unwrap()
     }
-    pub fn left_max_id(&self) -> usize {
+}
+
+impl<D: VethLikeDriver> RattanEnv<D> for StdNetEnv {
+    type Mode = StdNetEnvMode;
+
+    fn get_rattan_id(&self) -> &str {
+        &self.rattan_id
+    }
+    fn get_rattan_ns(&self) -> Option<Arc<NetNs>> {
+        self.rattan_ns.clone().into()
+    }
+    fn get_left_ns(&self) -> Arc<NetNs> {
+        self.left_ns.clone()
+    }
+    fn get_right_ns(&self) -> Arc<NetNs> {
+        self.right_ns.clone()
+    }
+    fn get_mode(&self) -> Self::Mode {
+        self.mode
+    }
+    /// IP of i-th veth pair of `ns-left`
+    ///
+    /// 0 is for external connection
+    fn left_ip(&self, i: usize) -> IpAddr {
+        self.left_pairs[&i].left.ip_addr.0
+    }
+
+    /// IP of i-th veth pair of `ns-right`
+    ///
+    /// 0 is for external connection
+    fn right_ip(&self, i: usize) -> IpAddr {
+        self.right_pairs[&i].right.ip_addr.0
+    }
+
+    /// IP list of veth pairs of `ns-left`
+    fn left_ip_list(&self) -> Vec<(usize, IpAddr)> {
+        self.left_pairs
+            .iter()
+            .map(|(i, e)| (*i, e.left.ip_addr.0))
+            .collect()
+    }
+
+    /// IP list of veth pairs of `ns-right`
+    fn right_ip_list(&self) -> Vec<(usize, IpAddr)> {
+        self.right_pairs
+            .iter()
+            .map(|(i, e)| (*i, e.right.ip_addr.0))
+            .collect()
+    }
+    fn left_max_id(&self) -> usize {
         *self.left_pairs.last_key_value().unwrap().0
     }
-    pub fn right_max_id(&self) -> usize {
+    fn right_max_id(&self) -> usize {
         *self.right_pairs.last_key_value().unwrap().0
+    }
+
+    fn build_interfaces(
+        &mut self,
+        handle: &Handle,
+    ) -> Result<Vec<InterfaceBuildArtifact<D>>, MetalError> {
+        let rattan_ns = self.rattan_ns.clone();
+        let _ns_guard = NetNsGuard::new(rattan_ns);
+        let mut artifacts = Vec::new();
+        let left_max_id = <StdNetEnv as RattanEnv<D>>::left_max_id(self);
+        // 0 is reserved for legacy `external` cell.
+        for i in 1..=left_max_id {
+            let Some(veth) = self.left_pairs.get(&i) else {
+                tracing::warn!("Expecting but not found veth pair for right pairs: {}", i);
+                continue;
+            };
+            let veth = veth.right.clone();
+            let name = if left_max_id == 1 {
+                "left".to_string()
+            } else {
+                format!("left{}", i)
+            };
+            let drivers = D::bind_cell(veth, handle)?;
+            artifacts.push(InterfaceBuildArtifact {
+                ns_id: 1,
+                veth_id: i as u8,
+                name,
+                drivers,
+            });
+        }
+
+        let right_max_id = <StdNetEnv as RattanEnv<D>>::right_max_id(self);
+        // 0 is reserved for legacy `external` cell.
+        for i in 1..=right_max_id {
+            let Some(veth) = self.right_pairs.get(&i) else {
+                tracing::warn!("Expecting but not found veth pair for right pairs: {}", i);
+                continue;
+            };
+            let veth = veth.left.clone();
+            let name = if right_max_id == 1 {
+                "right".to_string()
+            } else {
+                format!("right{}", i)
+            };
+            let drivers = D::bind_cell(veth, handle)?;
+            artifacts.push(InterfaceBuildArtifact {
+                ns_id: 2,
+                veth_id: i as u8,
+                name,
+                drivers,
+            });
+        }
+
+        Ok(artifacts)
     }
 }
 
@@ -555,6 +687,7 @@ pub fn get_std_env(config: &StdNetEnvConfig) -> Result<StdNetEnv, Error> {
     }
 
     Ok(StdNetEnv {
+        mode: config.mode,
         left_ns: left_netns,
         rattan_ns: rattan_netns,
         right_ns: right_netns,
@@ -570,6 +703,8 @@ pub struct ContainerEnv {
     pub fake_peer: Arc<VethCell>,
 }
 
+// Container Mode is not support yet!
+#[allow(dead_code)]
 #[instrument(skip_all, level = "debug")]
 pub fn get_container_env() -> crate::error::Result<ContainerEnv> {
     debug!("Getting all veth cells");
