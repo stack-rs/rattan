@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2](https://github.com/stack-rs/rattan/compare/rattan-v0.1.1...rattan-v0.1.2) - 2026-04-08
+
+### Documentation
+
+- *(guide)* Update installation tips - ([390c796](https://github.com/stack-rs/rattan/commit/390c79638a9a035e136a83f838a780d859d2a178))
+
+### Miscellaneous Tasks
+
+- *(scripts)* Support remote pre-compiled binary - ([d34e51e](https://github.com/stack-rs/rattan/commit/d34e51e826d4841ffcff3b66c85806e59eb93746))
+
+
 ## [0.1.1](https://github.com/stack-rs/rattan/compare/rattan-v0.1.0...rattan-v0.1.1) - 2026-03-10
 
 ### Features
