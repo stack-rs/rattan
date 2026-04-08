@@ -230,17 +230,14 @@
 a Rust library (named <code>rattan-core</code>) for you to build your own tools on top of.</p>
 <p>There are multiple ways to install the Rattan CLI tool.
 Choose any one of the methods below that best suit your needs.</p>
-<div class="mdbook-alerts mdbook-alerts-caution">
-<p class="mdbook-alerts-title">
-  <span class="mdbook-alerts-icon"></span>
-  caution
-</p>
-<p>As we are still in the early stages of development without a released version, we only support building from source currently.</p>
-</div>
 <h2 id="pre-compiled-binaries"><a class="header" href="#pre-compiled-binaries">Pre-compiled binaries</a></h2>
-<p>Executable binaries are available for download on the <a href="https://github.com/stack-rs/rattan/releases">GitHub Releases page</a>.
-Download the binary and extract the archive.
-The archive contains an <code>rattan</code> executable which you can run to start your distributed platform.</p>
+<p>Executable binaries are available for download on the <a href="https://github.com/stack-rs/rattan/releases">GitHub Releases page</a>.</p>
+<p>We provide a script <a href="https://github.com/stack-rs/rattan/blob/main/scripts/install.sh">scripts/install.sh</a> to directly download the latest release of Rattan CLI tool and install it:</p>
+<pre><code class="language-bash">curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/stack-rs/rattan/refs/heads/main/scripts/install.sh | bash
+</code></pre>
+<p>In case you want to download a specific version, we provide a detailed explanation of how it works in the script, and you can do as you want.
+This script will download the binary and extract the archive.
+The archive contains an <code>rattan</code> executable which you can run to emulate different network conditions.</p>
 <p>To make it easier to run, put the path to the binary into your <code>PATH</code> or install it in a directory that is already in your <code>PATH</code>.
 Note that, you have to grant the binary the necessary capabilities to run.
 For example, you can run the following commands on Linux:</p>
@@ -262,7 +259,7 @@ MACAddressPolicy=none
 <pre><code class="language-bash">sudo systemctl daemon-reload
 sudo systemctl restart systemd-networkd.service
 </code></pre>
-<p>We also contain a install script <a href="https://github.com/stack-rs/rattan/blob/main/scripts/install.sh">scripts/install.sh</a> in the repository, which you can use to install the binary on Ubuntu:</p>
+<p>For the above script, you can also use it to install any local binary by providing the path to the binary as an argument:</p>
 <pre><code class="language-bash">./scripts/install.sh rattan
 </code></pre>
 <h2 id="build-from-source-using-rust"><a class="header" href="#build-from-source-using-rust">Build from source using Rust</a></h2>
