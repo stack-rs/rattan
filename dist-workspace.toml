@@ -50,3 +50,6 @@ libargs-dev = "*"
 global = "ubuntu-latest"
 x86_64-unknown-linux-gnu = "ubuntu-latest"
 x86_64-unknown-linux-musl = "ubuntu-latest"
+
+[[dist.extra-artifacts]]
+artifacts = ["scripts/install.sh"]
