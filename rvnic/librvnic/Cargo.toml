@@ -1,0 +1,14 @@
+[package]
+name = "rvnic"
+version = "0.1.0"
+edition = "2024"
+description = "Rattan Virtual NIC userspace library"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+libc = "0.2"
+nix = { version = "0.30.1", features = ["fs", "ioctl", "mman"] }
+thiserror = "2"
+
+[dev-dependencies]
+# For running tests
