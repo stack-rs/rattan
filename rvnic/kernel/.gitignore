@@ -1,0 +1,23 @@
+# Kernel module build artifacts
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+*.o.d
+compile_commands.json
+
+# Vagrant
+.vagrant/
+
+# Editor backup files
+*~
+*.swp
+*.swo
+.*.sw?
+
+# Clangd
+.cache/

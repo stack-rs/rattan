@@ -1,0 +1,803 @@
+use std::{
+    borrow::Cow,
+    fs::File,
+    path::PathBuf,
+    process::{ExitCode, Stdio, Termination},
+    sync::{atomic::AtomicBool, Arc},
+    time::Duration,
+};
+
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use figment::{
+    providers::{Env, Format, Serialized, Toml},
+    Figment,
+};
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
+use once_cell::sync::OnceCell;
+
+use rattan_env::env::rvnic::{
+    RvnicDriver as RattanPacketDriver, RvnicEnv as RattanNetEnv, RvnicEnvConfig as RattanEnvConfig,
+    RvnicPacket as RattanPacket,
+};
+use rattan_env::StdNetEnvMode;
+
+use rattan_core::radix::PacketLogMode;
+use rattan_core::radix::RattanRadix;
+use rattan_core::{config::RattanConfig, radix::TaskResultNotify};
+use rattan_env::RattanEnv;
+use rattan_log::convert_log_to_pcapng;
+use serde::{Deserialize, Serialize};
+use shadow_rs::shadow;
+use tracing::warn;
+use tracing_subscriber::Layer;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use crate::{
+    build::{CARGO_FEATURES, CLAP_LONG_VERSION},
+    visualize_trace::{write_visualize_trace, OutputMode},
+};
+
+mod channel;
+mod env_var;
+mod visualize_trace;
+// mod log_converter;
+#[cfg(feature = "nat")]
+mod nat;
+// mod docker;
+
+use env_var::add_runtime_env_var;
+
+// const CONFIG_PORT_BASE: u16 = 8086;
+
+shadow!(build);
+
+static LEFT_PID: OnceCell<i32> = OnceCell::new();
+static RIGHT_PID: OnceCell<i32> = OnceCell::new();
+
+const RATTAN_LONG_VERSION: &str =
+    shadow_rs::formatcp!("{}\nbuild_features:{}", CLAP_LONG_VERSION, CARGO_FEATURES);
+
+fn parse_duration(delay: &str) -> Result<Duration, jiff::Error> {
+    let span: jiff::Span = delay.parse()?;
+    Duration::try_from(span)
+}
+
+#[derive(Debug, Parser, Clone)]
+#[command(rename_all = "kebab-case")]
+#[command(version, propagate_version = true, long_version = RATTAN_LONG_VERSION)]
+pub struct Arguments {
+    // Verbose debug output
+    // #[arg(short, long)]
+    // verbose: bool,
+    // Run in docker mode
+    // #[arg(long)]
+    // docker: bool,
+    #[command(subcommand)]
+    subcommand: CliCommand,
+
+    /// Generate config file instead of running a instance
+    ///
+    /// If this flag is set, the program will only generate the config to stdout and exit.
+    #[arg(long, global = true)]
+    generate: bool,
+
+    /// Generate visualized trace until `visualize_trace` since the trace starts
+    /// If this is set, the program will only generate the csv to stdout and exit.
+    /// Two output modes are supported:  CSV for human and Parquet for scripts.
+    #[arg(
+        long,
+        global = true,
+        value_parser = parse_duration,
+        value_name = "End Time"
+    )]
+    visualize_trace: Option<Duration>,
+
+    /// Start time of visualize_trace, 0s as default.
+    #[arg(long, requires = "visualize_trace", global = true, value_name = "Start Time", value_parser = parse_duration)]
+    visualize_trace_start: Option<Duration>,
+
+    /// Path to output the visualized trace. If not set, output to stdout.
+    /// The extension name would be changed automatically according to `visualize_trace_mode`
+    #[arg(long, requires = "visualize_trace", global = true, value_name = "File")]
+    visualize_trace_output: Option<PathBuf>,
+
+    /// Mode to output the visualize_trace.
+    #[arg(
+        long,
+        requires = "visualize_trace",
+        global = true,
+        value_name = "Mode",
+        default_value = "human-json"
+    )]
+    visualize_trace_mode: OutputMode,
+
+    /// Used in isolated mode only. If set, stdout of left is passed to output of this program.
+    #[arg(long, global = true)]
+    left_stdout: bool,
+
+    /// Used in isolated mode only. If set, stdout of rihgt is passed to output of this program.
+    #[arg(long, global = true)]
+    right_stdout: bool,
+
+    /// Used in isolated mode only. If set, stderr of left is passed to output of this program.
+    #[arg(long, global = true)]
+    left_stderr: bool,
+
+    /// Used in isolated mode only. If set, stderr of right is passed to output of this program.
+    #[arg(long, global = true)]
+    right_stderr: bool,
+
+    /// Generate config file to the specified path instead of stdout
+    #[arg(long, requires = "generate", global = true, value_name = "File")]
+    generate_path: Option<PathBuf>,
+
+    #[cfg(feature = "http")]
+    /// Enable HTTP control server (overwrite config)
+    #[arg(long, global = true)]
+    http: bool,
+    #[cfg(feature = "http")]
+    /// HTTP control server port (overwrite config) (default: 8086)
+    #[arg(short, long, value_name = "Port", global = true)]
+    port: Option<u16>,
+
+    /// The file to store compressed packet log (overwrite config) (default: None)
+    #[arg(long, value_name = "File", global = true)]
+    packet_log: Option<PathBuf>,
+
+    /// If this flag is set, raw packet header would be recorded for packet_log.
+    #[arg(
+        long,
+        requires = "packet_log",
+        value_name = "Mode",
+        global = true,
+        default_value = "compact-tcp"
+    )]
+    packet_log_mode: PacketLogMode,
+
+    /// Enable logging to file
+    #[arg(long, global = true)]
+    file_log: bool,
+    // This "requires" field uses an underscore '_' instead of a dash '-' since "file_log" is a
+    // field name instead of a group name
+    /// File log path, default to $CACHE_DIR/rattan/core.log
+    #[arg(long, value_name = "File", requires = "file_log", global = true)]
+    file_log_path: Option<PathBuf>,
+
+    #[cfg(feature = "nat")]
+    /// Disable NAT in compatible mode
+    #[arg(long, global = true)]
+    no_nat: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskCommands {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub left: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub right: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub shell: Option<TaskShell>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisplayTaskCommands {
+    pub commands: TaskCommands,
+}
+
+/// Convert Rattan Packet Log file to pcapng file for each side
+#[derive(Args, Debug, Default, Clone)]
+#[command(rename_all = "kebab-case")]
+pub struct ConvertLogArgs {
+    /// Input Rattan Packet Log file path
+    pub input: PathBuf,
+    /// Output pcapng file name prefix. take the input as default value
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum CliCommand {
+    /// Run a templated channel with command line arguments.
+    Link(channel::ChannelArgs),
+    /// Run the instance according to the config.
+    Run(RunArgs),
+    /// Convert Rattan packet log into .pcapng file.
+    Convert(ConvertLogArgs),
+}
+
+#[derive(Args, Debug, Default, Clone)]
+#[command(rename_all = "kebab-case")]
+pub struct RunArgs {
+    /// Use config file to run a instance.
+    #[arg(short, long, value_name = "Config File")]
+    pub config: PathBuf,
+    /// Command to run in left ns. Can be used in compatible and isolated mode
+    #[arg(long = "left", num_args = 0..)]
+    left_command: Option<Vec<String>>,
+    /// Command to run in right ns. Only used in isolated mode
+    #[arg(long = "right", num_args = 0..)]
+    right_command: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, ValueEnum, Copy, Default)]
+pub enum TaskShell {
+    #[default]
+    Default,
+    Sh,
+    Bash,
+    Zsh,
+    Fish,
+}
+
+impl TaskShell {
+    fn shell(&self) -> Cow<'_, str> {
+        match self {
+            TaskShell::Default => {
+                let shell = std::env::var("SHELL").unwrap_or("/bin/sh".to_string());
+                Cow::Owned(shell)
+            }
+            TaskShell::Sh => Cow::Borrowed("/bin/sh"),
+            TaskShell::Bash => Cow::Borrowed("/bin/bash"),
+            TaskShell::Zsh => Cow::Borrowed("/bin/zsh"),
+            TaskShell::Fish => Cow::Borrowed("/bin/fish"),
+        }
+    }
+}
+
+fn main() -> ExitCode {
+    // Parse Arguments
+    let opts = Arguments::parse();
+    tracing::debug!("{:?}", opts);
+    // if opts.docker {
+    //     docker::docker_main(opts).unwrap();
+    //     return;
+    // }
+
+    // Install Tracing Subscriber
+    let subscriber =
+        tracing_subscriber::registry().with(tracing_subscriber::fmt::layer().with_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
+        ));
+    let _guard: Option<_> = if opts.file_log {
+        if let Some((log_dir, file_name)) = opts
+            .file_log_path
+            .and_then(|path| {
+                let file_name = path.file_name().and_then(|f| f.to_str());
+                let log_dir = path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .and_then(|p| file_name.map(|f| (p, f.to_string())));
+                log_dir
+            })
+            .or_else(|| {
+                dirs::cache_dir()
+                    .map(|mut p| {
+                        p.push("rattan");
+                        p
+                    })
+                    .map(|log_dir| (log_dir, "core.log".to_string()))
+            })
+        {
+            if let Err(e) = std::fs::create_dir_all(&log_dir) {
+                tracing::error!("Failed to create log directory: {:?}", e);
+                return ExitCode::from(74);
+            }
+            let file_logger = match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_dir.join(file_name))
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::error!("Failed to open log file: {:?}", e);
+                    return ExitCode::from(74);
+                }
+            };
+            // let file_logger = tracing_appender::rolling::daily(log_dir, file_name_prefix);
+            let (non_blocking, guard) = tracing_appender::non_blocking(file_logger);
+            let env_filter = tracing_subscriber::EnvFilter::try_from_env("RATTAN_LOG")
+                .unwrap_or_else(|_| "info".into());
+            subscriber
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(non_blocking)
+                        .with_filter(env_filter),
+                )
+                .init();
+            Some(guard)
+        } else {
+            subscriber.init();
+            None
+        }
+    } else {
+        subscriber.init();
+        None
+    };
+
+    let left_handle_finished = Arc::new(AtomicBool::new(false));
+    let left_handle_finished_inner = left_handle_finished.clone();
+    let right_handle_finished = Arc::new(AtomicBool::new(false));
+    let right_handle_finished_inner = right_handle_finished.clone();
+    // Install Ctrl-C Handler
+    ctrlc::set_handler(move || {
+        if !left_handle_finished_inner.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(pid) = LEFT_PID.get() {
+                let _ = signal::kill(Pid::from_raw(*pid), Signal::SIGTERM).inspect_err(|e| {
+                    tracing::error!("Failed to send SIGTERM to left task: {}", e);
+                });
+            }
+        }
+        if !right_handle_finished_inner.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(pid) = RIGHT_PID.get() {
+                let _ = signal::kill(Pid::from_raw(*pid), Signal::SIGTERM).inspect_err(|e| {
+                    tracing::error!("Failed to send SIGTERM to right task: {}", e);
+                });
+            }
+        }
+    })
+    .expect("unable to install ctrl+c handler");
+
+    // Main CLI
+    let main_cli = || -> rattan_core::error::Result<()> {
+        let (mut config, commands) = match opts.subcommand {
+            CliCommand::Run(mut args) => {
+                tracing::info!("Loading config from {}", args.config.display());
+                if !args.config.exists() {
+                    return Err(rattan_core::error::Error::ConfigError(format!(
+                        "Config file {} does not exist",
+                        args.config.display()
+                    )));
+                }
+                let config: RattanConfig<RattanPacket, RattanEnvConfig> = Figment::new()
+                    .merge(Toml::file(&args.config))
+                    .merge(Env::prefixed("RATTAN_"))
+                    .extract()
+                    .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
+                let commands = Figment::new()
+                    .merge(Toml::file(args.config).nested())
+                    .merge(Serialized::from(
+                        TaskCommands {
+                            left: args.left_command.take(),
+                            right: args.right_command.take(),
+                            shell: None,
+                        },
+                        "commands",
+                    ))
+                    .merge(Env::prefixed("RATTAN_").profile("commands"))
+                    .select("commands")
+                    .extract::<TaskCommands>()
+                    .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
+                (config, commands)
+            }
+            CliCommand::Link(mut args) => {
+                let commands = Figment::new()
+                    .merge(Serialized::from(
+                        TaskCommands {
+                            left: args.command.take(),
+                            right: None,
+                            shell: Some(args.shell),
+                        },
+                        "commands",
+                    ))
+                    .merge(Env::prefixed("RATTAN_").profile("commands"))
+                    .select("commands")
+                    .extract::<TaskCommands>()
+                    .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
+                let config = args.build_rattan_config::<RattanPacket, RattanEnvConfig>()?;
+                (config, commands)
+            }
+            CliCommand::Convert(args) => {
+                convert_log_to_pcapng(args.input, args.output)?;
+                return Ok(());
+            }
+        };
+
+        // Overwrite config with CLI options
+        #[cfg(feature = "http")]
+        if opts.http {
+            config.http.enable = true;
+        }
+        #[cfg(feature = "http")]
+        if let Some(port) = opts.port {
+            config.http.port = port;
+        }
+        if let Some(packet_log) = opts.packet_log {
+            config.general.packet_log = Some(packet_log);
+            config.general.packet_log_mode = opts.packet_log_mode.into();
+        }
+
+        tracing::debug!(?config);
+
+        // Generate config
+        if opts.generate {
+            // DONE: generate commands as well
+            let mut toml_string = toml::to_string_pretty(&config)
+                .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
+            let display_commands = DisplayTaskCommands { commands };
+            let command_string = toml::to_string_pretty(&display_commands)
+                .map_err(|e| rattan_core::error::Error::ConfigError(e.to_string()))?;
+
+            toml_string.push_str(format!("\n{command_string}").as_str());
+            if let Some(output) = opts.generate_path {
+                std::fs::write(output, toml_string)?;
+            } else {
+                println!("{toml_string}");
+            }
+            return Ok(());
+        }
+
+        if let Some(visualize_trace_length) = opts.visualize_trace {
+            let mode = opts.visualize_trace_mode;
+            if let Some(mut output_path) = opts.visualize_trace_output {
+                output_path.set_extension(mode.get_extension_name());
+
+                return write_visualize_trace(
+                    mode,
+                    File::create(output_path)?,
+                    config.cells,
+                    opts.visualize_trace_start,
+                    visualize_trace_length,
+                );
+            } else {
+                return write_visualize_trace(
+                    mode,
+                    std::io::stdout(),
+                    config.cells,
+                    opts.visualize_trace_start,
+                    visualize_trace_length,
+                );
+            }
+        }
+
+        // Check if the config can correctly spawn
+        if config.cells.is_empty() {
+            tracing::warn!("No cells specified in config");
+        }
+        if config.links.is_empty() {
+            tracing::warn!("No links specified in config");
+        }
+        if config.env.mode == StdNetEnvMode::Container {
+            return Err(rattan_core::error::Error::ConfigError(
+                "Container mode is not supported yet".to_string(),
+            ));
+        }
+        if config.env.mode == StdNetEnvMode::Isolated
+            && (commands.left.is_none() || commands.right.is_none())
+        {
+            return Err(rattan_core::error::Error::ConfigError(
+                "Isolated mode requires commands to be set in both sides".to_string(),
+            ));
+        }
+
+        // Start Rattan
+        let mut radix = RattanRadix::<RattanPacketDriver, RattanNetEnv>::new(config)?;
+        radix.spawn_rattan()?;
+        tracing::info!("Radix spawned");
+        radix.start_rattan()?;
+        tracing::info!("Rattan started");
+        let rattan_id =
+            <RattanNetEnv as RattanEnv<RattanPacketDriver>>::get_rattan_id(&radix).to_string();
+
+        let (tx_left, rx) = std::sync::mpsc::channel();
+        let tx_right = tx_left.clone();
+
+        match <RattanNetEnv as RattanEnv<RattanPacketDriver>>::get_mode(&radix) {
+            StdNetEnvMode::Compatible => {
+                if opts.left_stdout | opts.left_stderr | opts.right_stdout | opts.right_stderr {
+                    warn!(
+                        "--left-stdout, --left-stderr, --right-stdout, --right-stderr \
+                        are for isolated mode only and thus ignored."
+                    );
+                }
+
+                #[cfg(feature = "nat")]
+                let left_ip_list =
+                    <RattanNetEnv as RattanEnv<RattanPacketDriver>>::left_ip_list(&radix);
+                #[cfg(feature = "nat")]
+                let _nat = if !opts.no_nat {
+                    left_ip_list
+                        .iter()
+                        .find_map(|&(id, ip)| (id == 1).then_some(ip))
+                        .map(nat::Nat::new)
+                } else {
+                    None
+                };
+
+                let right_ip_list =
+                    <RattanNetEnv as RattanEnv<RattanPacketDriver>>::right_ip_list(&radix);
+                let left_handle = radix.left_spawn(None, move || {
+                    let mut client_handle = std::process::Command::new("/usr/bin/env");
+                    add_runtime_env_var(&mut client_handle, right_ip_list, rattan_id);
+                    if let Some(arguments) = commands.left {
+                        client_handle.args(arguments);
+                    } else {
+                        let shell = commands.shell.unwrap_or_default();
+                        client_handle.arg(shell.shell().as_ref());
+                        if shell.shell().ends_with("/bash") {
+                            client_handle
+                                .env("PROMPT_COMMAND", "PS1=\"[rattan] $PS1\" PROMPT_COMMAND=");
+                        }
+                    }
+                    tracing::info!("Running {:?}", client_handle);
+                    let mut client_handle = client_handle
+                        .stdin(Stdio::inherit())
+                        .stdout(Stdio::inherit())
+                        .stderr(Stdio::inherit())
+                        .spawn()?;
+                    let pid = client_handle.id() as i32;
+                    tracing::debug!("Left pid: {}", pid);
+                    let _ = LEFT_PID.set(pid);
+                    let status = client_handle.wait()?;
+                    left_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
+                    Ok(status)
+                })?;
+                match left_handle.join() {
+                    Ok(Ok(status)) => {
+                        if let Some(code) = status.code() {
+                            if code == 0 {
+                                tracing::info!("Left handle {status}");
+                                Ok(())
+                            } else {
+                                Err(rattan_core::error::Error::Custom(format!(
+                                    "Left handle {status}"
+                                )))
+                            }
+                        } else {
+                            Err(rattan_core::error::Error::Custom(format!(
+                                "Left handle {status}"
+                            )))
+                        }
+                    }
+                    Ok(Err(e)) => Err(rattan_core::error::Error::Custom(format!(
+                        "Left handle exited with error: {e:?}"
+                    ))),
+                    Err(e) => Err(rattan_core::error::Error::Custom(format!(
+                        "Fail to join left handle: {e:?}"
+                    ))),
+                }
+            }
+            StdNetEnvMode::Isolated => {
+                #[cfg(feature = "nat")]
+                if opts.no_nat {
+                    warn!("--no-nat is only for compatible mode and thus ignored in current isolated mode.");
+                }
+
+                let ip_list = <RattanNetEnv as RattanEnv<RattanPacketDriver>>::left_ip_list(&radix);
+                let rattan_id_right = rattan_id.clone();
+                let right_handle = radix.right_spawn(Some(tx_right), move || {
+                    let mut server_handle = std::process::Command::new("/usr/bin/env");
+                    add_runtime_env_var(&mut server_handle, ip_list, rattan_id_right);
+                    if let Some(arguments) = commands.right {
+                        server_handle.args(arguments);
+                    }
+                    tracing::info!("Running in right NS {server_handle:?}");
+                    let mut server_handle = server_handle
+                        .stdin(Stdio::null())
+                        .stdout(if opts.right_stdout {
+                            Stdio::inherit()
+                        } else {
+                            Stdio::null()
+                        })
+                        .stderr(if opts.right_stderr {
+                            Stdio::inherit()
+                        } else {
+                            Stdio::null()
+                        })
+                        .spawn()?;
+                    let pid = server_handle.id() as i32;
+                    tracing::debug!("Right pid: {pid}");
+                    let _ = RIGHT_PID.set(pid);
+                    let status = server_handle.wait()?;
+                    right_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
+                    Ok(status)
+                })?;
+                let ip_list =
+                    <RattanNetEnv as RattanEnv<RattanPacketDriver>>::right_ip_list(&radix);
+                let left_handle = radix.left_spawn(Some(tx_left), move || {
+                    let mut client_handle = std::process::Command::new("/usr/bin/env");
+                    add_runtime_env_var(&mut client_handle, ip_list, rattan_id);
+                    if let Some(arguments) = commands.left {
+                        client_handle.args(arguments);
+                    }
+                    tracing::info!("Running in left NS {client_handle:?}");
+                    let mut client_handle = client_handle
+                        .stdin(Stdio::null())
+                        .stdout(if opts.left_stdout {
+                            Stdio::inherit()
+                        } else {
+                            Stdio::null()
+                        })
+                        .stderr(if opts.left_stderr {
+                            Stdio::inherit()
+                        } else {
+                            Stdio::null()
+                        })
+                        .spawn()?;
+                    let pid = client_handle.id() as i32;
+                    tracing::debug!("Left pid: {pid}");
+                    let _ = LEFT_PID.set(pid);
+                    let status = client_handle.wait()?;
+                    left_handle_finished.store(true, std::sync::atomic::Ordering::Relaxed);
+                    Ok(status)
+                })?;
+                let mut left_res = Ok(());
+                let mut right_res = Ok(());
+                match rx.recv() {
+                    Ok(notify) => match notify {
+                        TaskResultNotify::Left => {
+                            match left_handle.join() {
+                                Ok(Ok(status)) => {
+                                    if let Some(code) = status.code() {
+                                        if code == 0 {
+                                            tracing::info!("Left handle {status}");
+                                        } else {
+                                            left_res = left_res
+                                                .and_then(|_| Err(format!("Left handle {status}")));
+                                        }
+                                    } else {
+                                        left_res = left_res
+                                            .and_then(|_| Err(format!("Left handle {status}")));
+                                    }
+                                }
+                                Ok(Err(e)) => {
+                                    left_res = left_res.and_then(|_| {
+                                        Err(format!("Left handle exited with error: {e:?}"))
+                                    });
+                                    // TODO: we may also add other arguments to disable the killing of the other half
+                                    if right_handle.is_finished() {
+                                        tracing::warn!("Right handle is already finished");
+                                    } else {
+                                        tracing::warn!(
+                                            "Try to send SIGTERM to right spawned thread"
+                                        );
+                                        if let Some(pid) = RIGHT_PID.get() {
+                                            let _ =
+                                                signal::kill(Pid::from_raw(*pid), Signal::SIGTERM)
+                                                    .inspect_err(|e| {
+                                                        tracing::error!(
+                                                            "Failed to send SIGTERM: {e}"
+                                                        );
+                                                    });
+                                        }
+                                        // TODO: we may wait for a while before sending SIGKILL
+                                    }
+                                }
+                                Err(e) => {
+                                    left_res = left_res.and_then(|_| {
+                                        Err(format!("Fail to join left handle: {e:?}"))
+                                    });
+                                }
+                            }
+                            match right_handle.join() {
+                                Ok(Ok(status)) => {
+                                    if let Some(code) = status.code() {
+                                        if code == 0 {
+                                            tracing::info!("Right handle {status}");
+                                        } else {
+                                            right_res = right_res.and_then(|_| {
+                                                Err(format!("Right handle {status}"))
+                                            });
+                                        }
+                                    } else {
+                                        right_res = right_res
+                                            .and_then(|_| Err(format!("Right handle {status}")));
+                                    }
+                                }
+                                Ok(Err(e)) => {
+                                    right_res = right_res.and_then(|_| {
+                                        Err(format!("Right handle exited with error: {e:?}"))
+                                    });
+                                }
+                                Err(e) => {
+                                    right_res = right_res.and_then(|_| {
+                                        Err(format!("Fail to join right handle: {e:?}"))
+                                    });
+                                }
+                            }
+                        }
+                        TaskResultNotify::Right => {
+                            match right_handle.join() {
+                                Ok(Ok(status)) => {
+                                    if let Some(code) = status.code() {
+                                        if code == 0 {
+                                            tracing::info!("Right handle {status}");
+                                        } else {
+                                            right_res = right_res.and_then(|_| {
+                                                Err(format!("Right handle {status}"))
+                                            });
+                                        }
+                                    } else {
+                                        right_res = right_res
+                                            .and_then(|_| Err(format!("Right handle {status}")));
+                                    }
+                                }
+                                Ok(Err(e)) => {
+                                    right_res = right_res.and_then(|_| {
+                                        Err(format!("Right handle exited with error: {e:?}"))
+                                    });
+                                    // TODO: we may also add other arguments to disable the killing of the other half
+                                    if left_handle.is_finished() {
+                                        tracing::warn!("Left handle is already finished");
+                                    } else {
+                                        tracing::warn!(
+                                            "Try to send SIGTERM to left spawned thread"
+                                        );
+                                        if let Some(pid) = LEFT_PID.get() {
+                                            let _ =
+                                                signal::kill(Pid::from_raw(*pid), Signal::SIGTERM)
+                                                    .inspect_err(|e| {
+                                                        tracing::error!(
+                                                            "Failed to send SIGTERM: {e}"
+                                                        );
+                                                    });
+                                        }
+                                        // TODO: we may wait for a while before sending SIGKILL
+                                    }
+                                }
+                                Err(e) => {
+                                    right_res = right_res.and_then(|_| {
+                                        Err(format!("Fail to join right handle: {e:?}"))
+                                    });
+                                }
+                            }
+                            match left_handle.join() {
+                                Ok(Ok(status)) => {
+                                    if let Some(code) = status.code() {
+                                        if code == 0 {
+                                            tracing::info!("Left handle {status}");
+                                        } else {
+                                            left_res = left_res
+                                                .and_then(|_| Err(format!("Left handle {status}")));
+                                        }
+                                    } else {
+                                        left_res = left_res
+                                            .and_then(|_| Err(format!("Left handle {status}")));
+                                    }
+                                }
+                                Ok(Err(e)) => {
+                                    left_res = left_res.and_then(|_| {
+                                        Err(format!("Left handle exited with error: {e:?}"))
+                                    });
+                                }
+                                Err(e) => {
+                                    left_res = left_res.and_then(|_| {
+                                        Err(format!("Fail to join left handle: {e:?}"))
+                                    });
+                                }
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        return Err(rattan_core::error::Error::ChannelError(format!(
+                            "Fail to receive from channel: {e:?}"
+                        )));
+                    }
+                }
+                match (left_res, right_res) {
+                    (Ok(()), Ok(())) => Ok(()),
+                    (Err(e), Ok(())) => Err(rattan_core::error::Error::Custom(e)),
+                    (Ok(()), Err(e)) => Err(rattan_core::error::Error::Custom(e)),
+                    (Err(e1), Err(e2)) => {
+                        Err(rattan_core::error::Error::Custom(format!("{e1}. {e2}")))
+                    }
+                }
+            }
+            StdNetEnvMode::Container => Ok(()),
+        }
+
+        // get the last byte of rattan_base as the port number
+        // let port = CONFIG_PORT_BASE - 1
+        //     + match rattan_base {
+        //         std::net::IpAddr::V4(ip) => ip.octets()[3],
+        //         std::net::IpAddr::V6(ip) => ip.octets()[15],
+        //     } as u16;
+        // let config = RattanMachineConfig { original_ns, port };
+    };
+    match main_cli() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            tracing::error!("{e}");
+            e.report()
+        }
+    }
+}
