@@ -16,11 +16,12 @@ futures = { workspace = true }
 ipnet = { workspace = true }
 lazy_static = "1.5.0"
 libc = { workspace = true }
-nix = { workspace = true }
+nix.workspace = true
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
 rand = { workspace = true }
 rtnetlink = { workspace = true }
+rvnic = { workspace = true , optional = true}
 serde = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
@@ -33,6 +34,7 @@ rattan-log = { path = "../rattan-log" }
 test-log = { workspace = true }
 
 [features]
-default = ["xdp"]
+default = []
 serde = ["dep:serde"]
 xdp = ["dep:camellia-net"]
+rvnic = ["dep:rvnic"]

@@ -1,0 +1,37 @@
+CompileFlags:
+  Remove:
+    # Remove GCC-specific flags that clang doesn't understand
+    - -mpreferred-stack-boundary=*
+    - -mindirect-branch=*
+    - -mindirect-branch-register
+    - -mindirect-branch-cs-prefix
+    - -fno-allow-store-data-races
+    - -fmin-function-alignment=*
+    - -fconserve-stack
+    - -mrecord-mcount
+    - -mfentry
+    - -fsanitize=bounds-strict
+    - -fno-var-tracking-assignments
+    - -mfunction-return=*
+    - -fzero-call-used-regs=*
+    - -fno-stack-clash-protection
+    - -ftrivial-auto-var-init=*
+    - -mharden-sls=*
+    - -fstrict-flex-arrays=*
+    - -fpatchable-function-entry=*
+    - -DCC_USING_FENTRY
+  Add:
+    # Help clang find kernel headers
+    - -D__KERNEL__
+    - -DMODULE
+    - -Wno-unknown-warning-option
+
+Diagnostics:
+  Suppress:
+    - drv_unknown_argument
+    - drv_unsupported_option_argument
+    - drv_unsupported_opt_for_target
+  ClangTidy:
+    Remove:
+      # RCU macros intentionally use sizeof on pointers for type checking
+      - bugprone-sizeof-expression

@@ -15,6 +15,7 @@ default-run = "rattan"
 [workspace]
 resolver = "2"
 members = [".", "rattan-core", "rattan-env", "rattan-log"]
+exclude = ["rvnic"]
 
 [workspace.package]
 version = "0.1.1"
@@ -67,6 +68,7 @@ parking_lot = "0.12.5"
 pcap-file = { version = "2.0.0" }
 rand = "0.10.0"
 rtnetlink = "0.20.0"
+rvnic.path = "./rvnic/librvnic/"
 serde = { version = "1.0.160", features = ["derive"] }
 tempfile = "3"
 test-log = { version = "0.2.18", features = ["trace"] }
@@ -86,6 +88,11 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 [[bin]]
 name = "rattan"
 path = "src/main.rs"
+
+[[bin]]
+name = "rattan-rv"
+path = "src/main-rv.rs"
+required-features = ["rvnic"]
 
 [[bin]]
 name = "rattan-xdp"
@@ -135,6 +142,7 @@ http = ["rattan-core/http"]
 nat = ["dep:mnl", "dep:nftnl"]
 packet-dump = ["rattan-core/packet-dump"]
 xdp = ["rattan-env/xdp"]
+rvnic = ["rattan-env/rvnic"]
 
 # required for cargo flamegraph
 [profile.dev]

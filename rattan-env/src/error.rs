@@ -2,6 +2,8 @@ use std::process::{ExitCode, Termination};
 
 #[cfg(feature = "xdp")]
 use camellia_net::error::CamelliaError;
+#[cfg(feature = "rvnic")]
+use rvnic::Error as RvnicError;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -21,6 +23,8 @@ pub enum Error {
     TokioRuntimeError(#[from] TokioRuntimeError),
     #[error("Rtnetlink error: {0}")]
     RtnetlinkError(#[from] rtnetlink::Error),
+    #[error("Metal error: {0}")]
+    MetalError(#[from] MetalError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -54,8 +58,18 @@ pub enum MetalError {
     #[cfg_attr(feature = "xdp", error("Encounter XDP error, {0}"))]
     #[cfg(feature = "xdp")]
     XDPError(#[from] CamelliaError),
+    #[cfg_attr(feature = "rvnic", error("Encounter Rvnic error, {0}"))]
+    #[cfg(feature = "rvnic")]
+    RvnicError(#[from] RvnicError),
     #[error("not interested packet")]
     NotInterestedPacket,
+}
+
+#[cfg(feature = "rvnic")]
+impl From<RvnicError> for Error {
+    fn from(value: RvnicError) -> Self {
+        Error::MetalError(MetalError::RvnicError(value))
+    }
 }
 
 /// An error that may occur when parsing a MAC address string.
@@ -103,6 +117,7 @@ impl Termination for Error {
             Error::NsError(_) => ExitCode::from(71),
             Error::VethError(_) => ExitCode::from(71),
             Error::MacParseError(_) => ExitCode::from(78),
+            Error::MetalError(_) => ExitCode::from(71),
         }
     }
 }

@@ -163,7 +163,7 @@ where
 
             // TODO(enhancement): need to handle panic due to affinity setting
             let runtime = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(running_core.len())
+                .worker_threads(running_core.len().max(4))
                 .enable_all()
                 // .on_thread_start(move || {
                 //     let mut cpuset = CpuSet::new();
@@ -267,9 +267,15 @@ where
             http_thread_handle,
         };
         // This could be veth pairs, or rvnic
-        radix.init_iterfaces()?;
-        radix.load_cells_config(config.cells)?;
-        radix.link_cells(config.links)?;
+        radix
+            .init_iterfaces()
+            .inspect_err(|e| tracing::error!(?e, "Failed to init interfaces"))?;
+        radix
+            .load_cells_config(config.cells)
+            .inspect_err(|e| tracing::error!(?e, "Failed to load cell config"))?;
+        radix
+            .link_cells(config.links)
+            .inspect_err(|e| tracing::error!(?e, "Failed to link cells"))?;
         Ok(radix)
     }
 
@@ -297,13 +303,16 @@ where
             drivers,
         } = interface;
 
+        let name_clone = name.clone();
+
         self.build_cell(name.clone(), move |rt| {
             let _guard = rt.enter();
             let mut id = VirtualEthernetId::new();
             id.set_ns_id(ns_id);
             id.set_veth_id_copied(veth_id);
             VirtualEthernet::<D>::new(drivers, id)
-        })?;
+        })
+        .inspect_err(|e| tracing::error!(?e, "Failed to init interface {}", name_clone))?;
 
         Ok(())
     }
@@ -314,9 +323,11 @@ where
         let interfaces = self
             .env
             .build_interfaces(self.rattan.get_runtime_handle())?;
+        info!("{} interfaces to be registered as cells.", interfaces.len());
         for interface in interfaces.into_iter() {
             self.init_interface(interface)?;
         }
+        info!("Interfaces registered as cells");
         Ok(())
     }
 

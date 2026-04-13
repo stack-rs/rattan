@@ -2531,6 +2531,7 @@ dependencies = [
  "rand 0.10.1",
  "rattan-log",
  "rtnetlink",
+ "rvnic",
  "serde",
  "test-log",
  "thiserror 2.0.18",
@@ -2777,6 +2778,15 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+
+[[package]]
+name = "rvnic"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "nix 0.30.1",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "ryu"
