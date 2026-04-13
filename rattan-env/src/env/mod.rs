@@ -21,6 +21,8 @@ pub trait SerdeBounds {}
 #[cfg(not(feature = "serde"))]
 impl<T> SerdeBounds for T {}
 
+#[cfg(feature = "rvnic")]
+pub mod rvnic;
 pub mod standard;
 
 pub trait RattanEnv<D: InterfaceDriver> {

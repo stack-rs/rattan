@@ -119,7 +119,7 @@ where
                 tokio::spawn(Self::send(rx, s.clone()));
                 senders.push(tx);
             }
-            tokio::spawn(Self::demux(dev_rx, senders.clone()));
+            tokio::spawn(Self::demux(dev_rx, senders));
         }
 
         Self {
@@ -246,9 +246,16 @@ where
     ) -> Result<Self, Error> {
         let (tx, rx) = tokio::sync::mpsc::channel(1024);
         let flow_map = Arc::new(FlowMap::new(id));
-
         for d in driver.into_iter() {
-            let notify = AsyncFd::new(d.raw_fd())?;
+            if D::use_blocking_recv() {
+                tracing::warn!("Recv in thread on Driver's request");
+                let tx_clone = tx.clone();
+                std::thread::spawn(|| D::recv_thread(d.into_receiver(), tx_clone));
+                continue;
+            }
+
+            let notify = AsyncFd::new(d.raw_fd())
+                .inspect_err(|e| tracing::error!(?e, "Failed to epoll on raw fd {}", d.raw_fd()))?;
             tokio::spawn(Self::recv(
                 flow_map.clone(),
                 notify,
@@ -278,6 +285,7 @@ where
             let mut _guard = notify.readable().await.unwrap();
 
             let Ok(packet) = _guard.try_io(|_fd| receiver.receive()) else {
+                tokio::task::yield_now().await;
                 continue; // would block
             };
 
