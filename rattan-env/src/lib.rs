@@ -5,6 +5,7 @@ pub mod interface;
 pub mod ioctl;
 pub mod netns;
 pub mod route;
+pub mod timer;
 pub mod veth;
 
 // Top-level re-exports for ergonomic API

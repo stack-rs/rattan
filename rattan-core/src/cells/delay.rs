@@ -2,6 +2,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use netem_trace::{model::DelayTraceConfig, Delay, DelayTrace};
+use rattan_env::timer::Timer;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -13,7 +14,6 @@ use super::{TimedConfig, LARGE_DURATION, TRACE_START_INSTANT};
 #[cfg(test)]
 use crate::cells::relative_time;
 use crate::error::Error;
-use crate::metal::timer::Timer;
 use crate::{
     cells::{AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, Packet},
     core::CALIBRATED_START_INSTANT,
