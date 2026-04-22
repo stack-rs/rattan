@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use netem_trace::{model::DelayPerPacketTraceConfig, DelayPerPacketTrace};
+use rattan_env::timer::Timer;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::Instant};
@@ -11,7 +12,6 @@ use crate::cells::per_packet::DelayedQueue;
 use crate::{
     cells::{AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, Packet},
     error::Error,
-    metal::timer::Timer,
 };
 
 pub struct DelayPerPacketCellIngress<P>

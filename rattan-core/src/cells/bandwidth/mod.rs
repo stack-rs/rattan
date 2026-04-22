@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use netem_trace::{model::BwTraceConfig, Bandwidth, BwTrace, Delay};
+use rattan_env::timer::Timer;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -16,7 +17,6 @@ use crate::cells::bandwidth::queue::AQM;
 #[cfg(test)]
 use crate::cells::relative_time;
 use crate::error::Error;
-use crate::metal::timer::Timer;
 
 pub mod queue;
 
