@@ -4,6 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bandwidth::Bandwidth;
 use bytesize::ByteSize;
+use rattan_env::timer::Timer;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -16,7 +17,6 @@ use super::{ControlInterface, Egress, Ingress};
 use crate::cells::bandwidth::queue::PacketQueue;
 use crate::cells::{AtomicCellState, Cell, CellState, Packet, LARGE_DURATION};
 use crate::error::Error;
-use crate::metal::timer::Timer;
 
 mod bucket;
 
