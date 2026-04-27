@@ -1788,9 +1788,9 @@ dependencies = [
 
 [[package]]
 name = "netem-trace"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2215fc5732e6a9ca20562f70751eaa333c96cdb4debf0bfa8d2751ae96f52257"
+checksum = "3c3b430ff34f41e41c6faa693bd7326aab906c85b3519bf9d57a61d9451f3166"
 dependencies = [
  "bandwidth",
  "dyn-clone",
