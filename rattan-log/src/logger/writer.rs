@@ -1,8 +1,15 @@
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::io::Error;
 use std::io::Result;
+use std::io::Write;
 use std::path::PathBuf;
 
+use flowstats::traits::QuantileSketch;
+use flowstats::traits::Sketch;
+use flowstats::{RunningStats, TDigest};
+use serde;
+use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::mmap::*;
@@ -20,6 +27,86 @@ const MMAP_CHUNK_SIZE_16M: usize = 4096;
 const MMAP_CHUNK_SIZE_4K: usize = 1;
 const LOGICAL_CHUNK_SIZE_1M: u32 = 256;
 
+#[derive(Debug, Default)]
+struct DriftStats {
+    // in milliseconds
+    tdigest: TDigest,
+    running_stats: RunningStats,
+}
+
+#[derive(serde::Serialize)]
+struct DriftStatReport {
+    cnt: u64,
+    mean_ms: f64,
+    stddev_ms: f64,
+    min_ms: f64,
+    max_ms: f64,
+    p50_ms: f64,
+    p75_ms: f64,
+    p90_ms: f64,
+    p95_ms: f64,
+    p98_ms: f64,
+    p99_ms: f64,
+}
+
+impl DriftStats {
+    fn add(&mut self, drift_ms: f64) {
+        self.tdigest.add(drift_ms);
+        self.running_stats.add(drift_ms);
+    }
+
+    fn report(&self) -> DriftStatReport {
+        DriftStatReport {
+            cnt: self.tdigest.count(),
+            mean_ms: self.running_stats.mean(),
+            stddev_ms: self.running_stats.stddev(),
+            min_ms: self.running_stats.min().unwrap_or_default(),
+            max_ms: self.running_stats.max().unwrap_or_default(),
+            p50_ms: self.tdigest.quantile(0.5).unwrap_or_default(),
+            p75_ms: self.tdigest.quantile(0.75).unwrap_or_default(),
+            p90_ms: self.tdigest.quantile(0.90).unwrap_or_default(),
+            p95_ms: self.tdigest.quantile(0.95).unwrap_or_default(),
+            p98_ms: self.tdigest.quantile(0.98).unwrap_or_default(),
+            p99_ms: self.tdigest.quantile(0.99).unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct FlowDriftStats {
+    ingress: DriftStats,
+    egress: DriftStats,
+}
+
+impl FlowDriftStats {
+    fn with_direction(&mut self, is_egress: bool) -> &mut DriftStats {
+        if is_egress {
+            &mut self.egress
+        } else {
+            &mut self.ingress
+        }
+    }
+}
+
+fn write_drift_stats(
+    base_path: &mut PathBuf,
+    drift_stats: &BTreeMap<u32, FlowDriftStats>,
+) -> std::io::Result<()> {
+    base_path.set_extension("drift_stats.jsonl");
+
+    let mut file = std::fs::File::create(&base_path)?;
+
+    for (flow_id, stats) in drift_stats {
+        let line = json!({
+            "flow_id": flow_id,
+            "ingress": stats.ingress.report(),
+            "egress": stats.egress.report(),
+        });
+        writeln!(file, "{}", line)?;
+    }
+    Ok(())
+}
+
 struct EntryWriter<H, C>
 where
     H: FnMut(usize, &Option<C>) -> Vec<u8>,
@@ -30,6 +117,7 @@ where
     old_log_entry_file: Option<MmapStreamWriter<MMAP_CHUNK_SIZE_16M>>,
     raw_file: Option<MmapStreamWriter<MMAP_CHUNK_SIZE_16M>>,
     flow_file: Option<MmapStreamWriter<MMAP_CHUNK_SIZE_4K>>,
+    drift_stats: BTreeMap<u32, FlowDriftStats>,
 }
 
 impl<H> EntryWriter<H, u64>
@@ -44,6 +132,7 @@ where
             raw_file: None,
             flow_file: None,
             log_ref_offset: None,
+            drift_stats: BTreeMap::new(),
         }
     }
 
@@ -147,6 +236,17 @@ where
         }
         .extend_from_slice(header)
     }
+
+    fn add_drift_stats(&mut self, flow_id: u32, drift_us: u64, is_egress: bool) {
+        let stat_entry = self.drift_stats.entry(flow_id).or_default();
+        stat_entry
+            .with_direction(is_egress)
+            .add(drift_us as f64 * 1E-3);
+    }
+
+    fn write_drift_stats(&mut self) -> std::io::Result<()> {
+        write_drift_stats(&mut self.base_path, &self.drift_stats)
+    }
 }
 
 fn build_chunk_prologue(data_length: usize, chunk_offset: &Option<u64>) -> Vec<u8> {
@@ -168,6 +268,9 @@ fn writing(path: PathBuf, mut log_rx: UnboundedReceiver<RattanLogOp>) -> Result<
     let mut flows = HashMap::new();
     while let Some(entry) = log_rx.blocking_recv() {
         match entry {
+            RattanLogOp::DriftSample(flow_id, drift_us, is_egress) => {
+                entry_writer.add_drift_stats(flow_id, drift_us, is_egress);
+            }
             RattanLogOp::Entry(entry) => entry_writer.add_log_entry(entry.as_slice())?,
             RattanLogOp::Flow(flow_id, base_ts, flow_desc) => {
                 let flow_index = 1 + flows.len();
@@ -191,6 +294,8 @@ fn writing(path: PathBuf, mut log_rx: UnboundedReceiver<RattanLogOp>) -> Result<
             }
         }
     }
+
+    entry_writer.write_drift_stats()?;
 
     tracing::debug!("Packet logging thread exited");
     Ok(())
