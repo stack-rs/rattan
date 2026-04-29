@@ -16,6 +16,7 @@ binread = "2.2.0"
 bitfield = { workspace = true }
 derive_more = { workspace = true }
 etherparse = { workspace = true }
+flowstats = "0.1.2"
 hex = "0.4.3"
 memmap2 = "0.9.9"
 num_enum = { workspace = true }
@@ -23,8 +24,11 @@ once_cell = { workspace = true }
 pcap-file = { workspace = true }
 plain = "0.2.3"
 static_assertions = "1.1.0"
+serde_json = { workspace = true }
+serde = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+
 
 [dev-dependencies]
 hex = "0.4.3"

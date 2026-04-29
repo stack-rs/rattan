@@ -880,6 +880,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
+name = "flowstats"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f70579c644fda860fe65c9819c0129858f054383230bdddfeb8bc7b49576d1f5"
+dependencies = [
+ "libm",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2547,6 +2557,7 @@ dependencies = [
  "bitfield",
  "derive_more",
  "etherparse",
+ "flowstats",
  "hex",
  "memmap2",
  "num_enum",
@@ -2554,6 +2565,8 @@ dependencies = [
  "pcap-file",
  "plain",
  "random",
+ "serde",
+ "serde_json",
  "static_assertions",
  "tempfile",
  "test-log",
@@ -2890,6 +2903,7 @@ version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
 dependencies = [
+ "indexmap 2.14.0",
  "itoa",
  "memchr",
  "serde",
@@ -4014,6 +4028,12 @@ name = "writeable"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yansi"

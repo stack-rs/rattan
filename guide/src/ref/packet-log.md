@@ -24,7 +24,7 @@ rattan link --packet-log packet.rtl --packet-log-mode compact-tcp
 rattan run --config config.toml --packet-log packet.rtl --packet-log-mode raw-ip
 ```
 
-The possible values for `--packet-log-mode` are:
+For generating packet logs, possible values for `--packet-log-mode` are:
 
 - `compact-tcp` (as default, if not specified). In this mode, some fields from TCP and IP headers are recorded.
 - `raw-ip`. In this mode, the raw L3 and L4 headers are recorded.
@@ -32,6 +32,11 @@ The possible values for `--packet-log-mode` are:
 
 This will create a file named `packet.rtl` in the current directory, which will contain the compressed packet log.
 The flow description file will be named `packet.flows`. Also, if any raw headers are recorded, a `packet.raw` will be created.
+
+A special packet log mode `drift-stat` is implemented if the feature `drift-stat` is enabled. In this mode, 
+**no** per-packet logs are recorded. 
+
+If the `drift-stat` feature is active, enabling any packet log mode (including `compact-tcp`, `raw-ip`, `raw-tcp`, or `drift-stat`) will trigger the recording of basic statistics for ingress/egress time drifts in Rattan. These statistics are saved as a `.jsonl` file.
 
 ### Convert a Rattan packet log
 

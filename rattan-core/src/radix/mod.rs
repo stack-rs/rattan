@@ -96,6 +96,8 @@ pub enum PacketLogMode {
     CompactTCP,
     RawIP,
     RawTCP,
+    #[cfg(feature = "drift-stat")]
+    DriftStat,
 }
 
 pub static PKT_LOG_MODE: OnceCell<PacketLogMode> = OnceCell::new();

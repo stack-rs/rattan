@@ -370,7 +370,7 @@ fn log_packet<T: Packet>(
         .get_timestamp()
         .elapsed()
         .as_micros()
-        .min(u16::MAX as u128) as u16;
+        .min(u64::MAX as u128) as u64;
 
     let ts = ((get_clock_ns() - base_ts) / 1000)
         .max(0)
@@ -381,7 +381,29 @@ fn log_packet<T: Packet>(
     // Log for outgoing packets only
     let time_drift = cfg!(feature = "drift-log").then_some(time_drift);
 
+    // TODO: collapse this when Rust 2024 is used
+    if cfg!(feature = "drift-stat") {
+        if let Some(time_drift) = time_drift {
+            match action {
+                PktAction::Send => {
+                    tx.send(RattanLogOp::DriftSample(p.get_flow_id(), time_drift, true))
+                        .ok();
+                }
+                PktAction::Recv => {
+                    tx.send(RattanLogOp::DriftSample(p.get_flow_id(), time_drift, false))
+                        .ok();
+                }
+                _ => {}
+            }
+        }
+    }
+
     match mode {
+        #[cfg(feature = "drift-stat")]
+        PacketLogMode::DriftStat => {
+            // Nothing to do here. `DriftStat` is a placeholder mode that does not record any per-packet logs.
+            // The drift statistics are recorded if and only if any packet log mode is enabled, and the `drift-stat` feature is enabled.
+        }
         PacketLogMode::CompactTCP => {
             // Make it simple as only TCP is supported.
             let mut entry = rattan_log::TCPLogEntry::new();
@@ -401,7 +423,8 @@ fn log_packet<T: Packet>(
                             Ok(ip_hdr) => {
                                 entry.tcp_entry.ip_id = ip_hdr.identification();
                                 if let Some(time_drift) = time_drift {
-                                    entry.tcp_entry.ip_frag = time_drift;
+                                    entry.tcp_entry.ip_frag =
+                                        time_drift.min(u16::MAX as u64) as u16;
                                 } else {
                                     entry.tcp_entry.ip_frag = unsafe {
                                         // SAFETY:

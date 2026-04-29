@@ -60,6 +60,9 @@ pub enum RattanLogOp {
     Flow(u32, u64, FlowDesc),
     /// Log the trace start point, in us
     TraceStart(u64),
+    /// Drift between logical timestamp and wall clock time upon egress
+    /// 3 parts: (flow_id, drift_us, is_egress)
+    DriftSample(u32, u64, bool),
     /// End of Log
     End,
 }
