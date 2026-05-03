@@ -72,11 +72,6 @@ pub trait RattanEnvConfig: SerdeBounds + Default {
         // args: Self::BuildArgs,
     ) -> Result<Self::BuildOutput, Self::BuildError>;
 
-    /// Returns the CPU for the working threads of the async runtime to run on.
-    fn get_running_cpu(&self) -> Vec<usize> {
-        vec![1]
-    }
-
     fn default_with_mode(mode: <Self::BuildOutput as RattanEnv<Self::Driver>>::Mode) -> Self;
     fn default_compatible() -> Self;
     fn default_isolated() -> Self;

@@ -306,7 +306,7 @@ impl ChannelArgs {
             links: links_config,
             resource: RattanResourceConfig {
                 memory: None,
-                cpu: Some(vec![2]),
+                cpu: None,
             },
             ..Default::default()
         })
