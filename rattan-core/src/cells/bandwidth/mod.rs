@@ -2,7 +2,8 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use netem_trace::{model::BwTraceConfig, Bandwidth, BwTrace, Delay};
+use netem_trace::model::BwTraceConfig;
+use netem_trace::{Bandwidth, BwTrace, Delay};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
