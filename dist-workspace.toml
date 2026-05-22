@@ -53,3 +53,4 @@ x86_64-unknown-linux-musl = "ubuntu-latest"
 
 [[dist.extra-artifacts]]
 artifacts = ["scripts/install.sh"]
+build = []
