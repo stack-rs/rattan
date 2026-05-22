@@ -4,6 +4,7 @@ use async_trait::async_trait;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 use super::{ControlInterface, Egress, Ingress};
 use crate::cells::{AtomicCellState, Cell, CellState, Packet};
@@ -34,6 +35,7 @@ pub struct ShadowCellEgress<P: Packet> {
     egress: mpsc::UnboundedReceiver<P>,
     state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
+    max_timestamp_seen: Instant,
     started: bool,
 }
 
@@ -45,7 +47,15 @@ where
     async fn dequeue(&mut self) -> Option<P> {
         // Wait for Start notify if not started yet
         crate::wait_until_started!(self, Start);
-        check_cell_state!(self.state, self.egress.recv().await?).into()
+        let mut packet = check_cell_state!(self.state, self.egress.recv().await?);
+        let old_timestamp = packet.get_timestamp();
+        self.max_timestamp_seen = self.max_timestamp_seen.max(packet.get_timestamp());
+        packet.delay_until(self.max_timestamp_seen);
+        tracing::debug!(
+            "Advanced packet timestamp by {:?}",
+            self.max_timestamp_seen.duration_since(old_timestamp)
+        );
+        packet.into()
     }
 
     fn change_state(&self, state: CellState) {
@@ -123,6 +133,7 @@ where
                 egress: tx,
                 state: AtomicCellState::new(CellState::Drop),
                 notify_rx: None,
+                max_timestamp_seen: Instant::now(),
                 started: false,
             },
             control_interface: Arc::new(ShadowCellControlInterface {}),
