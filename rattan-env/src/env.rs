@@ -648,7 +648,7 @@ pub fn get_container_env() -> crate::error::Result<ContainerEnv> {
     });
 
     // FIXME: add arp for each veth
-    veth_list.sort_by(|a, b| a.index.cmp(&b.index));
+    veth_list.sort_by_key(|a| a.index);
 
     // FIXME: fake a peer veth cell to get mac address
     let mut fake_peer = veth_list[0].clone();
