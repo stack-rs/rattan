@@ -288,3 +288,198 @@ where
         self.queue.retain(|packet| f(packet));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cells::StdPacket;
+
+    fn create_packet(size: usize) -> StdPacket {
+        let buf = vec![0u8; size];
+        StdPacket::with_timestamp(&buf, Instant::now())
+    }
+
+    #[test_log::test]
+    fn test_ared_queue_basic() {
+        let mut config = AdaptiveRedQueueConfig::default();
+        config.min_th = 1000;
+        config.max_th = 2000;
+        let mut queue: AdaptiveRedQueue<StdPacket> = AdaptiveRedQueue::new(config);
+
+        assert!(queue.is_empty());
+
+        let pkt1 = create_packet(500);
+        queue.enqueue(pkt1);
+        assert!(!queue.is_empty());
+        assert_eq!(queue.length(), 1);
+
+        let dequeued = queue.dequeue();
+        assert!(dequeued.is_some());
+        assert!(queue.is_empty());
+    }
+
+    #[test_log::test]
+    fn test_ared_queue_hard_limit_packet() {
+        let mut config = AdaptiveRedQueueConfig::default();
+        config.packet_limit = Some(2);
+        config.min_th = 100000; // avoid red drop
+        config.max_th = 200000;
+        let mut queue: AdaptiveRedQueue<StdPacket> = AdaptiveRedQueue::new(config);
+
+        queue.enqueue(create_packet(100));
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 2);
+
+        // This one should be dropped due to packet limit
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 2);
+    }
+
+    #[test_log::test]
+    fn test_ared_queue_hard_limit_byte() {
+        let mut config = AdaptiveRedQueueConfig::default();
+        config.byte_limit = Some(150);
+        config.min_th = 100000; // avoid red drop
+        config.max_th = 200000;
+        let mut queue: AdaptiveRedQueue<StdPacket> = AdaptiveRedQueue::new(config);
+
+        queue.enqueue(create_packet(100)); // l3 length 86.
+        assert_eq!(queue.length(), 1);
+
+        // This one should be dropped due to byte limit (86 + 86 > 150)
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 1);
+    }
+
+    #[test_log::test]
+    fn test_ared_queue_max_th_drop() {
+        let mut config = AdaptiveRedQueueConfig::default();
+        config.min_th = 100;
+        config.max_th = 200;
+        config.w_q = 1.0; // max weight, avg matches instantly
+        let mut queue: AdaptiveRedQueue<StdPacket> = AdaptiveRedQueue::new(config);
+
+        // First packet
+        queue.enqueue(create_packet(100)); 
+        
+        // Second packet
+        queue.enqueue(create_packet(300));
+        
+        // At this point, queue length is 2, now_bytes is high enough.
+        // The next enqueue should see average_queue_length > max_th and drop the packet.
+        let before_len = queue.length();
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), before_len, "Packet should be dropped by ARED max_th");
+    }
+
+    #[test_log::test]
+    fn test_ared_queue_min_th_no_drop() {
+        let mut config = AdaptiveRedQueueConfig::default();
+        config.min_th = 1000;
+        config.max_th = 2000;
+        config.w_q = 1.0; // Instantly reach exact byte size
+        let mut queue: AdaptiveRedQueue<StdPacket> = AdaptiveRedQueue::new(config);
+
+        // First packet: queue empty, avg remains 0. 
+        queue.enqueue(create_packet(514)); // L3 size = 514 - 14 (Ethernet header) = 500
+        assert_eq!(queue.length(), 1);
+
+        // Second packet: queue has 500 bytes. w_q=1.0 makes avg = 500.
+        // 500 < min_th(1000), so it should not drop.
+        queue.enqueue(create_packet(414)); // L3 size = 400
+        assert_eq!(queue.length(), 2);
+        
+        // Check internal state: count_packet is -1 when avg < min_th
+        assert_eq!(queue.count_packet, -1);
+    }
+
+    #[test_log::test]
+    fn test_ared_queue_probabilistic_drop() {
+        let mut config = AdaptiveRedQueueConfig::default();
+        config.min_th = 100;
+        config.max_th = 300;
+        config.max_p = 0.5;
+        config.w_q = 1.0; 
+        let mut queue: AdaptiveRedQueue<StdPacket> = AdaptiveRedQueue::new(config);
+
+        // First packet: queue empty, avg = 0. L3 size = 200.
+        queue.enqueue(create_packet(214)); 
+        assert_eq!(queue.length(), 1);
+
+        let mut drop_count = 0;
+        let total_packets = 1000;
+        
+        for _ in 0..total_packets {
+            // enqueue packets with L3 size 0 (total size 14).
+            // now_bytes stays at 200. w_q=1.0 makes avg exactly 200.
+            // 100 (min_th) <= avg(200) < 300 (max_th), entering probabilistic drop zone.
+            let before = queue.length();
+            queue.enqueue(create_packet(14)); 
+            if queue.length() == before {
+                drop_count += 1;
+            }
+        }
+        
+        // It should drop some packets, but not all of them
+        assert!(drop_count > 0, "Should have dropped some packets probabilistically");
+        assert!(drop_count < total_packets, "Should not drop all packets");
+    }
+
+    #[test_log::test]
+    fn test_ared_queue_max_p_increase() {
+        let mut config = AdaptiveRedQueueConfig::default();
+        config.min_th = 100;
+        config.max_th = 200;
+        config.max_p = 0.02;
+        config.w_q = 1.0; // Instantly update avg
+        let mut queue: AdaptiveRedQueue<StdPacket> = AdaptiveRedQueue::new(config);
+
+        // enqueue to make average_queue_length > target_max
+        // target_max = min_th + 0.6 * (max_th - min_th) = 100 + 60 = 160
+        // We make avg = 180 (L3 size 180, total 194)
+        queue.enqueue(create_packet(194));
+        assert_eq!(queue.average_queue_length, 0.0); // First enqueue updates avg based on empty queue rule (avg=0).
+
+        // Second enqueue updates avg to 180
+        queue.enqueue(create_packet(14));
+        assert_eq!(queue.average_queue_length, 180.0);
+
+        // Set latest_max_p_update to 600ms ago to trigger update_max_p
+        queue.latest_max_p_update = Instant::now() - Duration::from_millis(600);
+        let before_max_p = queue.config.max_p;
+
+        // Third enqueue triggers update_max_p
+        queue.enqueue(create_packet(14));
+
+        let after_max_p = queue.config.max_p;
+        assert!(after_max_p > before_max_p, "max_p should increase when avg > target_max");
+    }
+
+    #[test_log::test]
+    fn test_ared_queue_max_p_decrease() {
+        let mut config = AdaptiveRedQueueConfig::default();
+        config.min_th = 100;
+        config.max_th = 200;
+        config.max_p = 0.05; // Starting with a high max_p
+        config.w_q = 1.0; 
+        let mut queue: AdaptiveRedQueue<StdPacket> = AdaptiveRedQueue::new(config);
+
+        // enqueue to make average_queue_length < target_min
+        // target_min = min_th + 0.4 * (max_th - min_th) = 100 + 40 = 140
+        // We make avg = 120 (L3 size 120, total 134)
+        queue.enqueue(create_packet(134));
+        assert_eq!(queue.average_queue_length, 0.0);
+
+        queue.enqueue(create_packet(14));
+        assert_eq!(queue.average_queue_length, 120.0);
+
+        // Set latest_max_p_update to 600ms ago
+        queue.latest_max_p_update = Instant::now() - Duration::from_millis(600);
+        let before_max_p = queue.config.max_p;
+
+        queue.enqueue(create_packet(14));
+
+        let after_max_p = queue.config.max_p;
+        assert!(after_max_p < before_max_p, "max_p should decrease when avg < target_min");
+    }
+}
