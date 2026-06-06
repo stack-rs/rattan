@@ -16,7 +16,7 @@ mod drophead;
 mod droptail;
 mod infinite;
 mod red;
-// Duan: mod ared;
+mod ared;
 // Duan: mod pie;
 
 pub use codel::*;
@@ -24,7 +24,7 @@ pub use drophead::*;
 pub use droptail::*;
 pub use infinite::*;
 pub use red::*;
-// Duan: pub use ared::*;
+pub use ared::*;
 // Duan: pub use pie::*;
 
 #[cfg(feature = "serde")]
