@@ -17,7 +17,7 @@ mod droptail;
 mod infinite;
 mod red;
 mod ared;
-// Duan: mod pie;
+mod pie;
 
 pub use codel::*;
 pub use drophead::*;
@@ -25,7 +25,7 @@ pub use droptail::*;
 pub use infinite::*;
 pub use red::*;
 pub use ared::*;
-// Duan: pub use pie::*;
+pub use pie::*;
 
 #[cfg(feature = "serde")]
 fn serde_default<T: Default + PartialEq>(t: &T) -> bool {
