@@ -168,7 +168,6 @@ where
         } else {
             self.burst_allowance = (self.burst_allowance - elapsed_ms).max(0.0);
         }
-
         self.old_del = cur_del;
         self.start_update = now;
     }
@@ -202,14 +201,13 @@ where
         // Update departure rate if we are in a measurement cycle
         if let Some(start) = self.start_measurement {
             self.dq_count += pkt_size;
-            if self.dq_count > self.config.dq_threshold {
+            if self.dq_count >= self.config.dq_threshold {
                 let dq_int = now.saturating_duration_since(start).as_secs_f64();
                 if dq_int > f64::EPSILON {
                     let dq_rate = self.dq_count as f64 / dq_int;
                     if self.avg_drate.abs() < f64::EPSILON {
                         self.avg_drate = dq_rate;
                     } else {
-                        // Duan: epsilon 参数可能不能自己设
                         self.avg_drate = (1.0 - self.config.epsilon) * self.avg_drate + self.config.epsilon * dq_rate;
                     }
                     self.start_measurement = Some(now);
@@ -326,5 +324,155 @@ where
         F: FnMut(&P) -> bool,
     {
         self.queue.retain(|packet| f(packet));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cells::StdPacket;
+
+    fn create_packet(size: usize) -> StdPacket {
+        let buf = vec![0u8; size];
+        StdPacket::with_timestamp(&buf, Instant::now())
+    }
+
+    #[test_log::test]
+    fn test_pie_queue_basic() {
+        let config = PieQueueConfig::default();
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
+
+        assert!(queue.is_empty());
+
+        let pkt1 = create_packet(500);
+        queue.enqueue(pkt1);
+        assert!(!queue.is_empty());
+        assert_eq!(queue.length(), 1);
+
+        let dequeued = queue.dequeue();
+        assert!(dequeued.is_some());
+        assert!(queue.is_empty());
+    }
+
+    #[test_log::test]
+    fn test_pie_queue_hard_limit_packet() {
+        let mut config = PieQueueConfig::default();
+        config.packet_limit = Some(2);
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
+
+        queue.enqueue(create_packet(100));
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 2);
+
+        // This one should be dropped due to packet limit
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 2);
+    }
+
+    #[test_log::test]
+    fn test_pie_queue_hard_limit_byte() {
+        let mut config = PieQueueConfig::default();
+        config.byte_limit = Some(150);
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
+
+        queue.enqueue(create_packet(100)); // l3 length 86.
+        assert_eq!(queue.length(), 1);
+
+        // This one should be dropped due to byte limit (86 + 86 > 150)
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 1);
+    }
+
+    #[test_log::test]
+    fn test_pie_queue_burst_allowance() {
+        let config = PieQueueConfig::default();
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
+
+        // Force a high drop probability
+        queue.p = 1.0;
+        queue.burst_allowance = 100.0;
+        
+        // burst_allowance > 0 bypasses random drop
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 1);
+
+        // Fill queue > 2 to bypass work conserving logic later
+        queue.enqueue(create_packet(100));
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 3);
+
+        queue.burst_allowance = 0.0;
+        // With burst_allowance = 0.0, queue > 2, and p = 1.0, it should drop
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 3);
+    }
+
+    #[test_log::test]
+    fn test_pie_queue_work_conserving() {
+        let config = PieQueueConfig::default();
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config.clone());
+
+        queue.p = 1.0;
+        queue.burst_allowance = 0.0;
+
+        // bypass_drop handles queue.len() <= 2
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 1);
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 2);
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 3);
+
+        // For the 4th element, queue.len() is 3, so it does not bypass based on length
+        // Since p = 1.0, it drops
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 3);
+
+        // Now test bypass_drop condition: old_del < ref_del/2 and p < 0.2
+        queue.p = 0.15;
+        queue.old_del = config.ref_del / 3.0;
+        queue.enqueue(create_packet(100));
+        assert_eq!(queue.length(), 4);
+    }
+
+    #[test_log::test]
+    fn test_pie_queue_avg_drate_update() {
+        let mut config = PieQueueConfig::default();
+        config.dq_threshold = 50; // Small threshold
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
+
+        queue.enqueue(create_packet(114)); // l3 length 100
+        queue.enqueue(create_packet(114)); // l3 length 100
+        assert_eq!(queue.now_bytes, 200);
+
+        // First dequeue triggers start of measurement cycle
+        assert!(queue.start_measurement.is_none());
+        queue.dequeue(); // dequeues 100 bytes
+        assert!(queue.start_measurement.is_some());
+        assert_eq!(queue.now_bytes, 100);
+
+        std::thread::sleep(Duration::from_millis(10));
+
+        // Second dequeue triggers calculation of avg_drate
+        queue.dequeue(); // dequeues 100 bytes
+        assert!(queue.avg_drate > 0.0, "avg_drate should be calculated");
+        assert!(queue.start_measurement.is_none(), "Should exit measurement cycle since queue is empty");
+    }
+
+    #[test_log::test]
+    fn test_pie_queue_update_drop_probability() {
+        let config = PieQueueConfig::default();
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config.clone());
+
+        // Fake high delay
+        queue.avg_drate = 1000.0;
+        queue.now_bytes = 100000; // delay = 100.0s > ref_del
+        
+        std::thread::sleep(config.t_update); // Wait to exceed t_update
+        
+        // This enqueue will trigger update_drop_probability()
+        queue.enqueue(create_packet(14)); 
+        
+        assert!(queue.p > 0.0, "Probability should increase when delay is high");
     }
 }
