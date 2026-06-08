@@ -341,7 +341,6 @@ mod tests {
     fn test_pie_queue_basic() {
         let config = PieQueueConfig::default();
         let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
-
         assert!(queue.is_empty());
 
         let pkt1 = create_packet(500);
@@ -411,7 +410,6 @@ mod tests {
     fn test_pie_queue_work_conserving() {
         let config = PieQueueConfig::default();
         let mut queue: PieQueue<StdPacket> = PieQueue::new(config.clone());
-
         queue.p = 1.0;
         queue.burst_allowance = 0.0;
 
