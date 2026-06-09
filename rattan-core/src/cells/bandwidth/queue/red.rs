@@ -139,21 +139,18 @@ where
     P: Packet,
 {
     fn update_avg(&mut self) {
-        match self.is_empty() {
-            false => {
-                self.average_queue_length = (1.0 - self.config.w_q) * self.average_queue_length
-                    + self.config.w_q * (self.now_bytes as f64)
-            }
-            true => {
-                if let Some(idle_start) = self.idle_start {
-                    let now = Instant::now();
-                    let idle_duration = now.saturating_duration_since(idle_start);
-                    let m = idle_duration.as_micros() as f64
-                        / self.config.pkt_tx_time.as_micros() as f64;
-                    self.average_queue_length *= f64::powf(1.0 - self.config.w_q, m);
-                    self.idle_start = Some(now);
-                }
-            }
+        if !self.is_empty() {
+            self.average_queue_length = (1.0 - self.config.w_q) * self.average_queue_length
+                + self.config.w_q * (self.now_bytes as f64);
+            return;
+        }
+
+        if let Some(idle_start) = self.idle_start {
+            let now = Instant::now();
+            let idle_duration = now.saturating_duration_since(idle_start);
+            let m = idle_duration.as_micros() as f64 / self.config.pkt_tx_time.as_micros() as f64;
+            self.average_queue_length *= f64::powf(1.0 - self.config.w_q, m);
+            self.idle_start = Some(now);
         }
     }
 
