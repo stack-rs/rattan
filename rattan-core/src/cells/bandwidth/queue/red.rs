@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use rand::random_range;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use tokio::time::{Duration, Instant};
+use tokio::time::Instant;
 use tracing::{debug, warn};
 
 #[cfg(feature = "serde")]
@@ -28,11 +28,6 @@ pub struct RedQueueConfig {
         feature = "serde",
         serde(default, skip_serializing_if = "serde_default")
     )]
-    pub pkt_tx_time: Duration, // typical packet tx time (us)
-    #[cfg_attr(
-        feature = "serde",
-        serde(default, skip_serializing_if = "serde_default")
-    )]
     pub bw_type: BwType,
 }
 
@@ -45,14 +40,12 @@ impl Default for RedQueueConfig {
             min_th: 7500,  // 5 * 1500 bytes
             max_th: 22500, // 15 * 1500 bytes
             max_p: 0.02,
-            pkt_tx_time: Duration::from_micros(120), // 1500 bytes * 8 / 100Mbps = 120 us
             bw_type: BwType::default(),
         }
     }
 }
 
 impl RedQueueConfig {
-    #[allow(clippy::too_many_arguments)]
     pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
         packet_limit: A,
         byte_limit: B,
@@ -60,7 +53,6 @@ impl RedQueueConfig {
         min_th: usize,
         max_th: usize,
         max_p: f64,
-        pkt_tx_time: Duration,
         bw_type: BwType,
     ) -> Self {
         // Warning: The caller must ensure that the parameters are valid.
@@ -71,9 +63,6 @@ impl RedQueueConfig {
                 "RedQueueConfig: min_th ({}) >= max_th ({}), which may cause invalid behavior.",
                 min_th, max_th
             );
-        }
-        if pkt_tx_time.as_micros() == 0 {
-            warn!("RedQueueConfig: pkt_tx_time is 0, which will cause divide-by-zero in m calculation.");
         }
         if !(0.0..=1.0).contains(&w_q) {
             warn!("RedQueueConfig: w_q ({}) is out of expected range [0.0, 1.0]. This is an EWMA weight.", w_q);
@@ -89,7 +78,6 @@ impl RedQueueConfig {
             min_th,
             max_th,
             max_p,
-            pkt_tx_time,
             bw_type,
         }
     }
@@ -148,7 +136,8 @@ where
         if let Some(idle_start) = self.idle_start {
             let now = Instant::now();
             let idle_duration = now.saturating_duration_since(idle_start);
-            let m = idle_duration.as_micros() as f64 / self.config.pkt_tx_time.as_micros() as f64;
+            let pkt_tx_time = 120.0; // 1500 bytes * 8 / 100Mbps = 120 us
+            let m = idle_duration.as_micros() as f64 / pkt_tx_time;
             self.average_queue_length *= f64::powf(1.0 - self.config.w_q, m);
             self.idle_start = Some(now);
         }
@@ -221,10 +210,7 @@ where
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
                 "Drop packet(l3_len: {}, extra_len: {}) due to hard limit", packet.l3_length(), self.config.bw_type.extra_length()
             );
-            return;
-        }
-
-        if self.should_drop() {
+        } else if self.should_drop() {
             #[cfg(test)]
             tracing::trace!(
                 avg = self.average_queue_length,
@@ -232,13 +218,11 @@ where
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
                 "Drop packet(l3_len: {}, extra_len: {}) due to RED algorithm", packet.l3_length(), self.get_extra_length()
             );
-            #[allow(clippy::needless_return)]
-            return;
+        } else {
+            self.now_bytes += packet_size;
+            self.queue.push_back(packet);
+            self.idle_start = None;
         }
-
-        self.now_bytes += packet_size;
-        self.queue.push_back(packet);
-        self.idle_start = None;
     }
 
     fn dequeue(&mut self) -> Option<P> {

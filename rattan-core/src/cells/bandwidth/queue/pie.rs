@@ -22,13 +22,8 @@ use crate::cells::Packet;
 pub struct PieQueueConfig {
     pub packet_limit: Option<usize>,
     pub byte_limit: Option<usize>,
-    pub ref_del: f64,        // target delay (sec)
-    pub t_update: Duration,  // update interval
-    pub tilde_alpha: f64,    // base value of alpha (Hz, 1/sec)
-    pub tilde_beta: f64,     // base value of beta (Hz, 1/sec)
-    pub dq_threshold: usize, // threshold of queue length (bytes)
-    pub epsilon: f64,        // EWMA weight
-    pub max_burst: f64,      // MAX_BURST (ms)
+    pub ref_del: f64,   // target delay (sec)
+    pub max_burst: f64, // MAX_BURST (ms)
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "serde_default")
@@ -42,11 +37,6 @@ impl Default for PieQueueConfig {
             packet_limit: None,
             byte_limit: None,
             ref_del: 0.015, // RFC 8033
-            t_update: Duration::from_millis(15),
-            tilde_alpha: 0.125,
-            tilde_beta: 1.25,
-            dq_threshold: 16384, // 16 KB
-            epsilon: 0.125,
             max_burst: 150.0,
             bw_type: BwType::default(),
         }
@@ -54,16 +44,10 @@ impl Default for PieQueueConfig {
 }
 
 impl PieQueueConfig {
-    #[allow(clippy::too_many_arguments)]
     pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
         packet_limit: A,
         byte_limit: B,
         ref_del: f64,
-        t_update: Duration,
-        tilde_alpha: f64,
-        tilde_beta: f64,
-        dq_threshold: usize,
-        epsilon: f64,
         max_burst: f64,
         bw_type: BwType,
     ) -> Self {
@@ -71,11 +55,6 @@ impl PieQueueConfig {
             packet_limit: packet_limit.into(),
             byte_limit: byte_limit.into(),
             ref_del,
-            t_update,
-            tilde_alpha,
-            tilde_beta,
-            dq_threshold,
-            epsilon,
             max_burst,
             bw_type,
         }
@@ -147,8 +126,10 @@ where
             self.now_bytes as f64 / self.avg_drate
         };
 
-        let mut p_increment = self.config.tilde_alpha * (cur_del - self.config.ref_del)
-            + self.config.tilde_beta * (cur_del - self.old_del);
+        let tilde_alpha = 0.125; // base value of alpha (Hz, 1/sec)
+        let tilde_beta = 1.25; // base value of beta (Hz, 1/sec)
+        let mut p_increment =
+            tilde_alpha * (cur_del - self.config.ref_del) + tilde_beta * (cur_del - self.old_del);
         if self.p < 0.000001 {
             p_increment /= 2048.0;
         } else if self.p < 0.00001 {
@@ -201,9 +182,10 @@ where
 
     fn update_avg_drate(&mut self, pkt_size: usize) {
         let now = Instant::now();
+        let dq_threshold = 16384; // 16 KB
 
         // Enter a measurement cycle
-        if self.now_bytes > self.config.dq_threshold && self.start_measurement.is_none() {
+        if self.now_bytes > dq_threshold && self.start_measurement.is_none() {
             self.start_measurement = Some(now);
             self.dq_count = 0;
         }
@@ -211,15 +193,15 @@ where
         // Update departure rate if we are in a measurement cycle
         if let Some(start) = self.start_measurement {
             self.dq_count += pkt_size;
-            if self.dq_count >= self.config.dq_threshold {
+            if self.dq_count >= dq_threshold {
                 let dq_int = now.saturating_duration_since(start).as_secs_f64();
                 if dq_int > f64::EPSILON {
                     let dq_rate = self.dq_count as f64 / dq_int;
                     if self.avg_drate.abs() < f64::EPSILON {
                         self.avg_drate = dq_rate;
                     } else {
-                        self.avg_drate = (1.0 - self.config.epsilon) * self.avg_drate
-                            + self.config.epsilon * dq_rate;
+                        let epsilon = 0.125;
+                        self.avg_drate = (1.0 - epsilon) * self.avg_drate + epsilon * dq_rate;
                     }
                     self.start_measurement = Some(now);
                     self.dq_count = 0;
@@ -227,7 +209,7 @@ where
             }
 
             // Exit measurement cycle if queue length drops below threshold
-            if self.now_bytes < self.config.dq_threshold {
+            if self.now_bytes < dq_threshold {
                 self.start_measurement = None;
                 self.dq_count = 0;
             }
@@ -253,7 +235,8 @@ where
     fn enqueue(&mut self, packet: P) {
         // Simulate time-driven with event-driven approach
         let interval_update = Instant::now().saturating_duration_since(self.start_update);
-        if interval_update >= self.config.t_update {
+        let t_update = Duration::from_millis(15);
+        if interval_update >= t_update {
             self.update_drop_probability();
         }
 
@@ -275,11 +258,7 @@ where
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
                 "Drop packet(l3_len: {}, extra_len: {}) due to hard limit", packet.l3_length(), self.get_extra_length()
             );
-            #[allow(clippy::needless_return)]
-            return;
-        }
-
-        if self.should_drop() {
+        } else if self.should_drop() {
             #[cfg(test)]
             tracing::trace!(
                 p = self.p,
@@ -287,18 +266,17 @@ where
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
                 "Drop packet(l3_len: {}, extra_len: {}) due to PIE algorithm", packet.l3_length(), self.get_extra_length()
             );
-            #[allow(clippy::needless_return)]
-            return;
+        } else {
+            self.now_bytes += packet_size;
+            self.queue.push_back(packet);
         }
-
-        self.now_bytes += packet_size;
-        self.queue.push_back(packet);
     }
 
     fn dequeue(&mut self) -> Option<P> {
         // Simulate time-driven with event-driven approach
         let interval_update = Instant::now().saturating_duration_since(self.start_update);
-        if interval_update >= self.config.t_update {
+        let t_update = Duration::from_millis(15);
+        if interval_update >= t_update {
             self.update_drop_probability();
         }
 
@@ -451,30 +429,28 @@ mod tests {
 
     #[test_log::test]
     fn test_pie_queue_avg_drate_update() {
-        let config = PieQueueConfig {
-            dq_threshold: 50, // Small threshold
-            ..Default::default()
-        };
+        let config = PieQueueConfig::default();
         let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
 
-        queue.enqueue(create_packet(114)); // l3 length 100
-        queue.enqueue(create_packet(114)); // l3 length 100
-        assert_eq!(queue.now_bytes, 200);
+        queue.enqueue(create_packet(10014)); // l3 length 10000
+        queue.enqueue(create_packet(10014)); // l3 length 10000
+        queue.enqueue(create_packet(10014)); // l3 length 10000
+        assert_eq!(queue.now_bytes, 30000);
 
         // First dequeue triggers start of measurement cycle
         assert!(queue.start_measurement.is_none());
-        queue.dequeue(); // dequeues 100 bytes
+        queue.dequeue(); // dequeues 10000 bytes
         assert!(queue.start_measurement.is_some());
-        assert_eq!(queue.now_bytes, 100);
+        assert_eq!(queue.now_bytes, 20000);
 
         std::thread::sleep(Duration::from_millis(10));
 
         // Second dequeue triggers calculation of avg_drate
-        queue.dequeue(); // dequeues 100 bytes
+        queue.dequeue(); // dequeues 10000 bytes
         assert!(queue.avg_drate > 0.0, "avg_drate should be calculated");
         assert!(
             queue.start_measurement.is_none(),
-            "Should exit measurement cycle since queue is empty"
+            "Should exit measurement cycle since now_bytes drops below threshold"
         );
     }
 
@@ -487,7 +463,7 @@ mod tests {
         queue.avg_drate = 1000.0;
         queue.now_bytes = 100000; // delay = 100.0s > ref_del
 
-        std::thread::sleep(config.t_update); // Wait to exceed t_update
+        std::thread::sleep(Duration::from_millis(15)); // Wait to exceed t_update
 
         // This enqueue will trigger update_drop_probability()
         queue.enqueue(create_packet(14));
