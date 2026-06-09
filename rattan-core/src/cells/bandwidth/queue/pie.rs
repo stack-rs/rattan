@@ -246,40 +246,34 @@ where
             self.update_drop_probability();
         } 
         
-        // hard limit check
-        if self
-            .config
-            .packet_limit
-            .is_none_or(|limit| self.queue.len() < limit)
-            && self.config.byte_limit.is_none_or(|limit| {
-                self.now_bytes + packet.l3_length() + self.config.bw_type.extra_length() <= limit
-            })
-        {
-            match self.should_drop() {
-                true => {
-                    #[cfg(test)]
-                    tracing::trace!(
-                        p = self.p,
-                        old_delay = self.old_del,
-                        header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                        "Drop packet(l3_len: {}, extra_len: {}) due to PIE algorithm", packet.l3_length(), self.get_extra_length()
-                    );
-                    return;
-                },
-                false => {
-                    self.now_bytes += packet.l3_length() + self.get_extra_length();
-                    self.queue.push_back(packet);
-                }
-            }
-        } else {
+        let packet_size = packet.l3_length() + self.get_extra_length();
+        let pass_hard_limit = self.config.packet_limit.is_none_or(|limit| self.queue.len() < limit)
+            && self.config.byte_limit.is_none_or(|limit| self.now_bytes + packet_size <= limit);
+
+        if !pass_hard_limit {
             #[cfg(test)]
             tracing::trace!(
                 queue_len = self.queue.len(),
                 now_bytes = self.now_bytes,
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                "Drop packet(l3_len: {}, extra_len: {}) due to hard limit", packet.l3_length(), self.config.bw_type.extra_length()
+                "Drop packet(l3_len: {}, extra_len: {}) due to hard limit", packet.l3_length(), self.get_extra_length()
             );
+            return;
         }
+
+        if self.should_drop() {
+            #[cfg(test)]
+            tracing::trace!(
+                p = self.p,
+                old_delay = self.old_del,
+                header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
+                "Drop packet(l3_len: {}, extra_len: {}) due to PIE algorithm", packet.l3_length(), self.get_extra_length()
+            );
+            return;
+        }
+
+        self.now_bytes += packet_size;
+        self.queue.push_back(packet);
     }
 
     fn dequeue(&mut self) -> Option<P> {
@@ -289,14 +283,13 @@ where
             self.update_drop_probability();
         }
 
-        match self.queue.pop_front() {
-            Some(packet) => {
-                let pkt_size = packet.l3_length() + self.get_extra_length();
-                self.now_bytes -= pkt_size;
-                self.update_avg_drate(pkt_size);
-                Some(packet)
-            },
-            None => None,
+        if let Some(packet) = self.queue.pop_front() {
+            let pkt_size = packet.l3_length() + self.get_extra_length();
+            self.now_bytes -= pkt_size;
+            self.update_avg_drate(pkt_size);
+            Some(packet)
+        } else {
+            None
         }
     }
 

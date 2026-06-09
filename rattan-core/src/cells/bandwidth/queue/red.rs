@@ -193,34 +193,11 @@ where
     fn enqueue(&mut self, packet: P) {
         self.update_avg();
         
-        if self
-            .config
-            .packet_limit
-            .is_none_or(|limit| self.queue.len() < limit)
-            && self.config.byte_limit.is_none_or(|limit| {
-                self.now_bytes + packet.l3_length() + self.config.bw_type.extra_length() <= limit
-            })
-        {
-            let packet_size = packet.l3_length() + self.get_extra_length();
-            
-            match self.should_drop() {
-                true => {
-                    #[cfg(test)]
-                    tracing::trace!(
-                        avg = self.average_queue_length,
-                        count = self.count_packet,
-                        header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                        "Drop packet(l3_len: {}, extra_len: {}) due to RED algorithm", packet.l3_length(), self.get_extra_length()
-                    );
-                    return;
-                },
-                false => {
-                    self.now_bytes += packet_size;
-                    self.queue.push_back(packet);
-                    self.idle_start = None;
-                }
-            }
-        } else {
+        let packet_size = packet.l3_length() + self.get_extra_length();
+        let pass_hard_limit = self.config.packet_limit.is_none_or(|limit| self.queue.len() < limit)
+            && self.config.byte_limit.is_none_or(|limit| self.now_bytes + packet_size <= limit);
+
+        if !pass_hard_limit {
             self.count_packet = 0;
             #[cfg(test)]
             tracing::trace!(
@@ -229,19 +206,34 @@ where
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
                 "Drop packet(l3_len: {}, extra_len: {}) due to hard limit", packet.l3_length(), self.config.bw_type.extra_length()
             );
+            return;
         }
+
+        if self.should_drop() {
+            #[cfg(test)]
+            tracing::trace!(
+                avg = self.average_queue_length,
+                count = self.count_packet,
+                header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
+                "Drop packet(l3_len: {}, extra_len: {}) due to RED algorithm", packet.l3_length(), self.get_extra_length()
+            );
+            return;
+        }
+
+        self.now_bytes += packet_size;
+        self.queue.push_back(packet);
+        self.idle_start = None;
     }
 
     fn dequeue(&mut self) -> Option<P> {
-        match self.queue.pop_front() {
-            Some(packet ) => {
-                self.now_bytes -= packet.l3_length() + self.get_extra_length();
-                if self.is_empty() {
-                    self.idle_start = Some(Instant::now());
-                }
-                Some(packet)
-            },
-            None => None
+        if let Some(packet) = self.queue.pop_front() {
+            self.now_bytes -= packet.l3_length() + self.get_extra_length();
+            if self.is_empty() {
+                self.idle_start = Some(Instant::now());
+            }
+            Some(packet)
+        } else {
+            None
         }
     }
 

@@ -1,6 +1,5 @@
 // Adaptive RED Queue Implementation Reference:
-// https://www.icir.org/floyd/papers/adaptiveRed.pdf#:~:text=We%20find%20that%20this%20re-vised%20version%20of%20Adaptive,length%20in%20a%20wide%20variety%20of%20traffic%20scenarios.
-
+// https://www.icir.org/floyd/papers/adaptiveRed.pdf
 use std::collections::VecDeque;
 
 #[cfg(feature = "serde")]
@@ -129,20 +128,18 @@ impl<P> AdaptiveRedQueue<P>
 where
    P: Packet,
 {
-    fn update_avg (&mut self) {
-        match self.is_empty() {
-            false => {
-                self.average_queue_length = (1.0 - self.config.w_q) * self.average_queue_length + self.config.w_q * (self.now_bytes as f64)
-            },
-            true => {
-                if let Some(idle_start) = self.idle_start {
-                    let now = Instant::now();
-                    let idle_duration = now.saturating_duration_since(idle_start);
-                    let m = idle_duration.as_micros() as f64 / self.config.pkt_tx_time.as_micros() as f64;
-                    self.average_queue_length *= f64::powf(1.0 - self.config.w_q, m);
-                    self.idle_start = Some(now);
-                }
-            }
+    fn update_avg(&mut self) {
+        if !self.is_empty() {
+            self.average_queue_length = (1.0 - self.config.w_q) * self.average_queue_length + self.config.w_q * (self.now_bytes as f64);
+            return;
+        }
+
+        if let Some(idle_start) = self.idle_start {
+            let now = Instant::now();
+            let idle_duration = now.saturating_duration_since(idle_start);
+            let m = idle_duration.as_micros() as f64 / self.config.pkt_tx_time.as_micros() as f64;
+            self.average_queue_length *= f64::powf(1.0 - self.config.w_q, m);
+            self.idle_start = Some(now);
         }
     }
 
@@ -210,55 +207,47 @@ where
             self.latest_max_p_update = now;
         }
 
-        if self
-            .config
-            .packet_limit
-            .is_none_or(|limit| self.queue.len() < limit)
-            && self.config.byte_limit.is_none_or(|limit| {
-                self.now_bytes + packet.l3_length() + self.config.bw_type.extra_length() <= limit
-            })
-        {
-            let packet_size = packet.l3_length() + self.get_extra_length();
-            
-            match self.should_drop() {
-                true => {
-                    #[cfg(test)]
-                    tracing::trace!(
-                        avg = self.average_queue_length,
-                        count = self.count_packet,
-                        header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                        "Drop packet(l3_len: {}, extra_len: {}) due to ARED algorithm", packet.l3_length(), self.get_extra_length()
-                    );
-                    return;
-                },
-                false => {
-                    self.now_bytes += packet_size;
-                    self.queue.push_back(packet);
-                    self.idle_start = None;
-                }
-            }
-        } else {
+        let packet_size = packet.l3_length() + self.get_extra_length();
+        let pass_hard_limit = self.config.packet_limit.is_none_or(|limit| self.queue.len() < limit)
+            && self.config.byte_limit.is_none_or(|limit| self.now_bytes + packet_size <= limit);
+
+        if !pass_hard_limit {
             self.count_packet = 0;
             #[cfg(test)]
             tracing::trace!(
                 queue_len = self.queue.len(),
                 now_bytes = self.now_bytes,
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                "Drop packet(l3_len: {}, extra_len: {}) due to hard limit", packet.l3_length(), self.config.bw_type.extra_length()
+                "Drop packet(l3_len: {}, extra_len: {}) due to hard limit", packet.l3_length(), self.get_extra_length()
             );
+            return;
         }
+
+        if self.should_drop() {
+            #[cfg(test)]
+            tracing::trace!(
+                avg = self.average_queue_length,
+                count = self.count_packet,
+                header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
+                "Drop packet(l3_len: {}, extra_len: {}) due to ARED algorithm", packet.l3_length(), self.get_extra_length()
+            );
+            return;
+        }
+
+        self.now_bytes += packet_size;
+        self.queue.push_back(packet);
+        self.idle_start = None;
     }
 
     fn dequeue(&mut self) -> Option<P> {
-        match self.queue.pop_front() {
-            Some(packet ) => {
-                self.now_bytes -= packet.l3_length() + self.get_extra_length();
-                if self.is_empty() {
-                    self.idle_start = Some(Instant::now());
-                }
-                Some(packet)
-            },
-            None => None
+        if let Some(packet) = self.queue.pop_front() {
+            self.now_bytes -= packet.l3_length() + self.get_extra_length();
+            if self.is_empty() {
+                self.idle_start = Some(Instant::now());
+            }
+            Some(packet)
+        } else {
+            None
         }
     }
 
