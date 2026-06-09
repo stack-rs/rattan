@@ -1,15 +1,15 @@
 // PIE Queue Implementation Reference:
 // https://www.rfc-editor.org/info/rfc8033
 // https://ieeexplore.ieee.org/document/6602305
-// Reproduced according to RFC 8033 Appendix B, 
+// Reproduced according to RFC 8033 Appendix B,
 // rather than original paper or RFC Appendix A.
 
 use std::collections::VecDeque;
 
+use rand::random_range;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use tokio::time::{Instant, Duration};
-use rand::random_range;
+use tokio::time::{Duration, Instant};
 use tracing::debug;
 
 #[cfg(feature = "serde")]
@@ -22,14 +22,17 @@ use crate::cells::Packet;
 pub struct PieQueueConfig {
     pub packet_limit: Option<usize>,
     pub byte_limit: Option<usize>,
-    pub ref_del: f64, // target delay (sec)
-    pub t_update: Duration, // update interval
-    pub tilde_alpha: f64, // base value of alpha (Hz, 1/sec)
-    pub tilde_beta: f64, // base value of beta (Hz, 1/sec)
+    pub ref_del: f64,        // target delay (sec)
+    pub t_update: Duration,  // update interval
+    pub tilde_alpha: f64,    // base value of alpha (Hz, 1/sec)
+    pub tilde_beta: f64,     // base value of beta (Hz, 1/sec)
     pub dq_threshold: usize, // threshold of queue length (bytes)
-    pub epsilon: f64, // EWMA weight
-    pub max_burst: f64, // MAX_BURST (ms)
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "serde_default"))]
+    pub epsilon: f64,        // EWMA weight
+    pub max_burst: f64,      // MAX_BURST (ms)
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "serde_default")
+    )]
     pub bw_type: BwType,
 }
 
@@ -51,6 +54,7 @@ impl Default for PieQueueConfig {
 }
 
 impl PieQueueConfig {
+    #[allow(clippy::too_many_arguments)]
     pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
         packet_limit: A,
         byte_limit: B,
@@ -61,7 +65,7 @@ impl PieQueueConfig {
         dq_threshold: usize,
         epsilon: f64,
         max_burst: f64,
-        bw_type: BwType
+        bw_type: BwType,
     ) -> Self {
         Self {
             packet_limit: packet_limit.into(),
@@ -73,7 +77,7 @@ impl PieQueueConfig {
             dq_threshold,
             epsilon,
             max_burst,
-            bw_type
+            bw_type,
         }
     }
 }
@@ -89,13 +93,13 @@ pub struct PieQueue<P> {
     queue: VecDeque<P>,
     config: PieQueueConfig,
     now_bytes: usize,
-    old_del: f64, // previous delay (sec)
-    p: f64, // current drop probability
-    dq_count: usize, // departure count (bytes)
-    start_update: Instant, // start time of t_update
+    old_del: f64,                       // previous delay (sec)
+    p: f64,                             // current drop probability
+    dq_count: usize,                    // departure count (bytes)
+    start_update: Instant,              // start time of t_update
     start_measurement: Option<Instant>, // Some(Instant) when in a measurement cycle, None when quit
-    avg_drate: f64, 
-    burst_allowance: f64
+    avg_drate: f64,
+    burst_allowance: f64,
 }
 
 impl<P> PieQueue<P> {
@@ -112,14 +116,14 @@ impl<P> PieQueue<P> {
             start_update: Instant::now(),
             start_measurement: None,
             avg_drate: 0.0,
-            burst_allowance: max_burst
+            burst_allowance: max_burst,
         }
     }
 }
 
 impl<P> Default for PieQueue<P>
-where 
-    P: Packet
+where
+    P: Packet,
 {
     fn default() -> Self {
         Self::new(PieQueueConfig::default())
@@ -132,8 +136,11 @@ where
 {
     fn update_drop_probability(&mut self) {
         let now = Instant::now();
-        let elapsed_ms = now.saturating_duration_since(self.start_update).as_secs_f64() * 1000.0;
-        
+        let elapsed_ms = now
+            .saturating_duration_since(self.start_update)
+            .as_secs_f64()
+            * 1000.0;
+
         let cur_del = if self.avg_drate.abs() < f64::EPSILON {
             0.0
         } else {
@@ -156,14 +163,17 @@ where
             p_increment /= 2.0;
         }
         self.p += p_increment;
-        // RFC 8033 Section 4.2: Exponential decay when system is not congested        
+        // RFC 8033 Section 4.2: Exponential decay when system is not congested
         if cur_del < self.config.ref_del / 2.0 && self.old_del < self.config.ref_del / 2.0 {
             self.p *= 0.98;
-        } 
+        }
         self.p = self.p.clamp(0.0, 1.0);
 
         // RFC 8033 Section 4.4: Burst Tolerance
-        if self.p < f64::EPSILON && cur_del < self.config.ref_del / 2.0 && self.old_del < self.config.ref_del / 2.0 {
+        if self.p < f64::EPSILON
+            && cur_del < self.config.ref_del / 2.0
+            && self.old_del < self.config.ref_del / 2.0
+        {
             self.burst_allowance = self.config.max_burst;
         } else {
             self.burst_allowance = (self.burst_allowance - elapsed_ms).max(0.0);
@@ -179,13 +189,13 @@ where
         }
 
         // RFC 8033 Section 4.1: Bypass random drop logic to be work conserving
-        let bypass_drop = (self.old_del < self.config.ref_del / 2.0 && self.p < 0.2)
-            || self.queue.len() <= 2;
+        let bypass_drop =
+            (self.old_del < self.config.ref_del / 2.0 && self.p < 0.2) || self.queue.len() <= 2;
         if bypass_drop {
             return false;
         }
 
-        let rand_val = random_range(0.0 .. 1.0);
+        let rand_val = random_range(0.0..1.0);
         rand_val < self.p
     }
 
@@ -208,7 +218,8 @@ where
                     if self.avg_drate.abs() < f64::EPSILON {
                         self.avg_drate = dq_rate;
                     } else {
-                        self.avg_drate = (1.0 - self.config.epsilon) * self.avg_drate + self.config.epsilon * dq_rate;
+                        self.avg_drate = (1.0 - self.config.epsilon) * self.avg_drate
+                            + self.config.epsilon * dq_rate;
                     }
                     self.start_measurement = Some(now);
                     self.dq_count = 0;
@@ -244,11 +255,17 @@ where
         let interval_update = Instant::now().saturating_duration_since(self.start_update);
         if interval_update >= self.config.t_update {
             self.update_drop_probability();
-        } 
-        
+        }
+
         let packet_size = packet.l3_length() + self.get_extra_length();
-        let pass_hard_limit = self.config.packet_limit.is_none_or(|limit| self.queue.len() < limit)
-            && self.config.byte_limit.is_none_or(|limit| self.now_bytes + packet_size <= limit);
+        let pass_hard_limit = self
+            .config
+            .packet_limit
+            .is_none_or(|limit| self.queue.len() < limit)
+            && self
+                .config
+                .byte_limit
+                .is_none_or(|limit| self.now_bytes + packet_size <= limit);
 
         if !pass_hard_limit {
             #[cfg(test)]
@@ -258,6 +275,7 @@ where
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
                 "Drop packet(l3_len: {}, extra_len: {}) due to hard limit", packet.l3_length(), self.get_extra_length()
             );
+            #[allow(clippy::needless_return)]
             return;
         }
 
@@ -269,6 +287,7 @@ where
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
                 "Drop packet(l3_len: {}, extra_len: {}) due to PIE algorithm", packet.l3_length(), self.get_extra_length()
             );
+            #[allow(clippy::needless_return)]
             return;
         }
 
@@ -313,7 +332,7 @@ where
     }
 
     fn retain<F>(&mut self, mut f: F)
-    where 
+    where
         F: FnMut(&P) -> bool,
     {
         self.queue.retain(|packet| f(packet));
@@ -348,8 +367,10 @@ mod tests {
 
     #[test_log::test]
     fn test_pie_queue_hard_limit_packet() {
-        let mut config = PieQueueConfig::default();
-        config.packet_limit = Some(2);
+        let config = PieQueueConfig {
+            packet_limit: Some(2),
+            ..Default::default()
+        };
         let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
 
         queue.enqueue(create_packet(100));
@@ -363,8 +384,10 @@ mod tests {
 
     #[test_log::test]
     fn test_pie_queue_hard_limit_byte() {
-        let mut config = PieQueueConfig::default();
-        config.byte_limit = Some(150);
+        let config = PieQueueConfig {
+            byte_limit: Some(150),
+            ..Default::default()
+        };
         let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
 
         queue.enqueue(create_packet(100)); // l3 length 86.
@@ -383,7 +406,7 @@ mod tests {
         // Force a high drop probability
         queue.p = 1.0;
         queue.burst_allowance = 100.0;
-        
+
         // burst_allowance > 0 bypasses random drop
         queue.enqueue(create_packet(100));
         assert_eq!(queue.length(), 1);
@@ -428,8 +451,10 @@ mod tests {
 
     #[test_log::test]
     fn test_pie_queue_avg_drate_update() {
-        let mut config = PieQueueConfig::default();
-        config.dq_threshold = 50; // Small threshold
+        let config = PieQueueConfig {
+            dq_threshold: 50, // Small threshold
+            ..Default::default()
+        };
         let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
 
         queue.enqueue(create_packet(114)); // l3 length 100
@@ -447,7 +472,10 @@ mod tests {
         // Second dequeue triggers calculation of avg_drate
         queue.dequeue(); // dequeues 100 bytes
         assert!(queue.avg_drate > 0.0, "avg_drate should be calculated");
-        assert!(queue.start_measurement.is_none(), "Should exit measurement cycle since queue is empty");
+        assert!(
+            queue.start_measurement.is_none(),
+            "Should exit measurement cycle since queue is empty"
+        );
     }
 
     #[test_log::test]
@@ -458,12 +486,15 @@ mod tests {
         // Fake high delay
         queue.avg_drate = 1000.0;
         queue.now_bytes = 100000; // delay = 100.0s > ref_del
-        
+
         std::thread::sleep(config.t_update); // Wait to exceed t_update
-        
+
         // This enqueue will trigger update_drop_probability()
-        queue.enqueue(create_packet(14)); 
-        
-        assert!(queue.p > 0.0, "Probability should increase when delay is high");
+        queue.enqueue(create_packet(14));
+
+        assert!(
+            queue.p > 0.0,
+            "Probability should increase when delay is high"
+        );
     }
 }

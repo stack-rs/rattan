@@ -11,21 +11,21 @@ use tokio::time::Instant;
 use super::BwType;
 use crate::cells::{Packet, LARGE_DURATION};
 
+mod ared;
 mod codel;
 mod drophead;
 mod droptail;
 mod infinite;
-mod red;
-mod ared;
 mod pie;
+mod red;
 
+pub use ared::*;
 pub use codel::*;
 pub use drophead::*;
 pub use droptail::*;
 pub use infinite::*;
-pub use red::*;
-pub use ared::*;
 pub use pie::*;
+pub use red::*;
 
 #[cfg(feature = "serde")]
 fn serde_default<T: Default + PartialEq>(t: &T) -> bool {

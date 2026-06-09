@@ -4,10 +4,10 @@
 
 use std::collections::VecDeque;
 
+use rand::random_range;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use tokio::time::{Instant, Duration};
-use rand::random_range;
+use tokio::time::{Duration, Instant};
 use tracing::{debug, warn};
 
 #[cfg(feature = "serde")]
@@ -20,13 +20,19 @@ use crate::cells::Packet;
 pub struct RedQueueConfig {
     pub packet_limit: Option<usize>,
     pub byte_limit: Option<usize>,
-    pub w_q: f64, // queue weight for calculating the average queue length
+    pub w_q: f64,      // queue weight for calculating the average queue length
     pub min_th: usize, // minimum threshold of average queue length
     pub max_th: usize, // maximum threshold of average queue length
-    pub max_p: f64, // maximum probability of dropping a packet
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "serde_default"))]
+    pub max_p: f64,    // maximum probability of dropping a packet
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "serde_default")
+    )]
     pub pkt_tx_time: Duration, // typical packet tx time (us)
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "serde_default"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "serde_default")
+    )]
     pub bw_type: BwType,
 }
 
@@ -36,7 +42,7 @@ impl Default for RedQueueConfig {
             packet_limit: None,
             byte_limit: None,
             w_q: 0.002,
-            min_th: 7500, // 5 * 1500 bytes
+            min_th: 7500,  // 5 * 1500 bytes
             max_th: 22500, // 15 * 1500 bytes
             max_p: 0.02,
             pkt_tx_time: Duration::from_micros(120), // 1500 bytes * 8 / 100Mbps = 120 us
@@ -46,6 +52,7 @@ impl Default for RedQueueConfig {
 }
 
 impl RedQueueConfig {
+    #[allow(clippy::too_many_arguments)]
     pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
         packet_limit: A,
         byte_limit: B,
@@ -54,13 +61,16 @@ impl RedQueueConfig {
         max_th: usize,
         max_p: f64,
         pkt_tx_time: Duration,
-        bw_type: BwType
+        bw_type: BwType,
     ) -> Self {
         // Warning: The caller must ensure that the parameters are valid.
         // It's recommended to do validation before calling this function,
         // or we may need to return a Result instead of Self in the future.
         if min_th >= max_th {
-            warn!("RedQueueConfig: min_th ({}) >= max_th ({}), which may cause invalid behavior.", min_th, max_th);
+            warn!(
+                "RedQueueConfig: min_th ({}) >= max_th ({}), which may cause invalid behavior.",
+                min_th, max_th
+            );
         }
         if pkt_tx_time.as_micros() == 0 {
             warn!("RedQueueConfig: pkt_tx_time is 0, which will cause divide-by-zero in m calculation.");
@@ -71,7 +81,7 @@ impl RedQueueConfig {
         if !(0.0..=1.0).contains(&max_p) {
             warn!("RedQueueConfig: max_p ({}) is out of expected range [0.0, 1.0]. This is a probability.", max_p);
         }
-        
+
         Self {
             packet_limit: packet_limit.into(),
             byte_limit: byte_limit.into(),
@@ -80,7 +90,7 @@ impl RedQueueConfig {
             max_th,
             max_p,
             pkt_tx_time,
-            bw_type
+            bw_type,
         }
     }
 }
@@ -97,7 +107,7 @@ pub struct RedQueue<P> {
     config: RedQueueConfig,
     now_bytes: usize, // for calculating average_queue_length
     average_queue_length: f64,
-    count_packet: i32, // number of packets since last dropping
+    count_packet: i32,           // number of packets since last dropping
     idle_start: Option<Instant>, // start time of current idle period
 }
 
@@ -117,7 +127,7 @@ impl<P> RedQueue<P> {
 
 impl<P> Default for RedQueue<P>
 where
-    P: Packet
+    P: Packet,
 {
     fn default() -> Self {
         Self::new(RedQueueConfig::default())
@@ -126,18 +136,20 @@ where
 
 impl<P> RedQueue<P>
 where
-   P: Packet,
+    P: Packet,
 {
-    fn update_avg (&mut self) {
+    fn update_avg(&mut self) {
         match self.is_empty() {
             false => {
-                self.average_queue_length = (1.0 - self.config.w_q) * self.average_queue_length + self.config.w_q * (self.now_bytes as f64)
-            },
+                self.average_queue_length = (1.0 - self.config.w_q) * self.average_queue_length
+                    + self.config.w_q * (self.now_bytes as f64)
+            }
             true => {
                 if let Some(idle_start) = self.idle_start {
                     let now = Instant::now();
                     let idle_duration = now.saturating_duration_since(idle_start);
-                    let m = idle_duration.as_micros() as f64 / self.config.pkt_tx_time.as_micros() as f64;
+                    let m = idle_duration.as_micros() as f64
+                        / self.config.pkt_tx_time.as_micros() as f64;
                     self.average_queue_length *= f64::powf(1.0 - self.config.w_q, m);
                     self.idle_start = Some(now);
                 }
@@ -145,7 +157,7 @@ where
         }
     }
 
-    fn should_drop (&mut self) -> bool {
+    fn should_drop(&mut self) -> bool {
         let avg = self.average_queue_length;
         let min_th = self.config.min_th as f64;
         let max_th = self.config.max_th as f64;
@@ -158,7 +170,7 @@ where
                 p_b / (1.0 - self.count_packet as f64 * p_b)
             };
 
-            let rand_val = random_range(0.0 .. 1.0);
+            let rand_val = random_range(0.0..1.0);
             if rand_val < p_a {
                 self.count_packet = 0;
                 true
@@ -192,10 +204,16 @@ where
 
     fn enqueue(&mut self, packet: P) {
         self.update_avg();
-        
+
         let packet_size = packet.l3_length() + self.get_extra_length();
-        let pass_hard_limit = self.config.packet_limit.is_none_or(|limit| self.queue.len() < limit)
-            && self.config.byte_limit.is_none_or(|limit| self.now_bytes + packet_size <= limit);
+        let pass_hard_limit = self
+            .config
+            .packet_limit
+            .is_none_or(|limit| self.queue.len() < limit)
+            && self
+                .config
+                .byte_limit
+                .is_none_or(|limit| self.now_bytes + packet_size <= limit);
 
         if !pass_hard_limit {
             self.count_packet = 0;
@@ -217,6 +235,7 @@ where
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
                 "Drop packet(l3_len: {}, extra_len: {}) due to RED algorithm", packet.l3_length(), self.get_extra_length()
             );
+            #[allow(clippy::needless_return)]
             return;
         }
 
@@ -264,7 +283,6 @@ where
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,9 +295,11 @@ mod tests {
 
     #[test_log::test]
     fn test_red_queue_basic() {
-        let mut config = RedQueueConfig::default();
-        config.min_th = 1000;
-        config.max_th = 2000;
+        let config = RedQueueConfig {
+            min_th: 1000,
+            max_th: 2000,
+            ..Default::default()
+        };
         let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
 
         assert!(queue.is_empty());
@@ -296,10 +316,12 @@ mod tests {
 
     #[test_log::test]
     fn test_red_queue_hard_limit_packet() {
-        let mut config = RedQueueConfig::default();
-        config.packet_limit = Some(2);
-        config.min_th = 100000; // avoid red drop
-        config.max_th = 200000;
+        let config = RedQueueConfig {
+            packet_limit: Some(2),
+            min_th: 100000, // avoid red drop
+            max_th: 200000,
+            ..Default::default()
+        };
         let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
 
         queue.enqueue(create_packet(100));
@@ -313,10 +335,12 @@ mod tests {
 
     #[test_log::test]
     fn test_red_queue_hard_limit_byte() {
-        let mut config = RedQueueConfig::default();
-        config.byte_limit = Some(150);
-        config.min_th = 100000; // avoid red drop
-        config.max_th = 200000;
+        let config = RedQueueConfig {
+            byte_limit: Some(150),
+            min_th: 100000, // avoid red drop
+            max_th: 200000,
+            ..Default::default()
+        };
         let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
 
         queue.enqueue(create_packet(100)); // l3 length 86.
@@ -329,34 +353,42 @@ mod tests {
 
     #[test_log::test]
     fn test_red_queue_max_th_drop() {
-        let mut config = RedQueueConfig::default();
-        config.min_th = 100;
-        config.max_th = 200;
-        config.w_q = 1.0; // max weight, avg matches instantly
+        let config = RedQueueConfig {
+            min_th: 100,
+            max_th: 200,
+            w_q: 1.0, // max weight, avg matches instantly
+            ..Default::default()
+        };
         let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
 
         // First packet
-        queue.enqueue(create_packet(100)); 
-        
+        queue.enqueue(create_packet(100));
+
         // Second packet
         queue.enqueue(create_packet(300));
-        
+
         // At this point, queue length is 2, now_bytes is high enough.
         // The next enqueue should see average_queue_length > max_th and drop the packet.
         let before_len = queue.length();
         queue.enqueue(create_packet(100));
-        assert_eq!(queue.length(), before_len, "Packet should be dropped by RED max_th");
+        assert_eq!(
+            queue.length(),
+            before_len,
+            "Packet should be dropped by RED max_th"
+        );
     }
 
     #[test_log::test]
     fn test_red_queue_min_th_no_drop() {
-        let mut config = RedQueueConfig::default();
-        config.min_th = 1000;
-        config.max_th = 2000;
-        config.w_q = 1.0; // Instantly reach exact byte size
+        let config = RedQueueConfig {
+            min_th: 1000,
+            max_th: 2000,
+            w_q: 1.0, // Instantly reach exact byte size
+            ..Default::default()
+        };
         let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
 
-        // First packet: queue empty, avg remains 0. 
+        // First packet: queue empty, avg remains 0.
         queue.enqueue(create_packet(514)); // L3 size = 514 - 14 (Ethernet header) = 500
         assert_eq!(queue.length(), 1);
 
@@ -364,40 +396,45 @@ mod tests {
         // 500 < min_th(1000), so it should not drop.
         queue.enqueue(create_packet(414)); // L3 size = 400
         assert_eq!(queue.length(), 2);
-        
+
         // Check internal state: count_packet is -1 when avg < min_th
         assert_eq!(queue.count_packet, -1);
     }
 
     #[test_log::test]
     fn test_red_queue_probabilistic_drop() {
-        let mut config = RedQueueConfig::default();
-        config.min_th = 100;
-        config.max_th = 300;
-        config.max_p = 0.5;
-        config.w_q = 1.0; 
+        let config = RedQueueConfig {
+            min_th: 100,
+            max_th: 300,
+            max_p: 0.5,
+            w_q: 1.0,
+            ..Default::default()
+        };
         let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
 
         // First packet: queue empty, avg = 0. L3 size = 200.
-        queue.enqueue(create_packet(214)); 
+        queue.enqueue(create_packet(214));
         assert_eq!(queue.length(), 1);
 
         let mut drop_count = 0;
         let total_packets = 1000;
-        
+
         for _ in 0..total_packets {
             // enqueue packets with L3 size 0 (total size 14).
             // now_bytes stays at 200. w_q=1.0 makes avg exactly 200.
             // 100 (min_th) <= avg(200) < 300 (max_th), entering probabilistic drop zone.
             let before = queue.length();
-            queue.enqueue(create_packet(14)); 
+            queue.enqueue(create_packet(14));
             if queue.length() == before {
                 drop_count += 1;
             }
         }
-        
+
         // It should drop some packets, but not all of them
-        assert!(drop_count > 0, "Should have dropped some packets probabilistically");
+        assert!(
+            drop_count > 0,
+            "Should have dropped some packets probabilistically"
+        );
         assert!(drop_count < total_packets, "Should not drop all packets");
     }
 }
