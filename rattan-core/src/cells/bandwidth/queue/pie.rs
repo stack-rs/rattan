@@ -258,7 +258,10 @@ where
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
                 "Drop packet(l3_len: {}, extra_len: {}) due to hard limit", packet.l3_length(), self.get_extra_length()
             );
-        } else if self.should_drop() {
+            return;
+        }
+
+        if self.should_drop() {
             #[cfg(test)]
             tracing::trace!(
                 p = self.p,
@@ -266,10 +269,10 @@ where
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
                 "Drop packet(l3_len: {}, extra_len: {}) due to PIE algorithm", packet.l3_length(), self.get_extra_length()
             );
-        } else {
-            self.now_bytes += packet_size;
-            self.queue.push_back(packet);
+            return;
         }
+        self.now_bytes += packet_size;
+        self.queue.push_back(packet);
     }
 
     fn dequeue(&mut self) -> Option<P> {
