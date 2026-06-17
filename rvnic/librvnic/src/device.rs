@@ -22,7 +22,7 @@
 //!
 //! // Allocate and register rings
 //! let rings = Rings::new().expect("failed to allocate rings");
-//! dev.register_rings(rings).expect("failed to register rings");
+//! dev.register_rings_for_queue(0, rings).expect("failed to register rings");
 //!
 //! // Start the device (napi_cpu = -1 means use caller's CPU)
 //! dev.start(-1).expect("failed to start device");
@@ -244,7 +244,7 @@ impl RvnicDevice {
     /// The rings memory will be pinned by the kernel and used for packet
     /// descriptors. Each queue can only be registered once per device.
     ///
-    /// Returns the four ring handles for packet I/O operations.
+    /// Returns the ring handles for packet I/O operations.
     ///
     /// # Errors
     /// Returns an error if:

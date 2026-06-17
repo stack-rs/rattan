@@ -9,9 +9,9 @@ use rvnic::RvnicDevice;
 pub use rvnic_env::{get_rvnic_env, RvnicEnv, RvnicEnvConfig, RvnicEnvMode};
 
 pub(crate) mod constants {
-    pub const RVNIC_DEIVCES: u32 = 2;
+    pub const RVNIC_DEVICES: u32 = 2;
     pub const BATCH_SIZE: usize = 32;
-    // Wating at most `SEND_BATCH_MAX_TIME_US` microseconds until trying to send the current batch which does not meet
+    // Waiting at most `SEND_BATCH_MAX_TIME_US` microseconds until trying to send the current batch which does not meet
     // the desired batch size.
     pub const SEND_BATCH_MAX_TIME_US: u64 = 1000;
     // Avoid sleeping for an ultra-short period in a coroutine.

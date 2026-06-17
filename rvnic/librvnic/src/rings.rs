@@ -116,7 +116,7 @@ impl Rings {
 
     /// Split into individual ring handles, consuming the Rings struct
     ///
-    /// Returns an `Arc<Rings>` along with the four ring handles. Each ring handle
+    /// Returns an `Arc<Rings>` along with the ring handles. Each ring handle
     /// holds an `Arc` reference to the underlying memory, so the memory is
     /// automatically freed when all handles (and the returned Arc) are dropped.
     ///
@@ -127,7 +127,7 @@ impl Rings {
     /// ```no_run
     /// # use rvnic::Rings;
     /// let rings = Rings::new()?;
-    /// let (arc, mut fill, mut comp, mut rx, mut tx) = rings.split();
+    /// let (arc, mut fill, mut drop, mut comp, mut rx, mut tx) = rings.split();
     ///
     /// // Provide chunks to kernel
     /// fill.produce(&[0, 2048, 4096]);

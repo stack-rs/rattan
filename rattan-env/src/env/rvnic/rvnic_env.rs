@@ -136,10 +136,10 @@ pub struct RvnicEnvConfig {
     #[cfg_attr(feature = "serde", serde(default))]
     pub client_cores: Vec<usize>,
 
-    /// Rvnic uses a separate recv core for each end. This can be overritten in the config.
+    /// Rvnic uses a separate recv core for each end. This can be overwritten in the config.
     #[cfg_attr(feature = "serde", serde(default = "default_left_recv_core"))]
     pub left_recv_core: u32,
-    /// Rvnic uses a separate recv core for each end. This can be overritten in the config.
+    /// Rvnic uses a separate recv core for each end. This can be overwritten in the config.
     #[cfg_attr(feature = "serde", serde(default = "default_right_recv_core"))]
     pub right_recv_core: u32,
     /// Core to do NAPI polling on the left rvnic. It can be -1 to use the core that kicked the rx. This can be overritten in the config.
@@ -237,7 +237,7 @@ impl RattanEnv<RvnicDriver> for RvnicEnv {
         self.right_ip
     }
 
-    // For legacy reasons, 0 is reserved for `external` connction, which we do not have
+    // For legacy reasons, 0 is reserved for `external` connection, which we do not have
     fn left_ip_list(&self) -> Vec<(usize, IpAddr)> {
         vec![(1, self.left_ip)]
     }
@@ -342,8 +342,8 @@ fn build_rvnic_pair(queue_nums: u32) -> rvnic::Result<RvnicBuildArtifact> {
     let umem = UmemBuilder::new()
         .chunk_size(RATTAN_DEFAULT_CHUNK_SIZE)
         .headroom(RATTAN_HEADROOM)
-        // `RATTAN_RING_SIZE` chunks per queue, `RVNIC_DEIVCES` devices, `queue_nums` queues per device
-        .num_chunks(chunks_per_device * RVNIC_DEIVCES)
+        // `RATTAN_RING_SIZE` chunks per queue, `RVNIC_DEVICES` devices, `queue_nums` queues per device
+        .num_chunks(chunks_per_device * RVNIC_DEVICES)
         .build()?;
 
     let num_chunks = umem.num_chunks();
