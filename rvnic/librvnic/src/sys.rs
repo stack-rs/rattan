@@ -12,8 +12,8 @@ pub const RATTAN_RING_MASK: u32 = RATTAN_RING_SIZE - 1;
 pub const RATTAN_DEFAULT_CHUNK_SIZE: u32 = 256;
 pub const RATTAN_MIN_CHUNK_SIZE: u32 = 256;
 pub const RATTAN_MAX_CHUNK_SIZE: u32 = 65536;
-pub const RATTAN_MAX_UMEM_SIZE: u64 = 128 << 30;
-pub const RATTAN_HEADER_SIZE: u32 = 64;
+pub const RATTAN_MAX_UMEM_SIZE: u64 = 128 << 30; // 128 GiB
+pub const RATTAN_HEADER_SIZE: u32 = 0;
 
 // UMEM registration parameters
 #[repr(C)]
@@ -54,7 +54,7 @@ impl RattanDesc {
     pub fn get_skb_len(&self) -> u32 {
         self.options & 0xffff
     }
-    
+
     /// Length of copied packet headers in UMEM
     pub fn get_umem_len(&self) -> u32 {
         self.len
@@ -91,7 +91,7 @@ pub struct RattanTxRing {
     pub descs: [RattanDesc; RATTAN_RING_SIZE as usize],
 }
 
-// Ring memory layout: RX | TX | FILL | COMP
+// Ring memory layout: RX | TX | FILL | COMP | DROP
 pub const RATTAN_RINGS_SIZE: usize = std::mem::size_of::<RattanRxRing>()
     + std::mem::size_of::<RattanTxRing>()
     + std::mem::size_of::<RattanFillRing>()
