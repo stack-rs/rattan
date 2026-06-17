@@ -125,7 +125,20 @@ impl Umem {
             return Err(crate::Error::InvalidParam("num_chunks must be > 0"));
         }
 
-        let len = chunk_size as usize * num_chunks as usize;
+        let len_u64 = (chunk_size as u64)
+            .checked_mul(num_chunks as u64)
+            .ok_or(crate::Error::InvalidParam("UMEM size overflow"))?;
+        if len_u64 > crate::sys::RATTAN_MAX_UMEM_SIZE {
+            return Err(crate::Error::InvalidParam(
+                "UMEM size exceeds RATTAN_MAX_UMEM_SIZE",
+            ));
+        }
+        if len_u64 > usize::MAX as u64 {
+            return Err(crate::Error::InvalidParam(
+                "UMEM too large for this platform",
+            ));
+        }
+        let len = len_u64 as usize;
 
         // Allocate memory via mmap
         // MAP_POPULATE pre-faults the pages to avoid page faults during operation
@@ -256,7 +269,7 @@ mod tests {
     #[test]
     fn test_umem_builder_default() {
         let builder = UmemBuilder::new();
-        assert_eq!(builder.chunk_size, 2048);
+        assert_eq!(builder.chunk_size, 256);
         assert_eq!(builder.headroom, 0);
         assert_eq!(builder.num_chunks, 4096);
     }
