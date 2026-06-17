@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 
-use rand::random_range;
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
@@ -97,6 +97,7 @@ pub struct RedQueue<P> {
     average_queue_length: f64,
     count_packet: i32,           // number of packets since last dropping
     idle_start: Option<Instant>, // start time of current idle period
+    rng: StdRng,
 }
 
 impl<P> RedQueue<P> {
@@ -109,6 +110,7 @@ impl<P> RedQueue<P> {
             average_queue_length: 0.0,
             count_packet: -1,
             idle_start: None,
+            rng: StdRng::seed_from_u64(42),
         }
     }
 }
@@ -156,7 +158,7 @@ where
                 p_b / (1.0 - self.count_packet as f64 * p_b)
             };
 
-            let rand_val = random_range(0.0..1.0);
+            let rand_val = self.rng.random_range(0.0..1.0);
             if rand_val < p_a {
                 self.count_packet = 0;
                 true

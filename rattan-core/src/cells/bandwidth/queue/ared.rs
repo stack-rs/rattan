@@ -2,7 +2,7 @@
 // https://www.icir.org/floyd/papers/adaptiveRed.pdf
 use std::collections::VecDeque;
 
-use rand::random_range;
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::time::{Duration, Instant};
@@ -93,6 +93,7 @@ pub struct AdaptiveRedQueue<P> {
     count_packet: i32,            // number of packets since last dropping
     idle_start: Option<Instant>,  // start time of current idle period
     latest_max_p_update: Instant, // latest time when max_p is updates
+    rng: StdRng,
 }
 
 impl<P> AdaptiveRedQueue<P> {
@@ -106,6 +107,7 @@ impl<P> AdaptiveRedQueue<P> {
             count_packet: -1,
             idle_start: None,
             latest_max_p_update: Instant::now(),
+            rng: StdRng::seed_from_u64(42),
         }
     }
 }
@@ -153,7 +155,7 @@ where
                 p_b / (1.0 - self.count_packet as f64 * p_b)
             };
 
-            let rand_val = random_range(0.0..1.0);
+            let rand_val = self.rng.random_range(0.0..1.0);
             if rand_val < p_a {
                 self.count_packet = 0;
                 true
@@ -174,11 +176,12 @@ where
             self.config.min_th as f64 + 0.4 * (self.config.max_th - self.config.min_th) as f64;
         let target_max =
             self.config.min_th as f64 + 0.6 * (self.config.max_th - self.config.min_th) as f64;
-        if self.average_queue_length > target_max && self.config.max_p <= 0.5 {
+        if self.average_queue_length > target_max {
             self.config.max_p += (self.config.max_p / 4.0).min(0.01);
-        } else if self.average_queue_length < target_min && self.config.max_p >= 0.01 {
+        } else if self.average_queue_length < target_min {
             self.config.max_p *= 0.9;
         }
+        self.config.max_p = self.config.max_p.clamp(0.01, 0.5);
     }
 }
 

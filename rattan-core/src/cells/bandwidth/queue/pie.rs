@@ -6,7 +6,7 @@
 
 use std::collections::VecDeque;
 
-use rand::random_range;
+use rand::{rngs::StdRng, RngExt, SeedableRng};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::time::{Duration, Instant};
@@ -22,8 +22,9 @@ use crate::cells::Packet;
 pub struct PieQueueConfig {
     pub packet_limit: Option<usize>,
     pub byte_limit: Option<usize>,
-    pub ref_del: f64,   // target delay (sec)
-    pub max_burst: f64, // MAX_BURST (ms)
+    pub ref_del: f64,       // target delay (sec)
+    pub max_burst: f64,     // MAX_BURST (ms)
+    pub t_update: Duration, // update interval
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "serde_default")
@@ -38,6 +39,7 @@ impl Default for PieQueueConfig {
             byte_limit: None,
             ref_del: 0.015, // RFC 8033
             max_burst: 150.0,
+            t_update: Duration::from_millis(15),
             bw_type: BwType::default(),
         }
     }
@@ -49,6 +51,7 @@ impl PieQueueConfig {
         byte_limit: B,
         ref_del: f64,
         max_burst: f64,
+        t_update: Duration,
         bw_type: BwType,
     ) -> Self {
         Self {
@@ -56,6 +59,7 @@ impl PieQueueConfig {
             byte_limit: byte_limit.into(),
             ref_del,
             max_burst,
+            t_update,
             bw_type,
         }
     }
@@ -79,6 +83,7 @@ pub struct PieQueue<P> {
     start_measurement: Option<Instant>, // Some(Instant) when in a measurement cycle, None when quit
     avg_drate: f64,
     burst_allowance: f64,
+    rng: StdRng,
 }
 
 impl<P> PieQueue<P> {
@@ -96,6 +101,7 @@ impl<P> PieQueue<P> {
             start_measurement: None,
             avg_drate: 0.0,
             burst_allowance: max_burst,
+            rng: StdRng::seed_from_u64(42),
         }
     }
 }
@@ -163,7 +169,7 @@ where
         self.start_update = now;
     }
 
-    fn should_drop(&self) -> bool {
+    fn should_drop(&mut self) -> bool {
         // RFC 8033 Section 4.4: Enqueue packet bypassing random drop if burst_allow > 0
         if self.burst_allowance > f64::EPSILON {
             return false;
@@ -176,13 +182,13 @@ where
             return false;
         }
 
-        let rand_val = random_range(0.0..1.0);
+        let rand_val = self.rng.random_range(0.0..1.0);
         rand_val < self.p
     }
 
     fn update_avg_drate(&mut self, pkt_size: usize) {
         let now = Instant::now();
-        let dq_threshold = 16384; // 16 KB
+        let dq_threshold = 16384; // 16 KiB
 
         // Enter a measurement cycle
         if self.now_bytes > dq_threshold && self.start_measurement.is_none() {
@@ -235,8 +241,7 @@ where
     fn enqueue(&mut self, packet: P) {
         // Simulate time-driven with event-driven approach
         let interval_update = Instant::now().saturating_duration_since(self.start_update);
-        let t_update = Duration::from_millis(15);
-        if interval_update >= t_update {
+        if interval_update >= self.config.t_update {
             self.update_drop_probability();
         }
 
@@ -278,8 +283,7 @@ where
     fn dequeue(&mut self) -> Option<P> {
         // Simulate time-driven with event-driven approach
         let interval_update = Instant::now().saturating_duration_since(self.start_update);
-        let t_update = Duration::from_millis(15);
-        if interval_update >= t_update {
+        if interval_update >= self.config.t_update {
             self.update_drop_probability();
         }
 
@@ -446,7 +450,8 @@ mod tests {
         assert!(queue.start_measurement.is_some());
         assert_eq!(queue.now_bytes, 20000);
 
-        std::thread::sleep(Duration::from_millis(10));
+        // Force time to advance deterministically to avoid flaky tests
+        queue.start_measurement = Some(Instant::now() - Duration::from_millis(10));
 
         // Second dequeue triggers calculation of avg_drate
         queue.dequeue(); // dequeues 10000 bytes
@@ -466,7 +471,8 @@ mod tests {
         queue.avg_drate = 1000.0;
         queue.now_bytes = 100000; // delay = 100.0s > ref_del
 
-        std::thread::sleep(Duration::from_millis(15)); // Wait to exceed t_update
+        // Force next enqueue to trigger update_drop_probability() deterministically
+        queue.start_update = Instant::now() - Duration::from_millis(16);
 
         // This enqueue will trigger update_drop_probability()
         queue.enqueue(create_packet(14));
