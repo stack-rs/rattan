@@ -72,6 +72,24 @@ static void rattan_unpin_pages(struct page **pages, unsigned long nr) {
 #include <net/gso.h>
 #endif
 
+/*
+ * Kernel version compatibility for hrtimer_init / hrtimer_setup
+ * hrtimer_setup was introduced since 6.13 and hrtimer_init was removed from 6.15
+ * 6.14 is a version that these two functions coexist
+ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
+#define rattan_hrtimer_setup(timer, restart, clock, mode) hrtimer_setup(timer, restart, clock, mode) 
+#else
+static inline void rattan_hrtimer_setup(struct hrtimer *timer,
+                                       enum hrtimer_restart (*function)(struct hrtimer *),
+                                       clockid_t which_clock,
+                                       enum hrtimer_mode mode)
+{
+    hrtimer_init(timer, which_clock, mode);
+    timer->function = function;
+}
+#endif
+
 static int max_devices = 256;
 module_param(max_devices, int, 0644);
 MODULE_PARM_DESC(max_devices, "Maximum number of rattan devices (default: 256)");
@@ -1759,8 +1777,7 @@ static int rattan_vnic_fop_open(struct inode *inode, struct file *file) {
         RCU_INIT_POINTER(queue->rings, NULL);
         init_waitqueue_head(&queue->wait);
 
-        hrtimer_init(&queue->rx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
-        queue->rx_timer.function = rattan_rx_timer_cb;
+        rattan_hrtimer_setup(&queue->rx_timer, rattan_rx_timer_cb, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
         atomic_set(&queue->rx_pending, 0);
 
         queue->napi_cpu = -1;
