@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-use std::net::IpAddr;
-use std::str::FromStr;
+use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use rand::distr::Alphanumeric;
@@ -19,6 +18,7 @@ use super::constants::*;
 use super::utils::*;
 use super::DriverMetaData;
 use crate::env::rvnic::RvnicDriver;
+use crate::env::{get_addresses_in_use, IpAddrLock};
 use crate::error::MetalError;
 use crate::{Error, InterfaceBuildArtifact, NetNs, RattanEnv, RattanEnvConfig, StdNetEnvMode};
 
@@ -431,6 +431,34 @@ fn build_rvnic_pair(queue_nums: u32) -> rvnic::Result<RvnicBuildArtifact> {
     })
 }
 
+// Get 10.x.y.1 (right) and 10.x.y.2(left), that 10.x.y.1 is not occupied.
+pub fn get_addrs(mode: RvnicEnvMode) -> Result<(IpAddr, (IpAddr, Option<IpAddrLock>)), Error> {
+    if !matches!(mode, RvnicEnvMode::Compatible) {
+        let left_addr = IpAddr::from(Ipv4Addr::new(10, 99, 0, 1));
+        let right_addr = IpAddr::from(Ipv4Addr::new(10, 99, 0, 2));
+        return Ok((left_addr, (right_addr, None)));
+    }
+
+    let address_in_use: HashSet<IpAddr> = HashSet::from_iter(get_addresses_in_use()?);
+    for x in 0..255u16 {
+        let x = (x + 99) % 255;
+        let x = x as u8;
+        for y in 0..255 {
+            let left_addr = IpAddr::from(Ipv4Addr::new(10, x, y, 1));
+            let right_addr = IpAddr::from(Ipv4Addr::new(10, x, y, 2));
+            if address_in_use.contains(&right_addr) {
+                continue;
+            }
+            if let Some(lock) = IpAddrLock::new(right_addr)? {
+                return Ok((left_addr, (right_addr, Some(lock))));
+            }
+        }
+    }
+    Err(Error::IoError(std::io::Error::other(
+        "Failed to get available ip addr for rvnic in host netns",
+    )))
+}
+
 #[instrument(skip_all, level = "debug", name = "RvnicEnv")]
 pub fn get_rvnic_env(config: &RvnicEnvConfig) -> Result<RvnicEnv, Error> {
     // Create network namespaces
@@ -512,10 +540,7 @@ pub fn get_rvnic_env(config: &RvnicEnvConfig) -> Result<RvnicEnv, Error> {
     move_to_netns(&left_device.device_name()?, &left_netns_name)?;
     move_to_netns(&right_device.device_name()?, &right_netns_name)?;
 
-    // Set up interface configuration
-    // TODO: Find available IP addresses
-    let left_ip = "10.99.0.2/24";
-    let right_ip = "10.99.0.1/24";
+    let (left_ip, (right_ip, right_ip_lock)) = get_addrs(config.mode)?;
 
     info!(
         "trying to set up rvnic device interface {} in {} with ip {}",
@@ -535,14 +560,15 @@ pub fn get_rvnic_env(config: &RvnicEnvConfig) -> Result<RvnicEnv, Error> {
     } else {
         configure_interface_in_netns(&right_netns_name, &right_device.device_name()?, right_ip)?;
     }
+
     let env = RvnicEnv {
         left_device: Arc::new(left_device),
         right_device: Arc::new(right_device),
         mode: config.mode,
         left_ns: left_netns,
         right_ns: right_netns,
-        left_ip: IpAddr::from_str("10.99.0.2").unwrap(),
-        right_ip: IpAddr::from_str("10.99.0.1").unwrap(),
+        left_ip,
+        right_ip,
         rattan_id: rand_string,
         // Will be consumed when `build_interface` is called for the first time.
         packet_recycler: Some(packet_recycler),
@@ -551,5 +577,7 @@ pub fn get_rvnic_env(config: &RvnicEnvConfig) -> Result<RvnicEnv, Error> {
         left_recv_core: config.left_recv_core,
         right_recv_core: config.right_recv_core,
     };
+
+    drop(right_ip_lock);
     Ok(env)
 }

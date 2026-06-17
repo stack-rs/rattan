@@ -34,7 +34,7 @@ rattan-log = { path = "../rattan-log" }
 test-log = { workspace = true }
 
 [features]
-default = []
+default = ["rvnic"]
 serde = ["dep:serde"]
 xdp = ["dep:camellia-net"]
 rvnic = ["dep:rvnic"]
