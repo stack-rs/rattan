@@ -78,10 +78,10 @@ impl Packet for RvnicPacket {
         self.desc.get_skb_len() as usize
     }
     fn l2_length(&self) -> usize {
-        self.desc.get_skb_len().saturating_sub(14) as usize
+        self.desc.get_skb_len() as usize
     }
     fn l3_length(&self) -> usize {
-        self.desc.get_skb_len() as usize
+        self.desc.get_skb_len().saturating_sub(14) as usize
     }
     fn as_slice(&self) -> &[u8] {
         try_get_slice_from_umem(&self.desc).unwrap_or(&[])
