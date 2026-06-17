@@ -26,7 +26,7 @@
 //!
 //! // Register UMEM and queue-0 rings with kernel
 //! dev.register_umem(umem)?;
-//! dev.register_rings(rings)?;
+//! dev.register_rings_for_queue(0, rings)?;
 //!
 //! // Start the device (napi_cpu = -1 means use caller's CPU)
 //! dev.start(-1)?;

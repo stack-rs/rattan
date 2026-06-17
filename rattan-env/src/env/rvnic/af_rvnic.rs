@@ -67,7 +67,9 @@ impl Packet for RvnicPacket {
     }
 
     fn as_raw_buffer(&mut self) -> &mut [u8] {
-        // Copy data from UMEM to header buffer
+        // Copy data from UMEM to header buffer. It is the rvnic driver's responsibility
+        // to copy back any modification to the skb in kernel when the packet leaves Rattan
+        // and was sent on the TX path.
         let header = self
             .header
             .get_or_insert_with(|| try_get_slice_from_umem(&self.desc).unwrap_or(&[]).to_vec());
@@ -166,11 +168,11 @@ impl InterfaceReceiver<RvnicPacket> for RvnicReceiver {
     // Rvnic has native support for batch receiving, so we
     // are using `receive_bulk` to implement `receive`.
     fn receive(&mut self) -> std::io::Result<Option<RvnicPacket>> {
-        unimplemented!("Seperate thread is used for receiving form rvnic")
+        unimplemented!("Separate thread is used for receiving from rvnic")
     }
 
     fn receive_bulk(&mut self) -> std::io::Result<Vec<RvnicPacket>> {
-        unimplemented!("Seperate thread is used for receiving form rvnic")
+        unimplemented!("Separate thread is used for receiving from rvnic")
     }
 }
 
