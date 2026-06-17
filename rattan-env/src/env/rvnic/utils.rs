@@ -216,10 +216,15 @@ use std::fs::File;
 use std::net::IpAddr;
 
 /// Configure interface inside a specific network namespace using native netlink
-pub fn configure_interface_in_netns(netns: &str, iface: &str, ip: &str) -> std::io::Result<()> {
+pub fn configure_interface_in_netns(
+    netns: &str,
+    iface: &str,
+    ip_addr: IpAddr,
+) -> std::io::Result<()> {
     let netns = netns.to_string();
     let iface = iface.to_string();
-    let ip = ip.to_string();
+
+    let prefix_len = if ip_addr.is_ipv4() { 24 } else { 64 };
 
     // Spawn a dedicated OS thread because setns changes the network namespace
     // of the calling thread only, preventing namespace pollution of the main thread.
@@ -242,21 +247,6 @@ pub fn configure_interface_in_netns(netns: &str, iface: &str, ip: &str) -> std::
                 rtnetlink::new_connection().map_err(|e| std::io::Error::other(e.to_string()))?;
             // Drive the netlink socket connection in the background
             tokio::spawn(connection);
-
-            // Parse IP address and optional prefix length (e.g., "10.0.0.1/24" or "10.0.0.1")
-            let parts: Vec<&str> = ip.split('/').collect();
-            let ip_addr: IpAddr = parts[0]
-                .parse()
-                .map_err(|e| std::io::Error::other(format!("Invalid IP address: {}", e)))?;
-            let prefix_len: u8 = if parts.len() > 1 {
-                parts[1]
-                    .parse()
-                    .map_err(|e| std::io::Error::other(format!("Invalid prefix length: {}", e)))?
-            } else if ip_addr.is_ipv4() {
-                32
-            } else {
-                128
-            };
 
             // Retrieve the interface index (ifindex) by its name
             let mut links = handle.link().get().match_name(iface.clone()).execute();
@@ -312,9 +302,10 @@ pub fn configure_interface_in_netns(netns: &str, iface: &str, ip: &str) -> std::
 }
 
 /// Configure interface in the current network namespace using native netlink
-pub fn configure_interface_in_current_netns(iface: &str, ip: &str) -> std::io::Result<()> {
+pub fn configure_interface_in_current_netns(iface: &str, ip_addr: IpAddr) -> std::io::Result<()> {
     let iface = iface.to_string();
-    let ip = ip.to_string();
+
+    let prefix_len = if ip_addr.is_ipv4() { 24 } else { 64 };
 
     // Directly initialize and block on the runtime since nested runtimes are not a concern
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -325,20 +316,6 @@ pub fn configure_interface_in_current_netns(iface: &str, ip: &str) -> std::io::R
         let (connection, handle, _) =
             rtnetlink::new_connection().map_err(|e| std::io::Error::other(e.to_string()))?;
         tokio::spawn(connection);
-
-        let parts: Vec<&str> = ip.split('/').collect();
-        let ip_addr: IpAddr = parts[0]
-            .parse()
-            .map_err(|e| std::io::Error::other(format!("Invalid IP: {}", e)))?;
-        let prefix_len: u8 = if parts.len() > 1 {
-            parts[1]
-                .parse()
-                .map_err(|e| std::io::Error::other(format!("Invalid prefix: {}", e)))?
-        } else if ip_addr.is_ipv4() {
-            32
-        } else {
-            128
-        };
 
         let mut links = handle.link().get().match_name(iface.clone()).execute();
         let link = links
