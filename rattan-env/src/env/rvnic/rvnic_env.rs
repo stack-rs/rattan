@@ -7,7 +7,6 @@ use rand::{rng, RngExt};
 use rvnic::{DropRing, RvnicDevice, RxRing, TxRing, Umem, UmemBuilder};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use tokio::sync::SetError;
 use tokio::sync::{
     mpsc::{self},
     OnceCell,
@@ -171,7 +170,22 @@ impl RattanEnvConfig for RvnicEnvConfig {
     type BuildOutput = RvnicEnv;
 
     fn build(&self) -> Result<Self::BuildOutput, Self::BuildError> {
-        get_rvnic_env(self)
+        let RvnicEnvBuildArtifact {
+            env,
+            umem,
+            packet_recycler_tx,
+        } = get_rvnic_env(self)?;
+
+        // These should not happen, as we only try to set these global OnceCells after we have successfully
+        // created the RvnicEnv.
+        if UMEM.set(umem).is_err() {
+            unreachable!("Failed to set UMEM");
+        }
+        if RVNIC_PACKET_RECYCLE_TX.set(packet_recycler_tx).is_err() {
+            unreachable!("Failed to set RVNIC_PACKET_RECYCLE_TX");
+        }
+
+        Ok(env)
     }
     fn default_with_mode(mode: <Self::BuildOutput as RattanEnv<Self::Driver>>::Mode) -> Self {
         RvnicEnvConfig {
@@ -459,8 +473,14 @@ pub fn get_addrs(mode: RvnicEnvMode) -> Result<(IpAddr, (IpAddr, Option<IpAddrLo
     )))
 }
 
+struct RvnicEnvBuildArtifact {
+    env: RvnicEnv,
+    umem: Arc<Umem>,
+    packet_recycler_tx: mpsc::UnboundedSender<(QueueID, u64)>,
+}
+
 #[instrument(skip_all, level = "debug", name = "RvnicEnv")]
-pub fn get_rvnic_env(config: &RvnicEnvConfig) -> Result<RvnicEnv, Error> {
+fn get_rvnic_env(config: &RvnicEnvConfig) -> Result<RvnicEnvBuildArtifact, Error> {
     // Create network namespaces
     info!(?config);
     let _guard = RVNIC_ENV_LOCK.lock();
@@ -504,28 +524,6 @@ pub fn get_rvnic_env(config: &RvnicEnvConfig) -> Result<RvnicEnv, Error> {
         packet_recycler,
         packet_recycler_tx,
     } = build_rvnic_pair(config.num_queues as u32)?;
-
-    if let Err(e) = UMEM.set(umem) {
-        match e {
-            SetError::AlreadyInitializedError(_) => {
-                Err(Error::ConfigError("double init".to_string()))?
-            }
-            SetError::InitializingError(_) => {
-                Err(Error::ConfigError("concurrent init".to_string()))?
-            }
-        }
-    }
-
-    if let Err(e) = RVNIC_PACKET_RECYCLE_TX.set(packet_recycler_tx) {
-        match e {
-            SetError::AlreadyInitializedError(_) => {
-                Err(Error::ConfigError("double init".to_string()))?
-            }
-            SetError::InitializingError(_) => {
-                Err(Error::ConfigError("concurrent init".to_string()))?
-            }
-        }
-    }
 
     // Start the devices
     left_device
@@ -579,5 +577,9 @@ pub fn get_rvnic_env(config: &RvnicEnvConfig) -> Result<RvnicEnv, Error> {
     };
 
     drop(right_ip_lock);
-    Ok(env)
+    Ok(RvnicEnvBuildArtifact {
+        env,
+        umem,
+        packet_recycler_tx,
+    })
 }

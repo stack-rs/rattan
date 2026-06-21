@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 pub use af_rvnic::{RvnicDriver, RvnicPacket, RvnicReceiver, RvnicSender};
 use rvnic::RvnicDevice;
-pub use rvnic_env::{get_rvnic_env, RvnicEnv, RvnicEnvConfig, RvnicEnvMode};
+pub use rvnic_env::{RvnicEnv, RvnicEnvConfig, RvnicEnvMode};
 
 pub(crate) mod constants {
     pub const RVNIC_DEVICES: u32 = 2;
