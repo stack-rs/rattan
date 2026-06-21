@@ -364,10 +364,15 @@ impl InterfaceDriver for RvnicDriver {
 
         let self_raw_fd = receiver.meta_data.self_device.as_raw_fd();
 
-        let Ok(epoll_fd) = Epoll::new() else {
-            tracing::error!("Failed to get epoll fd");
-            unimplemented!("Failed to get epoll fd for fd {}", self_raw_fd)
-        };
+        let epoll_fd = Epoll::new()
+            .inspect_err(|e| {
+                tracing::error!(
+                    ?e,
+                    "Failed to get Rvnic receiving epoll fd for fd {}",
+                    self_raw_fd
+                )
+            })
+            .expect("Failed to get Rvnic receiving epoll fd");
 
         epoll_fd
             .add(self_raw_fd, self_raw_fd as u64)

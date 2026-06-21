@@ -200,7 +200,7 @@ pub fn prefill_device_queues(
         let batch_chunk_end = (batch_chunk_start + BATCH_SIZE as u32).min(end_chunk);
         let batch_size = (batch_chunk_end - batch_chunk_start) as usize;
         for (i, addr) in addrs.iter_mut().enumerate().take(batch_size) {
-            *addr = ((batch_chunk_start + i as u32) * chunk_size) as u64;
+            *addr = (batch_chunk_start as u64 + i as u64) * chunk_size as u64;
         }
         let queue = queue_index.next().unwrap();
         let produced = queues[queue].fill.produce(&addrs[..batch_size]);
