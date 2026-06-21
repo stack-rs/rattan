@@ -1,3 +1,4 @@
+use std::fs::create_dir_all;
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -90,6 +91,8 @@ impl IpAddrLock {
         // for ipv6, ':' may be illegal as a filename
         let ip_str = format!("{ip}").replace(':', "_");
         let file_dir = format!("{IP_LOCK_DIR}/{ip_str}");
+
+        create_dir_all(IP_LOCK_DIR)?;
         match std::fs::File::create_new(&file_dir) {
             // Lock successfully
             Ok(_) => Ok(Some(IpAddrLock { file_dir })),
