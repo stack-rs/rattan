@@ -209,7 +209,7 @@ where
                         let epsilon = 0.125;
                         self.avg_drate = (1.0 - epsilon) * self.avg_drate + epsilon * dq_rate;
                     }
-                    self.start_measurement = Some(now);
+                    self.start_measurement = None;
                     self.dq_count = 0;
                 }
             }
