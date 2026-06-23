@@ -93,6 +93,7 @@ pub struct AdaptiveRedQueue<P> {
     count_packet: i32,            // number of packets since last dropping
     idle_start: Option<Instant>,  // start time of current idle period
     latest_max_p_update: Instant, // latest time when max_p is updates
+    estimated_pkt_tx_time: f64,   // estimated packet transmission time in microseconds
     rng: StdRng,
 }
 
@@ -107,6 +108,7 @@ impl<P> AdaptiveRedQueue<P> {
             count_packet: -1,
             idle_start: None,
             latest_max_p_update: Instant::now(),
+            estimated_pkt_tx_time: 120.0, // initial estimate: 1500 bytes * 8 / 100Mbps = 120 us
             rng: StdRng::seed_from_u64(42),
         }
     }
@@ -129,14 +131,26 @@ where
         if !self.is_empty() {
             self.average_queue_length = (1.0 - self.config.w_q) * self.average_queue_length
                 + self.config.w_q * (self.now_bytes as f64);
+            
+            // Estimate pkt_tx_time based on first and last packet timestamps
+            if self.queue.len() >= 2 {
+                if let (Some(first), Some(last)) = (self.queue.front(), self.queue.back()) {
+                    let first_time = first.get_timestamp();
+                    let last_time = last.get_timestamp();
+                    let time_diff = last_time.saturating_duration_since(first_time);
+                    if time_diff.as_micros() > 0 {
+                        let avg_inter_packet_time = time_diff.as_micros() as f64 / (self.queue.len() - 1) as f64;
+                        self.estimated_pkt_tx_time = avg_inter_packet_time;
+                    }
+                }
+            }
             return;
         }
 
         if let Some(idle_start) = self.idle_start {
             let now = packet.get_timestamp();
             let idle_duration = now.saturating_duration_since(idle_start);
-            let pkt_tx_time = 120.0; // 1500 bytes * 8 / 100Mbps = 120 us
-            let m = idle_duration.as_micros() as f64 / pkt_tx_time;
+            let m = idle_duration.as_micros() as f64 / self.estimated_pkt_tx_time;
             self.average_queue_length *= f64::powf(1.0 - self.config.w_q, m);
             self.idle_start = Some(now);
         }
