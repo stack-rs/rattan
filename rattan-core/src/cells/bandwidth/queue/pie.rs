@@ -119,8 +119,8 @@ impl<P> PieQueue<P>
 where
     P: Packet,
 {
-    fn update_drop_probability(&mut self) {
-        let now = Instant::now();
+    fn update_drop_probability(&mut self, packet: &P) {
+        let now = packet.get_timestamp();
         let elapsed_ms = now
             .saturating_duration_since(self.start_update)
             .as_secs_f64()
@@ -240,9 +240,9 @@ where
 
     fn enqueue(&mut self, packet: P) {
         // Simulate time-driven with event-driven approach
-        let interval_update = Instant::now().saturating_duration_since(self.start_update);
+        let interval_update = packet.get_timestamp().saturating_duration_since(self.start_update);
         if interval_update >= self.config.t_update {
-            self.update_drop_probability();
+            self.update_drop_probability(&packet);
         }
 
         let packet_size = packet.l3_length() + self.get_extra_length();
@@ -281,12 +281,6 @@ where
     }
 
     fn dequeue(&mut self) -> Option<P> {
-        // Simulate time-driven with event-driven approach
-        let interval_update = Instant::now().saturating_duration_since(self.start_update);
-        if interval_update >= self.config.t_update {
-            self.update_drop_probability();
-        }
-
         if let Some(packet) = self.queue.pop_front() {
             let pkt_size = packet.l3_length() + self.get_extra_length();
             self.now_bytes -= pkt_size;

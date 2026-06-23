@@ -125,7 +125,7 @@ impl<P> AdaptiveRedQueue<P>
 where
     P: Packet,
 {
-    fn update_avg(&mut self) {
+    fn update_avg(&mut self, packet: &P) {
         if !self.is_empty() {
             self.average_queue_length = (1.0 - self.config.w_q) * self.average_queue_length
                 + self.config.w_q * (self.now_bytes as f64);
@@ -133,7 +133,7 @@ where
         }
 
         if let Some(idle_start) = self.idle_start {
-            let now = Instant::now();
+            let now = packet.get_timestamp();
             let idle_duration = now.saturating_duration_since(idle_start);
             let pkt_tx_time = 120.0; // 1500 bytes * 8 / 100Mbps = 120 us
             let m = idle_duration.as_micros() as f64 / pkt_tx_time;
@@ -201,9 +201,9 @@ where
     }
 
     fn enqueue(&mut self, packet: P) {
-        self.update_avg();
+        self.update_avg(&packet);
 
-        let now = Instant::now();
+        let now = packet.get_timestamp();
         if now.saturating_duration_since(self.latest_max_p_update) >= Duration::from_millis(500) {
             self.update_max_p();
             self.latest_max_p_update = now;
