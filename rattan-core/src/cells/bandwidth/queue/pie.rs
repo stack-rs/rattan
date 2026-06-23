@@ -246,7 +246,7 @@ where
         }
 
         let packet_size = packet.l3_length() + self.get_extra_length();
-        let pass_hard_limit = self
+        let below_hard_limit = self
             .config
             .packet_limit
             .is_none_or(|limit| self.queue.len() < limit)
@@ -255,7 +255,7 @@ where
                 .byte_limit
                 .is_none_or(|limit| self.now_bytes + packet_size <= limit);
 
-        if !pass_hard_limit {
+        if !below_hard_limit {
             #[cfg(test)]
             tracing::trace!(
                 queue_len = self.queue.len(),

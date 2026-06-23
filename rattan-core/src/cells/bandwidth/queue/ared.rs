@@ -177,7 +177,7 @@ where
                 false
             }
         } else if avg >= max_th {
-            self.count_packet = 0;
+            self.count_packet = -1;
             true
         } else {
             self.count_packet = -1;
@@ -224,7 +224,7 @@ where
         }
 
         let packet_size = packet.l3_length() + self.get_extra_length();
-        let pass_hard_limit = self
+        let below_hard_limit = self
             .config
             .packet_limit
             .is_none_or(|limit| self.queue.len() < limit)
@@ -233,7 +233,7 @@ where
                 .byte_limit
                 .is_none_or(|limit| self.now_bytes + packet_size <= limit);
 
-        if !pass_hard_limit {
+        if !below_hard_limit {
             self.count_packet = 0;
             #[cfg(test)]
             tracing::trace!(
