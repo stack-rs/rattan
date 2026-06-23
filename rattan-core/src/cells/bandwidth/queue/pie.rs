@@ -240,7 +240,9 @@ where
 
     fn enqueue(&mut self, packet: P) {
         // Simulate time-driven with event-driven approach
-        let interval_update = packet.get_timestamp().saturating_duration_since(self.start_update);
+        let interval_update = packet
+            .get_timestamp()
+            .saturating_duration_since(self.start_update);
         if interval_update >= self.config.t_update {
             self.update_drop_probability(&packet);
         }

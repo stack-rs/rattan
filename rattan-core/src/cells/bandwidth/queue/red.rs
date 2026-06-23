@@ -98,7 +98,7 @@ pub struct RedQueue<P> {
     count_packet: i32,           // number of packets since last dropping
     idle_start: Option<Instant>, // start time of current idle period
     rng: StdRng,
-    estimated_pkt_tx_time: f64,   // estimated packet transmission time in microseconds
+    estimated_pkt_tx_time: f64, // estimated packet transmission time in microseconds
 }
 
 impl<P> RedQueue<P> {
@@ -142,7 +142,8 @@ where
                     let last_time = last.get_timestamp();
                     let time_diff = last_time.saturating_duration_since(first_time);
                     if time_diff.as_micros() > 0 {
-                        let avg_inter_packet_time = time_diff.as_micros() as f64 / (self.queue.len() - 1) as f64;
+                        let avg_inter_packet_time =
+                            time_diff.as_micros() as f64 / (self.queue.len() - 1) as f64;
                         self.estimated_pkt_tx_time = avg_inter_packet_time;
                     }
                 }
@@ -433,28 +434,29 @@ mod tests {
         // Calculate expected drop count based on RED algorithm
         // When avg = 200, min_th = 100, max_th = 300, max_p = 0.5
         // p_b = max_p * (avg - min_th) / (max_th - min_th) = 0.5 * 100 / 200 = 0.25
-        // Due to the uniform distribution of inter-drop times in RED, 
+        // Due to the uniform distribution of inter-drop times in RED,
         // the expected drop rate is 2 * p_b / (1 + p_b)
         // For p_b = 0.25, expected drop rate = 0.5 / 1.25 = 0.4 (40%)
         let p_b = 0.25;
         let expected_drop_rate = (2.0 * p_b) / (1.0 + p_b);
         let expected_drop_count = (total_packets as f64 * expected_drop_rate) as usize;
-        
+
         // Allow reasonable statistical variation (±3 standard deviations, 99.7% confidence)
         // Standard deviation for binomial distribution: sqrt(n * p * (1-p))
-        let std_dev = (total_packets as f64 * expected_drop_rate * (1.0 - expected_drop_rate)).sqrt();
+        let std_dev =
+            (total_packets as f64 * expected_drop_rate * (1.0 - expected_drop_rate)).sqrt();
         let margin = (3.0 * std_dev) as usize;
-        
+
         let lower_bound = expected_drop_count.saturating_sub(margin);
         let upper_bound = expected_drop_count + margin;
-        
+
         // Verify drop count is within expected statistical range
         assert!(
             drop_count >= lower_bound && drop_count <= upper_bound,
             "Drop count {} should be in range [{}, {}] (expected {} ± {} based on RED algorithm with p_b=0.25)",
             drop_count, lower_bound, upper_bound, expected_drop_count, margin
         );
-        
+
         // Keep original assertions as sanity checks
         assert!(
             drop_count > 0,
