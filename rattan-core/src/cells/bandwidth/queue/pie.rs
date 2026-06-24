@@ -119,12 +119,8 @@ impl<P> PieQueue<P>
 where
     P: Packet,
 {
-    fn update_drop_probability(&mut self, packet: &P) {
-        let now = packet.get_timestamp();
-        let elapsed_ms = now
-            .saturating_duration_since(self.start_update)
-            .as_secs_f64()
-            * 1000.0;
+    fn update_drop_probability(&mut self) {
+        let elapsed_ms = self.config.t_update.as_secs_f64() * 1000.0;
 
         let cur_del = if self.avg_drate.abs() < f64::EPSILON {
             0.0
@@ -149,7 +145,14 @@ where
         } else if self.p < 0.1 {
             p_increment /= 2.0;
         }
+
+        // RFC 8033 Section 5.5: Cap Drop Adjustment
+        if self.p >= 0.1 {
+            p_increment = p_increment.min(0.02);
+        }
+
         self.p += p_increment;
+
         // RFC 8033 Section 4.2: Exponential decay when system is not congested
         if cur_del < self.config.ref_del / 2.0 && self.old_del < self.config.ref_del / 2.0 {
             self.p *= 0.98;
@@ -166,7 +169,7 @@ where
             self.burst_allowance = (self.burst_allowance - elapsed_ms).max(0.0);
         }
         self.old_del = cur_del;
-        self.start_update = now;
+        self.start_update += self.config.t_update;
     }
 
     fn should_drop(&mut self) -> bool {
@@ -176,8 +179,11 @@ where
         }
 
         // RFC 8033 Section 4.1: Bypass random drop logic to be work conserving
-        let bypass_drop =
-            (self.old_del < self.config.ref_del / 2.0 && self.p < 0.2) || self.queue.len() <= 2;
+        // MEAN_PKTSIZE is generally considered to be 1500 bytes (standard MTU) in RFCs.
+        // We add extra_length to align with how now_bytes is calculated (L2 vs L3).
+        let mean_pktsize = 1500 + self.get_extra_length();
+        let bypass_drop = (self.old_del < self.config.ref_del / 2.0 && self.p < 0.2)
+            || self.now_bytes <= 2 * mean_pktsize;
         if bypass_drop {
             return false;
         }
@@ -239,12 +245,15 @@ where
     }
 
     fn enqueue(&mut self, packet: P) {
-        // Simulate time-driven with event-driven approach
-        let interval_update = packet
+        // Simulate time-driven with event-driven approach by using circular update logic
+        let mut interval_update = packet
             .get_timestamp()
             .saturating_duration_since(self.start_update);
-        if interval_update >= self.config.t_update {
-            self.update_drop_probability(&packet);
+        while interval_update >= self.config.t_update {
+            self.update_drop_probability();
+            interval_update = packet
+                .get_timestamp()
+                .saturating_duration_since(self.start_update);
         }
 
         let packet_size = packet.l3_length() + self.get_extra_length();
@@ -389,17 +398,17 @@ mod tests {
         queue.burst_allowance = 100.0;
 
         // burst_allowance > 0 bypasses random drop
-        queue.enqueue(create_packet(100));
+        queue.enqueue(create_packet(1500));
         assert_eq!(queue.length(), 1);
 
-        // Fill queue > 2 to bypass work conserving logic later
-        queue.enqueue(create_packet(100));
-        queue.enqueue(create_packet(100));
+        // Fill queue > 2 * 1500 bytes to bypass work conserving logic later
+        queue.enqueue(create_packet(1500));
+        queue.enqueue(create_packet(1500));
         assert_eq!(queue.length(), 3);
 
         queue.burst_allowance = 0.0;
-        // With burst_allowance = 0.0, queue > 2, and p = 1.0, it should drop
-        queue.enqueue(create_packet(100));
+        // With burst_allowance = 0.0, queue > 2 * 1500 bytes, and p = 1.0, it should drop
+        queue.enqueue(create_packet(1500));
         assert_eq!(queue.length(), 3);
     }
 
@@ -410,23 +419,25 @@ mod tests {
         queue.p = 1.0;
         queue.burst_allowance = 0.0;
 
-        // bypass_drop handles queue.len() <= 2
-        queue.enqueue(create_packet(100));
+        // bypass_drop handles queue.now_bytes <= 3000
+        queue.enqueue(create_packet(1500));
         assert_eq!(queue.length(), 1);
-        queue.enqueue(create_packet(100));
+        queue.enqueue(create_packet(1500));
         assert_eq!(queue.length(), 2);
-        queue.enqueue(create_packet(100));
+
+        // For the 3rd element, now_bytes is 3000, so it bypasses based on byte length (<= 3000)
+        queue.enqueue(create_packet(1500));
         assert_eq!(queue.length(), 3);
 
-        // For the 4th element, queue.len() is 3, so it does not bypass based on length
+        // For the 4th element, now_bytes is 4500, so it does not bypass based on byte length
         // Since p = 1.0, it drops
-        queue.enqueue(create_packet(100));
+        queue.enqueue(create_packet(1500));
         assert_eq!(queue.length(), 3);
 
         // Now test bypass_drop condition: old_del < ref_del/2 and p < 0.2
         queue.p = 0.15;
         queue.old_del = config.ref_del / 3.0;
-        queue.enqueue(create_packet(100));
+        queue.enqueue(create_packet(1500));
         assert_eq!(queue.length(), 4);
     }
 
@@ -446,8 +457,12 @@ mod tests {
         assert!(queue.start_measurement.is_some());
         assert_eq!(queue.now_bytes, 20000);
 
-        // Force time to advance deterministically to avoid flaky tests
-        queue.start_measurement = Some(Instant::now() - Duration::from_millis(10));
+        // Simulate time advancing for the next measurement
+        let mut pkt2 = create_packet(10014);
+        pkt2.delay_until(queue.start_measurement.unwrap() + Duration::from_millis(10));
+
+        // Enqueue the packet with advanced timestamp to update queue state
+        queue.enqueue(pkt2);
 
         // Second dequeue triggers calculation of avg_drate
         queue.dequeue(); // dequeues 10000 bytes
@@ -465,17 +480,31 @@ mod tests {
 
         // Fake high delay
         queue.avg_drate = 1000.0;
-        queue.now_bytes = 100000; // delay = 100.0s > ref_del
+        queue.now_bytes = 100000; // cur_del = 100000 / 1000.0 = 100.0s > ref_del (0.015s)
+        queue.old_del = 50.0; // old_del = 50.0s
+        queue.p = 0.0; // start with p = 0
+
+        // Expected p_increment calculation:
+        // tilde_alpha = 0.125, tilde_beta = 1.25
+        // p_increment = 0.125 * (100.0 - 0.015) + 1.25 * (100.0 - 50.0)
+        // p_increment = 12.498125 + 62.5 = 74.998125
+        // Since initial p = 0.0 < 0.000001, p_increment /= 2048.0
+        // p_increment = 74.998125 / 2048.0 ≈ 0.036620178
+        // Final p should be exactly this value
+        let expected_p = (0.125 * (100.0 - config.ref_del) + 1.25 * (100.0 - 50.0)) / 2048.0;
 
         // Force next enqueue to trigger update_drop_probability() deterministically
-        queue.start_update = Instant::now() - Duration::from_millis(16);
+        let mut pkt = create_packet(14);
+        pkt.delay_until(queue.start_update + Duration::from_millis(16));
 
         // This enqueue will trigger update_drop_probability()
-        queue.enqueue(create_packet(14));
+        queue.enqueue(pkt);
 
         assert!(
-            queue.p > 0.0,
-            "Probability should increase when delay is high"
+            (queue.p - expected_p).abs() < f64::EPSILON,
+            "Probability should be exactly calculated based on PIE formula. Expected: {}, Got: {}",
+            expected_p,
+            queue.p
         );
     }
 }

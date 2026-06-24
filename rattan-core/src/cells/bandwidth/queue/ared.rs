@@ -502,12 +502,14 @@ mod tests {
         queue.enqueue(create_packet(14));
         assert_eq!(queue.average_queue_length, 180.0);
 
-        // Set latest_max_p_update to 600ms ago to trigger update_max_p
-        queue.latest_max_p_update = Instant::now() - Duration::from_millis(600);
+        // Set latest_max_p_update artificially back, then enqueue a packet with current timestamp
+        let mut pkt3 = create_packet(14);
+        pkt3.delay_until(queue.latest_max_p_update + Duration::from_millis(600));
+
         let before_max_p = queue.config.max_p;
 
         // Third enqueue triggers update_max_p
-        queue.enqueue(create_packet(14));
+        queue.enqueue(pkt3);
 
         let after_max_p = queue.config.max_p;
         assert!(
@@ -536,11 +538,13 @@ mod tests {
         queue.enqueue(create_packet(14));
         assert_eq!(queue.average_queue_length, 120.0);
 
-        // Set latest_max_p_update to 600ms ago
-        queue.latest_max_p_update = Instant::now() - Duration::from_millis(600);
+        // Enqueue a packet with timestamp 600ms later to trigger update_max_p
+        let mut pkt3 = create_packet(14);
+        pkt3.delay_until(queue.latest_max_p_update + Duration::from_millis(600));
+
         let before_max_p = queue.config.max_p;
 
-        queue.enqueue(create_packet(14));
+        queue.enqueue(pkt3);
 
         let after_max_p = queue.config.max_p;
         assert!(
