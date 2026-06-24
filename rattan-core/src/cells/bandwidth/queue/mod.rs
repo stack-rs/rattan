@@ -11,7 +11,6 @@ use tokio::time::Instant;
 use super::BwType;
 use crate::cells::{Packet, LARGE_DURATION};
 
-mod ared;
 mod codel;
 mod drophead;
 mod droptail;
@@ -19,7 +18,6 @@ mod infinite;
 mod pie;
 mod red;
 
-pub use ared::*;
 pub use codel::*;
 pub use drophead::*;
 pub use droptail::*;

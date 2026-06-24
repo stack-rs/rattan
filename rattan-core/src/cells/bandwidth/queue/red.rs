@@ -1,13 +1,15 @@
-// RED Queue Implementation Reference:
-// https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=251892
-// https://github.com/torvalds/linux/blob/master/include/net/red.h
+// Combined RED Queue with Adaptive mode
+// Reference:
+//   RED:  https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=251892
+//   ARED: https://www.icir.org/floyd/papers/adaptiveRed.pdf
+//   Kernel RED/ARED: https://github.com/torvalds/linux/blob/master/include/net/red.h
 
 use std::collections::VecDeque;
 
 use rand::{rngs::StdRng, RngExt, SeedableRng};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use tokio::time::Instant;
+use tokio::time::{Duration, Instant};
 use tracing::{debug, warn};
 
 #[cfg(feature = "serde")]
@@ -24,6 +26,14 @@ pub struct RedQueueConfig {
     pub min_th: usize, // minimum threshold of average queue length
     pub max_th: usize, // maximum threshold of average queue length
     pub max_p: f64,    // maximum probability of dropping a packet
+    // Packet transmission time in microseconds.
+    // Used to compute the number of "virtual packet departures" during an idle period
+    // for average queue length decay: `m = idle_time_us / pkt_tx_time`.
+    // The upper layer computes this from link bandwidth `C` and average packet size
+    // `avpkt` as `pkt_tx_time = avpkt * 8 / C`, then passes it down as a fixed config.
+    pub pkt_tx_time: f64,
+    pub adaptive: bool, // enable adaptive mode (ARED): max_p is adjusted dynamically
+
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "serde_default")
@@ -40,46 +50,79 @@ impl Default for RedQueueConfig {
             min_th: 7500,  // 5 * 1500 bytes
             max_th: 22500, // 15 * 1500 bytes
             max_p: 0.02,
+            pkt_tx_time: 120.0, // 1500 bytes * 8 / 100Mbps = 120 us
+            adaptive: false,
             bw_type: BwType::default(),
         }
     }
 }
 
 impl RedQueueConfig {
-    pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
-        packet_limit: A,
-        byte_limit: B,
-        w_q: f64,
-        min_th: usize,
-        max_th: usize,
-        max_p: f64,
-        bw_type: BwType,
-    ) -> Self {
-        // Warning: The caller must ensure that the parameters are valid.
-        // It's recommended to do validation before calling this function,
-        // or we may need to return a Result instead of Self in the future.
-        if min_th >= max_th {
+    fn validate(&self) {
+        if self.min_th >= self.max_th {
             warn!(
                 "RedQueueConfig: min_th ({}) >= max_th ({}), which may cause invalid behavior.",
-                min_th, max_th
+                self.min_th, self.max_th
             );
         }
-        if !(0.0..=1.0).contains(&w_q) {
-            warn!("RedQueueConfig: w_q ({}) is out of expected range [0.0, 1.0]. This is an EWMA weight.", w_q);
+        if !(0.0..=1.0).contains(&self.w_q) {
+            warn!("RedQueueConfig: w_q ({}) is out of expected range [0.0, 1.0]. This is an EWMA weight.", self.w_q);
         }
-        if !(0.0..=1.0).contains(&max_p) {
-            warn!("RedQueueConfig: max_p ({}) is out of expected range [0.0, 1.0]. This is a probability.", max_p);
+        if !(0.0..=1.0).contains(&self.max_p) {
+            warn!("RedQueueConfig: max_p ({}) is out of expected range [0.0, 1.0]. This is a probability.", self.max_p);
         }
+    }
 
-        Self {
-            packet_limit: packet_limit.into(),
-            byte_limit: byte_limit.into(),
-            w_q,
-            min_th,
-            max_th,
-            max_p,
-            bw_type,
-        }
+    // A `RedQueueConfig` can be constructed in any of these ways:
+    // 1. Struct literal with defaults:
+    //      RedQueueConfig { min_th: 100, ..Default::default() }
+    // 2. Setter chain (avoids the old giant `new()` with 9+ args):
+    //      RedQueueConfig::default().with_min_th(100).with_adaptive(true)
+    // 3. Plain default (all fields take their `Default` values):
+    //      RedQueueConfig::default()
+    pub fn with_packet_limit(mut self, limit: usize) -> Self {
+        self.packet_limit = Some(limit);
+        self
+    }
+
+    pub fn with_byte_limit(mut self, limit: usize) -> Self {
+        self.byte_limit = Some(limit);
+        self
+    }
+
+    pub fn with_w_q(mut self, w_q: f64) -> Self {
+        self.w_q = w_q;
+        self
+    }
+
+    pub fn with_min_th(mut self, min_th: usize) -> Self {
+        self.min_th = min_th;
+        self
+    }
+
+    pub fn with_max_th(mut self, max_th: usize) -> Self {
+        self.max_th = max_th;
+        self
+    }
+
+    pub fn with_max_p(mut self, max_p: f64) -> Self {
+        self.max_p = max_p;
+        self
+    }
+
+    pub fn with_pkt_tx_time(mut self, pkt_tx_time: f64) -> Self {
+        self.pkt_tx_time = pkt_tx_time;
+        self
+    }
+
+    pub fn with_adaptive(mut self, adaptive: bool) -> Self {
+        self.adaptive = adaptive;
+        self
+    }
+
+    pub fn with_bw_type(mut self, bw_type: BwType) -> Self {
+        self.bw_type = bw_type;
+        self
     }
 }
 
@@ -93,16 +136,17 @@ impl<P> From<RedQueueConfig> for RedQueue<P> {
 pub struct RedQueue<P> {
     queue: VecDeque<P>,
     config: RedQueueConfig,
-    now_bytes: usize, // for calculating average_queue_length
+    now_bytes: usize,
     average_queue_length: f64,
-    count_packet: i32,           // number of packets since last dropping
-    idle_start: Option<Instant>, // start time of current idle period
+    count_packet: i32,            // number of packets since last dropping
+    idle_start: Option<Instant>,  // start time of current idle period
+    latest_max_p_update: Instant, // latest time when max_p was updated (used in adaptive mode)
     rng: StdRng,
-    estimated_pkt_tx_time: f64, // estimated packet transmission time in microseconds
 }
 
 impl<P> RedQueue<P> {
     pub fn new(config: RedQueueConfig) -> Self {
+        config.validate();
         debug!(?config, "New RedQueue");
         Self {
             queue: VecDeque::new(),
@@ -111,8 +155,8 @@ impl<P> RedQueue<P> {
             average_queue_length: 0.0,
             count_packet: -1,
             idle_start: None,
+            latest_max_p_update: Instant::now(),
             rng: StdRng::seed_from_u64(42),
-            estimated_pkt_tx_time: 120.0, // initial estimate: 1500 bytes * 8 / 100Mbps = 120 us
         }
     }
 }
@@ -134,27 +178,13 @@ where
         if !self.is_empty() {
             self.average_queue_length = (1.0 - self.config.w_q) * self.average_queue_length
                 + self.config.w_q * (self.now_bytes as f64);
-
-            // Estimate pkt_tx_time based on first and last packet timestamps
-            if self.queue.len() >= 2 {
-                if let (Some(first), Some(last)) = (self.queue.front(), self.queue.back()) {
-                    let first_time = first.get_timestamp();
-                    let last_time = last.get_timestamp();
-                    let time_diff = last_time.saturating_duration_since(first_time);
-                    if time_diff.as_micros() > 0 {
-                        let avg_inter_packet_time =
-                            time_diff.as_micros() as f64 / (self.queue.len() - 1) as f64;
-                        self.estimated_pkt_tx_time = avg_inter_packet_time;
-                    }
-                }
-            }
             return;
         }
 
         if let Some(idle_start) = self.idle_start {
             let now = packet.get_timestamp();
             let idle_duration = now.saturating_duration_since(idle_start);
-            let m = idle_duration.as_micros() as f64 / self.estimated_pkt_tx_time;
+            let m = idle_duration.as_micros() as f64 / self.config.pkt_tx_time;
             self.average_queue_length *= f64::powf(1.0 - self.config.w_q, m);
             self.idle_start = Some(now);
         }
@@ -188,6 +218,19 @@ where
             false
         }
     }
+
+    fn update_max_p(&mut self) {
+        let target_min =
+            self.config.min_th as f64 + 0.4 * (self.config.max_th - self.config.min_th) as f64;
+        let target_max =
+            self.config.min_th as f64 + 0.6 * (self.config.max_th - self.config.min_th) as f64;
+        if self.average_queue_length > target_max {
+            self.config.max_p += (self.config.max_p / 4.0).min(0.01);
+        } else if self.average_queue_length < target_min {
+            self.config.max_p *= 0.9;
+        }
+        self.config.max_p = self.config.max_p.clamp(0.01, 0.5);
+    }
 }
 
 impl<P> PacketQueue<P> for RedQueue<P>
@@ -208,6 +251,15 @@ where
     fn enqueue(&mut self, packet: P) {
         self.update_avg(&packet);
 
+        if self.config.adaptive {
+            let now = packet.get_timestamp();
+            if now.saturating_duration_since(self.latest_max_p_update) >= Duration::from_millis(500)
+            {
+                self.update_max_p();
+                self.latest_max_p_update = now;
+            }
+        }
+
         let packet_size = packet.l3_length() + self.get_extra_length();
         let below_hard_limit = self
             .config
@@ -225,7 +277,7 @@ where
                 queue_len = self.queue.len(),
                 now_bytes = self.now_bytes,
                 header = ?format!("{:X?}", &packet.as_slice()[0..std::cmp::min(56, packet.length())]),
-                "Drop packet(l3_len: {}, extra_len: {}) due to hard limit", packet.l3_length(), self.config.bw_type.extra_length()
+                "Drop packet(l3_len: {}, extra_len: {}) due to hard limit", packet.l3_length(), self.get_extra_length()
             );
             return;
         }
@@ -463,5 +515,79 @@ mod tests {
             "Should have dropped some packets probabilistically"
         );
         assert!(drop_count < total_packets, "Should not drop all packets");
+    }
+
+    #[test_log::test]
+    fn test_red_queue_adaptive_max_p_increase() {
+        let config = RedQueueConfig {
+            min_th: 100,
+            max_th: 200,
+            max_p: 0.02,
+            w_q: 1.0, // Instantly update avg
+            adaptive: true,
+            ..Default::default()
+        };
+        let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
+
+        // enqueue to make average_queue_length > target_max
+        // target_max = min_th + 0.6 * (max_th - min_th) = 100 + 60 = 160
+        // We make avg = 180 (L3 size 180, total 194)
+        queue.enqueue(create_packet(194));
+        assert_eq!(queue.average_queue_length, 0.0); // First enqueue updates avg based on empty queue rule (avg=0).
+
+        // Second enqueue updates avg to 180
+        queue.enqueue(create_packet(14));
+        assert_eq!(queue.average_queue_length, 180.0);
+
+        // Set latest_max_p_update artificially back, then enqueue a packet with current timestamp
+        let mut pkt3 = create_packet(14);
+        pkt3.delay_until(queue.latest_max_p_update + Duration::from_millis(600));
+
+        let before_max_p = queue.config.max_p;
+
+        // Third enqueue triggers update_max_p
+        queue.enqueue(pkt3);
+
+        let after_max_p = queue.config.max_p;
+        assert!(
+            after_max_p > before_max_p,
+            "max_p should increase when avg > target_max"
+        );
+    }
+
+    #[test_log::test]
+    fn test_red_queue_adaptive_max_p_decrease() {
+        let config = RedQueueConfig {
+            min_th: 100,
+            max_th: 200,
+            max_p: 0.05, // Starting with a high max_p
+            w_q: 1.0,
+            adaptive: true,
+            ..Default::default()
+        };
+        let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
+
+        // enqueue to make average_queue_length < target_min
+        // target_min = min_th + 0.4 * (max_th - min_th) = 100 + 40 = 140
+        // We make avg = 120 (L3 size 120, total 134)
+        queue.enqueue(create_packet(134));
+        assert_eq!(queue.average_queue_length, 0.0);
+
+        queue.enqueue(create_packet(14));
+        assert_eq!(queue.average_queue_length, 120.0);
+
+        // Enqueue a packet with timestamp 600ms later to trigger update_max_p
+        let mut pkt3 = create_packet(14);
+        pkt3.delay_until(queue.latest_max_p_update + Duration::from_millis(600));
+
+        let before_max_p = queue.config.max_p;
+
+        queue.enqueue(pkt3);
+
+        let after_max_p = queue.config.max_p;
+        assert!(
+            after_max_p < before_max_p,
+            "max_p should decrease when avg < target_min"
+        );
     }
 }
