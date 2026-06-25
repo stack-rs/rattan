@@ -138,9 +138,9 @@ pub struct RedQueue<P> {
     config: RedQueueConfig,
     now_bytes: usize,
     average_queue_length: f64,
-    count_packet: i32,            // number of packets since last dropping
-    idle_start: Option<Instant>,  // start time of current idle period
-    latest_max_p_update: Instant, // latest time when max_p was updated (used in adaptive mode)
+    count_packet: i32,                    // number of packets since last dropping
+    idle_start: Option<Instant>,          // start time of current idle period
+    latest_max_p_update: Option<Instant>, // latest time when max_p was updated (used in adaptive mode), set by first enqueue
     rng: StdRng,
 }
 
@@ -155,7 +155,7 @@ impl<P> RedQueue<P> {
             average_queue_length: 0.0,
             count_packet: -1,
             idle_start: None,
-            latest_max_p_update: Instant::now(),
+            latest_max_p_update: None,
             rng: StdRng::seed_from_u64(42),
         }
     }
@@ -253,10 +253,14 @@ where
 
         if self.config.adaptive {
             let now = packet.get_timestamp();
-            if now.saturating_duration_since(self.latest_max_p_update) >= Duration::from_millis(500)
+            if self.latest_max_p_update.is_none() {
+                self.latest_max_p_update = Some(now);
+            }
+            if now.saturating_duration_since(self.latest_max_p_update.unwrap())
+                >= Duration::from_millis(500)
             {
                 self.update_max_p();
-                self.latest_max_p_update = now;
+                self.latest_max_p_update = Some(now);
             }
         }
 
@@ -541,7 +545,7 @@ mod tests {
 
         // Set latest_max_p_update artificially back, then enqueue a packet with current timestamp
         let mut pkt3 = create_packet(14);
-        pkt3.delay_until(queue.latest_max_p_update + Duration::from_millis(600));
+        pkt3.delay_until(queue.latest_max_p_update.unwrap() + Duration::from_millis(600));
 
         let before_max_p = queue.config.max_p;
 
@@ -578,7 +582,7 @@ mod tests {
 
         // Enqueue a packet with timestamp 600ms later to trigger update_max_p
         let mut pkt3 = create_packet(14);
-        pkt3.delay_until(queue.latest_max_p_update + Duration::from_millis(600));
+        pkt3.delay_until(queue.latest_max_p_update.unwrap() + Duration::from_millis(600));
 
         let before_max_p = queue.config.max_p;
 
