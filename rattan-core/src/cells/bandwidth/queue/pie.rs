@@ -79,7 +79,7 @@ pub struct PieQueue<P> {
     old_del: f64,                       // previous delay (sec)
     p: f64,                             // current drop probability
     dq_count: usize,                    // departure count (bytes)
-    start_update: Instant,              // start time of t_update
+    start_update: Option<Instant>,      // start time of t_update, set by first enqueue
     start_measurement: Option<Instant>, // Some(Instant) when in a measurement cycle, None when quit
     avg_drate: f64,
     burst_allowance: f64,
@@ -97,7 +97,7 @@ impl<P> PieQueue<P> {
             old_del: 0.0,
             p: 0.0,
             dq_count: 0,
-            start_update: Instant::now(),
+            start_update: None,
             start_measurement: None,
             avg_drate: 0.0,
             burst_allowance: max_burst,
@@ -169,7 +169,7 @@ where
             self.burst_allowance = (self.burst_allowance - elapsed_ms).max(0.0);
         }
         self.old_del = cur_del;
-        self.start_update += self.config.t_update;
+        self.start_update = Some(self.start_update.unwrap() + self.config.t_update);
     }
 
     fn should_drop(&mut self) -> bool {
@@ -246,14 +246,17 @@ where
 
     fn enqueue(&mut self, packet: P) {
         // Simulate time-driven with event-driven approach by using circular update logic
+        if self.start_update.is_none() {
+            self.start_update = Some(packet.get_timestamp());
+        }
         let mut interval_update = packet
             .get_timestamp()
-            .saturating_duration_since(self.start_update);
+            .saturating_duration_since(self.start_update.unwrap());
         while interval_update >= self.config.t_update {
             self.update_drop_probability();
             interval_update = packet
                 .get_timestamp()
-                .saturating_duration_since(self.start_update);
+                .saturating_duration_since(self.start_update.unwrap());
         }
 
         let packet_size = packet.l3_length() + self.get_extra_length();
@@ -495,7 +498,8 @@ mod tests {
 
         // Force next enqueue to trigger update_drop_probability() deterministically
         let mut pkt = create_packet(14);
-        pkt.delay_until(queue.start_update + Duration::from_millis(16));
+        queue.start_update = Some(pkt.get_timestamp());
+        pkt.delay_until(queue.start_update.unwrap() + Duration::from_millis(16));
 
         // This enqueue will trigger update_drop_probability()
         queue.enqueue(pkt);
