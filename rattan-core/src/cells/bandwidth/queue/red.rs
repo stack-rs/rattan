@@ -301,11 +301,11 @@ where
         self.idle_start = None;
     }
 
-    fn dequeue(&mut self) -> Option<P> {
+    fn dequeue_at(&mut self, timestamp: Instant) -> Option<P> {
         if let Some(packet) = self.queue.pop_front() {
             self.now_bytes -= packet.l3_length() + self.get_extra_length();
             if self.is_empty() {
-                self.idle_start = Some(Instant::now());
+                self.idle_start = Some(timestamp);
             }
             Some(packet)
         } else {
@@ -366,7 +366,7 @@ mod tests {
         assert!(!queue.is_empty());
         assert_eq!(queue.length(), 1);
 
-        let dequeued = queue.dequeue();
+        let dequeued = queue.dequeue_at(Instant::now());
         assert!(dequeued.is_some());
         assert!(queue.is_empty());
     }

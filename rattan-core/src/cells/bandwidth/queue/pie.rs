@@ -192,8 +192,7 @@ where
         rand_val < self.p
     }
 
-    fn update_avg_drate(&mut self, pkt_size: usize) {
-        let now = Instant::now();
+    fn update_avg_drate(&mut self, pkt_size: usize, now: Instant) {
         let dq_threshold = 16384; // 16 KiB
 
         // Enter a measurement cycle
@@ -294,11 +293,11 @@ where
         self.queue.push_back(packet);
     }
 
-    fn dequeue(&mut self) -> Option<P> {
+    fn dequeue_at(&mut self, timestamp: Instant) -> Option<P> {
         if let Some(packet) = self.queue.pop_front() {
             let pkt_size = packet.l3_length() + self.get_extra_length();
             self.now_bytes -= pkt_size;
-            self.update_avg_drate(pkt_size);
+            self.update_avg_drate(pkt_size, timestamp);
             Some(packet)
         } else {
             None
@@ -353,7 +352,7 @@ mod tests {
         assert!(!queue.is_empty());
         assert_eq!(queue.length(), 1);
 
-        let dequeued = queue.dequeue();
+        let dequeued = queue.dequeue_at(Instant::now());
         assert!(dequeued.is_some());
         assert!(queue.is_empty());
     }
@@ -456,19 +455,20 @@ mod tests {
 
         // First dequeue triggers start of measurement cycle
         assert!(queue.start_measurement.is_none());
-        queue.dequeue(); // dequeues 10000 bytes
+        let deq_time1 = Instant::now();
+        queue.dequeue_at(deq_time1); // dequeues 10000 bytes
         assert!(queue.start_measurement.is_some());
         assert_eq!(queue.now_bytes, 20000);
 
         // Simulate time advancing for the next measurement
         let mut pkt2 = create_packet(10014);
-        pkt2.delay_until(queue.start_measurement.unwrap() + Duration::from_millis(10));
+        pkt2.delay_until(deq_time1 + Duration::from_millis(10));
 
         // Enqueue the packet with advanced timestamp to update queue state
         queue.enqueue(pkt2);
 
         // Second dequeue triggers calculation of avg_drate
-        queue.dequeue(); // dequeues 10000 bytes
+        queue.dequeue_at(deq_time1 + Duration::from_millis(10)); // dequeues 10000 bytes
         assert!(queue.avg_drate > 0.0, "avg_drate should be calculated");
         assert!(
             queue.start_measurement.is_none(),
