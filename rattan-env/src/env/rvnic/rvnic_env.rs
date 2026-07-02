@@ -11,6 +11,7 @@ use tokio::sync::{
     mpsc::{self},
     OnceCell,
 };
+use tokio::time::{timeout, Duration, Instant};
 use tracing::{info, instrument, warn};
 
 use super::constants::*;
@@ -38,54 +39,112 @@ struct RvnicPacketRecycler {
     rx: mpsc::UnboundedReceiver<(QueueID, u64)>,
 }
 
+// If token is Some,  try to batch the tokens until there are BATCH_SIZE tokens
+// If token is None, eagerly recycle any token
+// Return true if the drop is deffered.
+fn recycle_token_on_queue(
+    token: Option<u64>,
+    queue_id: QueueID,
+    drop_ring: &mut DropRing,
+    buffer: &mut Vec<u64>,
+) -> bool {
+    if let Some(token) = token {
+        buffer.push(token);
+        if buffer.len() < BATCH_SIZE {
+            return true;
+        }
+    }
+    let original_len = buffer.len();
+
+    // We do not care the order that the tokens are recycled, so we push from the rear
+    // of the buffer, and also send a send-able part from back
+    let available = drop_ring.available() as usize;
+    let to_send = available.min(BATCH_SIZE).min(original_len);
+    if to_send == 0 {
+        return false;
+    }
+    let new_length = original_len - to_send;
+    let (_remain, to_send_buffer) = buffer.as_slice().split_at(new_length);
+
+    let actual_sent = drop_ring.produce(to_send_buffer);
+    if actual_sent == to_send {
+        // This is the common case without any memory allocation
+        buffer.truncate(new_length);
+    } else {
+        // It is new_length..(new_length + actual_sent) that is sent,
+        // we have to remove them from the buffer
+        let not_sent_tail = buffer.split_off(new_length + actual_sent);
+        buffer.truncate(new_length);
+        buffer.extend_from_slice(&not_sent_tail);
+    }
+
+    tracing::debug!(
+        target = "rvnic",
+        "On {}, tried to drop {} tokens, dropped {}, remain {}",
+        queue_id,
+        to_send,
+        actual_sent,
+        buffer.len()
+    );
+    false
+}
+
+struct ReceiveTimeout {}
+
+async fn recv_with_timeout<T>(
+    rx: &mut mpsc::UnboundedReceiver<T>,
+    dur: Duration,
+) -> Result<Option<T>, ReceiveTimeout> {
+    match timeout(dur, rx.recv()).await {
+        Ok(msg) => Ok(msg),
+        Err(_) => Err(ReceiveTimeout {}),
+    }
+}
+
 impl RvnicPacketRecycler {
     async fn run(mut self) {
         info!(target = "rvnic", "Packet Recycler start");
 
-        while let Some((queue_id, token)) = self.rx.recv().await {
-            tracing::debug!(
-                target = "rvnic",
-                "Token {} on queue {:?} to be recycled",
-                token,
-                queue_id
-            );
+        let mut defered_schedule: HashMap<QueueID, Instant> = HashMap::new();
+
+        loop {
+            // There won't be many queues, so a simlpe O(n) iteration would work.
+            let (waiting_queue, timeout) = if let Some((&queue_id, &instant)) =
+                defered_schedule.iter().min_by_key(|&(_queue, time)| time)
+            {
+                (Some(queue_id), instant.duration_since(Instant::now()))
+            } else {
+                (None, Duration::from_secs(10))
+            };
+
+            let (queue_id, token) = match recv_with_timeout(&mut self.rx, timeout).await {
+                Ok(Some((queue_id, token))) => (Some(queue_id), Some(token)),
+                Ok(None) => {
+                    // The other side of the channel has been closed.
+                    break;
+                }
+                Err(_) => (waiting_queue, None),
+            };
+
+            // Nothing we can do if we can not specific a queue to recycle on
+            let Some(queue_id) = queue_id else {
+                continue;
+            };
+
+            let mut delayed = false;
             if let Some((drop_ring, buffer)) = self.drop_rings.get_mut(&queue_id) {
-                buffer.push(token);
-                let original_len = buffer.len();
-                if original_len < BATCH_SIZE {
-                    continue;
-                }
-                // We do not care the order that the tokens are recycled, so we push from the rear
-                // of the buffer, and also send a send-able part from back
-                let available = drop_ring.available() as usize;
-                let to_send = available.min(BATCH_SIZE).min(original_len);
-                if to_send == 0 {
-                    continue;
-                }
-                let new_length = original_len - to_send;
-                let (_remain, to_send_buffer) = buffer.as_slice().split_at(new_length);
-
-                let actual_sent = drop_ring.produce(to_send_buffer);
-                if actual_sent == to_send {
-                    // This is the common case without any memory allocation
-                    buffer.truncate(new_length);
-                } else {
-                    // It is new_length..(new_length + actual_sent) that is sent,
-                    // we have to remove them from the buffer
-                    let not_sent_tail = buffer.split_off(new_length + actual_sent);
-                    buffer.truncate(new_length);
-                    buffer.extend_from_slice(&not_sent_tail);
-                }
-
-                tracing::debug!(
-                    target = "rvnic",
-                    "On {:?}, tried to drop {} tokens, dropped {}, remain {}",
-                    queue_id,
-                    to_send,
-                    actual_sent,
-                    buffer.len()
-                );
+                delayed = recycle_token_on_queue(token, queue_id, drop_ring, buffer);
             }
+
+            if delayed
+                && defered_schedule
+                    .get(&queue_id)
+                    .is_some_and(|t| t.elapsed().is_zero())
+            {
+                continue;
+            }
+
+            defered_schedule.insert(queue_id, Instant::now() + Duration::from_secs(5));
         }
     }
 }
