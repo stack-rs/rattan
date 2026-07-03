@@ -179,11 +179,10 @@ where
         }
     }
 
-    fn dequeue(&mut self, timestamp: Option<Instant>) -> Option<P> {
+    fn dequeue_at(&mut self, timestamp: Instant) -> Option<P> {
         match self.queue.pop_front() {
             Some(mut packet) => {
                 self.now_bytes -= packet.l3_length() + self.config.bw_type.extra_length();
-                let now = timestamp.unwrap_or(Instant::now());
                 let drop = self.should_drop(&packet);
                 trace!(
                     drop,
@@ -202,7 +201,7 @@ where
                         self.dropping = false;
                         trace!("Exit dropping state since packet should not be dropped");
                     } else {
-                        while self.dropping && now >= self.drop_next {
+                        while self.dropping && timestamp >= self.drop_next {
                             self.count += 1;
                             trace!(
                                 ldelay = ?self.ldelay,
@@ -258,13 +257,13 @@ where
 
                     self.dropping = true;
                     let delta = self.count - self.lastcount;
-                    if delta > 1 && now - self.drop_next < 16 * self.config.interval {
+                    if delta > 1 && timestamp - self.drop_next < 16 * self.config.interval {
                         self.count = delta;
                     } else {
                         self.count = 1;
                     }
                     self.lastcount = self.count;
-                    self.drop_next = self.control_law(now);
+                    self.drop_next = self.control_law(timestamp);
                     trace!(
                         count = self.count,
                         delta,

@@ -56,7 +56,7 @@ where
         self.queue.push_back(packet);
     }
 
-    fn dequeue(&mut self, _timestamp: Option<Instant>) -> Option<P> {
+    fn dequeue_at(&mut self, _timestamp: Instant) -> Option<P> {
         self.queue.pop_front()
     }
 
