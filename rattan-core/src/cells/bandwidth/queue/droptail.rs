@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use tokio::time::Instant;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -109,7 +110,7 @@ where
         }
     }
 
-    fn dequeue(&mut self) -> Option<P> {
+    fn dequeue(&mut self, _timestamp: Option<Instant>) -> Option<P> {
         match self.queue.pop_front() {
             Some(packet) => {
                 self.now_bytes -= packet.l3_length() + self.bw_type.extra_length();

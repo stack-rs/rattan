@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use tokio::time::Instant;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -55,7 +56,7 @@ where
         self.queue.push_back(packet);
     }
 
-    fn dequeue(&mut self) -> Option<P> {
+    fn dequeue(&mut self, _timestamp: Option<Instant>) -> Option<P> {
         self.queue.pop_front()
     }
 

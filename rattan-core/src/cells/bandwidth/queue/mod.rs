@@ -106,7 +106,7 @@ where
                 break;
             }
         }
-        self.queue.dequeue()
+        self.queue.dequeue(Some(timestamp))
     }
 
     pub fn next_call_time(&self) -> Instant {
@@ -131,7 +131,8 @@ where
     fn enqueue(&mut self, packet: P);
 
     /// If the queue is empty, return `None`
-    fn dequeue(&mut self) -> Option<P>;
+    /// If the queue does not require a timestamp for dequeueing, pass None.
+    fn dequeue(&mut self, timestamp: Option<Instant>) -> Option<P>;
 
     fn is_empty(&self) -> bool;
 

@@ -215,7 +215,7 @@ where
                 }
             }
             // Send this packet!
-            let mut current_packet = if let Some(head_packet) = self.packet_queue.dequeue() {
+            let mut current_packet = if let Some(head_packet) = self.packet_queue.dequeue(None) {
                 if let Some(new_packet) = new_packet {
                     self.packet_queue.enqueue(new_packet);
                 }

@@ -179,11 +179,11 @@ where
         }
     }
 
-    fn dequeue(&mut self) -> Option<P> {
+    fn dequeue(&mut self, timestamp: Option<Instant>) -> Option<P> {
         match self.queue.pop_front() {
             Some(mut packet) => {
                 self.now_bytes -= packet.l3_length() + self.config.bw_type.extra_length();
-                let now = Instant::now();
+                let now = timestamp.unwrap_or(Instant::now());
                 let drop = self.should_drop(&packet);
                 trace!(
                     drop,
