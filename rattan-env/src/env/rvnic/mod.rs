@@ -38,7 +38,7 @@ pub(crate) mod constants {
     }
 
     // Re import from rvnic
-    pub use rvnic::{RATTAN_DEFAULT_CHUNK_SIZE, RATTAN_RING_SIZE};
+    pub use rvnic::{RATTAN_DEFAULT_CHUNK_SIZE, RATTAN_HEADER_SIZE, RATTAN_RING_SIZE};
 }
 
 #[derive(Clone)]
