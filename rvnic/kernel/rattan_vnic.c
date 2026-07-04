@@ -94,9 +94,9 @@ static int max_devices = 256;
 module_param(max_devices, int, 0644);
 MODULE_PARM_DESC(max_devices, "Maximum number of rattan devices (default: 256)");
 
-static int num_queues = 4;
+static int num_queues = 1;
 module_param(num_queues, int, 0644);
-MODULE_PARM_DESC(num_queues, "Number of TX/RX queues per rattan device (default: 4)");
+MODULE_PARM_DESC(num_queues, "Number of TX/RX queues per rattan device (default: 1)");
 
 static unsigned int debug_stats_interval_ms = 0;
 module_param(debug_stats_interval_ms, uint, 0644);
