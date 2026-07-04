@@ -57,6 +57,17 @@ fn try_get_slice_from_umem(desc: &RattanDesc) -> Option<&[u8]> {
     unsafe { Some(std::slice::from_raw_parts(data_ptr, data_len)) }
 }
 
+fn try_copy_to_umem(desc: &RattanDesc, header: &[u8]) -> Option<()> {
+    let umem = UMEM.get()?;
+    let chunk_index = umem.offset_to_index(desc.addr)?;
+    let dest_ptr = umem.data_ptr(chunk_index)?;
+    let copy_len = std::cmp::min(desc.len as usize, header.len());
+    unsafe {
+        std::ptr::copy_nonoverlapping(header.as_ptr(), dest_ptr, copy_len);
+    }
+    Some(())
+}
+
 impl Packet for RvnicPacket {
     type PacketGenerator = ();
     fn empty(_maximum: usize, _generator: &Self::PacketGenerator) -> Self {
@@ -68,8 +79,9 @@ impl Packet for RvnicPacket {
 
     fn as_raw_buffer(&mut self) -> &mut [u8] {
         // Copy data from UMEM to header buffer. It is the rvnic driver's responsibility
-        // to copy back any modification to the skb in kernel when the packet leaves Rattan
-        // and was sent on the TX path.
+        // to copy back any modification to the skb in kernel from the UMEM, and we need
+        // to copy back from `self.header` to the UMEM when the packet leaves Rattan
+        // and was sent on the TX path, which is done in the function `try_copy_to_umem`.
         let header = self
             .header
             .get_or_insert_with(|| try_get_slice_from_umem(&self.desc).unwrap_or(&[]).to_vec());
@@ -225,6 +237,29 @@ impl RvnicDriver {
     }
 }
 
+/// Two things are done here:
+///     1. Mark the `sent` as true, which would be checked during the `drop()` of the `RvnicPacket`,
+///        so that the packet would be ignored in the recycling token procedure.
+///     2. Copy back the `self.header` back to the umem.
+fn packet_send_prepare(packet: impl Into<RvnicPacket>) -> (RattanDesc, (QueueID, u64)) {
+    let mut packet = packet.into();
+    // Avoid recycling tokens!
+    packet.sent = true;
+    let token = packet.desc.token;
+    let desc = packet.desc;
+
+    // Make the constant compare first, make it easier for the compiler's optimizier.
+    // Warning: As no cells we currently have modifies the header, this function is never tested!
+    if RATTAN_HEADER_SIZE != 0 {
+        if let Some(header) = packet.header.take() {
+            // XXX: Ignore error handling here
+            try_copy_to_umem(&desc, header.as_slice());
+        }
+    }
+
+    (desc, (packet.received_from, token))
+}
+
 impl RvnicDriver {
     #[instrument(name = "Rvnic send", skip_all)]
     fn send<Iter, T>(
@@ -237,16 +272,8 @@ impl RvnicDriver {
         Iter: IntoIterator<Item = T>,
         Iter::IntoIter: ExactSizeIterator,
     {
-        let (packets, loss_report): (Vec<_>, Vec<_>) = packets
-            .into_iter()
-            .map(|packet| {
-                let mut packet = packet.into();
-                // Avoid recycling tokens!
-                packet.sent = true;
-                let token = packet.desc.token;
-                (packet.desc, (packet.received_from, token))
-            })
-            .unzip();
+        let (packets, loss_report): (Vec<_>, Vec<_>) =
+            packets.into_iter().map(packet_send_prepare).unzip();
 
         let sent = tx.produce(&packets);
         tracing::debug!(target: "rvnic", "[{}]Send batch {}/{}", meta.device_fd, packets.len(), sent);
