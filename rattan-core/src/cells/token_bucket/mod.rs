@@ -215,16 +215,17 @@ where
                 }
             }
             // Send this packet!
-            let mut current_packet = if let Some(head_packet) = self.packet_queue.dequeue() {
-                if let Some(new_packet) = new_packet {
-                    self.packet_queue.enqueue(new_packet);
+            let mut current_packet =
+                if let Some(head_packet) = self.packet_queue.dequeue_at(self.logical_clock) {
+                    if let Some(new_packet) = new_packet {
+                        self.packet_queue.enqueue(new_packet);
+                    }
+                    head_packet.into()
+                } else {
+                    // Send directly without enqueue
+                    new_packet
                 }
-                head_packet.into()
-            } else {
-                // Send directly without enqueue
-                new_packet
-            }
-            .expect("There should be a packet here");
+                .expect("There should be a packet here");
 
             debug!(
                 "Send packet, timestamp {:?} -> {:?}",

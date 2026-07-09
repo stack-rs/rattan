@@ -114,8 +114,8 @@ impl<P> CoDelQueue<P>
 where
     P: Packet,
 {
-    fn should_drop(&mut self, packet: &P) -> bool {
-        self.ldelay = Instant::now() - packet.get_timestamp();
+    fn should_drop(&mut self, packet: &P, now: Instant) -> bool {
+        self.ldelay = now - packet.get_timestamp();
         if self.ldelay < self.config.target || self.now_bytes <= self.config.mtu as usize {
             self.first_above_time = None;
             false
@@ -123,12 +123,12 @@ where
             let mut ok_to_drop = false;
             match self.first_above_time {
                 Some(first_above_time) => {
-                    if Instant::now() >= first_above_time {
+                    if now >= first_above_time {
                         ok_to_drop = true;
                     }
                 }
                 None => {
-                    self.first_above_time = Some(Instant::now() + self.config.interval);
+                    self.first_above_time = Some(now + self.config.interval);
                 }
             }
             ok_to_drop
@@ -179,20 +179,19 @@ where
         }
     }
 
-    fn dequeue(&mut self) -> Option<P> {
+    fn dequeue_at(&mut self, timestamp: Instant) -> Option<P> {
         match self.queue.pop_front() {
             Some(mut packet) => {
                 self.now_bytes -= packet.l3_length() + self.config.bw_type.extra_length();
-                let now = Instant::now();
-                let drop = self.should_drop(&packet);
+                let drop = self.should_drop(&packet, timestamp);
                 trace!(
                     drop,
                     ldelay = ?self.ldelay,
                     count = self.count,
                     lastcount = self.lastcount,
                     dropping = self.dropping,
-                    first_above_time_from_now = ?self.first_above_time.map(|t| t - Instant::now()),
-                    drop_next_from_now = ?self.drop_next - Instant::now(),
+                    first_above_time_from_now = ?self.first_above_time.map(|t| t - timestamp),
+                    drop_next_from_now = ?self.drop_next - timestamp,
                     after_queue_len = self.queue.len(),
                     after_now_bytes = self.now_bytes,
                     "dequeueing a new packet"
@@ -202,7 +201,7 @@ where
                         self.dropping = false;
                         trace!("Exit dropping state since packet should not be dropped");
                     } else {
-                        while self.dropping && now >= self.drop_next {
+                        while self.dropping && timestamp >= self.drop_next {
                             self.count += 1;
                             trace!(
                                 ldelay = ?self.ldelay,
@@ -226,9 +225,9 @@ where
                             self.now_bytes -=
                                 packet.l3_length() + self.config.bw_type.extra_length();
 
-                            if self.should_drop(&packet) {
+                            if self.should_drop(&packet, timestamp) {
                                 self.drop_next = self.control_law(self.drop_next);
-                                trace!(drop_next_from_now = ?self.drop_next - Instant::now());
+                                trace!(drop_next_from_now = ?self.drop_next - timestamp);
                             } else {
                                 self.dropping = false;
                                 trace!("Exit dropping state since packet should not drop");
@@ -258,17 +257,17 @@ where
 
                     self.dropping = true;
                     let delta = self.count - self.lastcount;
-                    if delta > 1 && now - self.drop_next < 16 * self.config.interval {
+                    if delta > 1 && timestamp - self.drop_next < 16 * self.config.interval {
                         self.count = delta;
                     } else {
                         self.count = 1;
                     }
                     self.lastcount = self.count;
-                    self.drop_next = self.control_law(now);
+                    self.drop_next = self.control_law(timestamp);
                     trace!(
                         count = self.count,
                         delta,
-                        drop_next_from_now = ?self.drop_next - Instant::now(),
+                        drop_next_from_now = ?self.drop_next - timestamp,
                         "Enter dropping state"
                     );
                 }

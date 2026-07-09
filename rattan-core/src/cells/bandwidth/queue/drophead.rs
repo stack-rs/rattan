@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use tokio::time::Instant;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -89,6 +90,7 @@ where
     }
 
     fn enqueue(&mut self, packet: P) {
+        let timestamp = packet.get_timestamp();
         self.now_bytes += packet.l3_length() + self.bw_type.extra_length();
         self.queue.push_back(packet);
         while self
@@ -96,7 +98,7 @@ where
             .is_some_and(|limit| self.queue.len() > limit)
             || self.byte_limit.is_some_and(|limit| self.now_bytes > limit)
         {
-            let _packet = self.dequeue().unwrap();
+            let _packet = self.dequeue_at(timestamp).unwrap();
             #[cfg(test)]
             tracing::trace!(
                 after_queue_len = self.queue.len(),
@@ -107,7 +109,7 @@ where
         }
     }
 
-    fn dequeue(&mut self) -> Option<P> {
+    fn dequeue_at(&mut self, _timestamp: Instant) -> Option<P> {
         match self.queue.pop_front() {
             Some(packet) => {
                 self.now_bytes -= packet.l3_length() + self.bw_type.extra_length();
