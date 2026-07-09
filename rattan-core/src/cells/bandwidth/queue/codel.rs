@@ -114,8 +114,8 @@ impl<P> CoDelQueue<P>
 where
     P: Packet,
 {
-    fn should_drop(&mut self, packet: &P) -> bool {
-        self.ldelay = Instant::now() - packet.get_timestamp();
+    fn should_drop(&mut self, packet: &P, now: Instant) -> bool {
+        self.ldelay = now - packet.get_timestamp();
         if self.ldelay < self.config.target || self.now_bytes <= self.config.mtu as usize {
             self.first_above_time = None;
             false
@@ -123,12 +123,12 @@ where
             let mut ok_to_drop = false;
             match self.first_above_time {
                 Some(first_above_time) => {
-                    if Instant::now() >= first_above_time {
+                    if now >= first_above_time {
                         ok_to_drop = true;
                     }
                 }
                 None => {
-                    self.first_above_time = Some(Instant::now() + self.config.interval);
+                    self.first_above_time = Some(now + self.config.interval);
                 }
             }
             ok_to_drop
@@ -183,15 +183,15 @@ where
         match self.queue.pop_front() {
             Some(mut packet) => {
                 self.now_bytes -= packet.l3_length() + self.config.bw_type.extra_length();
-                let drop = self.should_drop(&packet);
+                let drop = self.should_drop(&packet, timestamp);
                 trace!(
                     drop,
                     ldelay = ?self.ldelay,
                     count = self.count,
                     lastcount = self.lastcount,
                     dropping = self.dropping,
-                    first_above_time_from_now = ?self.first_above_time.map(|t| t - Instant::now()),
-                    drop_next_from_now = ?self.drop_next - Instant::now(),
+                    first_above_time_from_now = ?self.first_above_time.map(|t| t - timestamp),
+                    drop_next_from_now = ?self.drop_next - timestamp,
                     after_queue_len = self.queue.len(),
                     after_now_bytes = self.now_bytes,
                     "dequeueing a new packet"
@@ -225,9 +225,9 @@ where
                             self.now_bytes -=
                                 packet.l3_length() + self.config.bw_type.extra_length();
 
-                            if self.should_drop(&packet) {
+                            if self.should_drop(&packet, timestamp) {
                                 self.drop_next = self.control_law(self.drop_next);
-                                trace!(drop_next_from_now = ?self.drop_next - Instant::now());
+                                trace!(drop_next_from_now = ?self.drop_next - timestamp);
                             } else {
                                 self.dropping = false;
                                 trace!("Exit dropping state since packet should not drop");
@@ -267,7 +267,7 @@ where
                     trace!(
                         count = self.count,
                         delta,
-                        drop_next_from_now = ?self.drop_next - Instant::now(),
+                        drop_next_from_now = ?self.drop_next - timestamp,
                         "Enter dropping state"
                     );
                 }
