@@ -118,7 +118,7 @@ pub fn convert_log_to_pcapng(
 
     let mut writers: HashMap<IpAddr, PacketWriter> = HashMap::new();
 
-    for (_, variant) in context.flows.iter() {
+    for variant in context.flows.values() {
         for ip in variant.get_ip() {
             writers
                 .entry(ip)
