@@ -48,3 +48,10 @@ variable "install_runner" {
   type = bool
   default = true
 }
+
+# HTTP/HTTPS proxy for the guest. Leave empty for a direct connection.
+# Example: -var "http_proxy=http://10.0.0.1:3128"
+variable "http_proxy" {
+  type = string
+  default = ""
+}

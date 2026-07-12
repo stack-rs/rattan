@@ -1,6 +1,13 @@
 ---
 - name: Install and Run Github Self-hosted Runner
   hosts: all
+  environment:
+    http_proxy: "{{ http_proxy | default('') }}"
+    https_proxy: "{{ http_proxy | default('') }}"
+    HTTP_PROXY: "{{ http_proxy | default('') }}"
+    HTTPS_PROXY: "{{ http_proxy | default('') }}"
+    no_proxy: "localhost,127.0.0.1,::1"
+    NO_PROXY: "localhost,127.0.0.1,::1"
   tasks:
   - name: install pip
     ansible.builtin.include_role:

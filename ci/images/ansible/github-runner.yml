@@ -4,6 +4,21 @@
     path: /etc/runner
     state: directory
 
+- name: write docker client proxy config for job-spawned containers
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/runner/docker-config.json
+    content: |
+      {
+        "proxies": {
+          "default": {
+            "httpProxy": "{{ http_proxy | default('') }}",
+            "httpsProxy": "{{ http_proxy | default('') }}",
+            "noProxy": "localhost,127.0.0.1,::1"
+          }
+        }
+      }
+
 - name: copy github-runner docker-compose file
   become: true
   ansible.builtin.template:

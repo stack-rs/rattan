@@ -90,10 +90,29 @@ source "libvirt" "image" {
           {
             path = "/etc/modules-load.d/bbr.conf"
             content = "tcp_bbr"
+          },
+          # System-wide proxy for login/SSH sessions and generic tools.
+          {
+            path        = "/etc/environment"
+            append      = true
+            content     = "http_proxy=${var.http_proxy}\nhttps_proxy=${var.http_proxy}\nHTTP_PROXY=${var.http_proxy}\nHTTPS_PROXY=${var.http_proxy}\nno_proxy=localhost,127.0.0.1,::1\nNO_PROXY=localhost,127.0.0.1,::1\n"
+          },
+          # Preserve proxy vars across sudo (env_reset would otherwise drop them).
+          {
+            path        = "/etc/sudoers.d/proxy"
+            permissions = "0440"
+            content     = "Defaults env_keep += \"http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY ftp_proxy FTP_PROXY\"\n"
+          },
+          # Proxy for the Docker daemon itself (image pulls: the runner image and any images CI jobs pull).
+          {
+            path        = "/etc/systemd/system/docker.service.d/http-proxy.conf"
+            content     = "[Service]\nEnvironment=\"HTTP_PROXY=${var.http_proxy}\"\nEnvironment=\"HTTPS_PROXY=${var.http_proxy}\"\nEnvironment=\"NO_PROXY=localhost,127.0.0.1,::1\"\n"
           }
         ]
 
         apt = {
+          # http_proxy  = "${var.http_proxy}"
+          # https_proxy = "${var.http_proxy}"
           sources = {
             mainline = {
               source = "ppa:cappelikan/ppa"
@@ -140,6 +159,11 @@ build {
     note = "You can examine the created domain with virt-manager, virsh or via SSH"
   }
   provisioner "shell" {
+    environment_vars = [
+      "http_proxy=${var.http_proxy}",
+      "https_proxy=${var.http_proxy}",
+      "no_proxy=localhost,127.0.0.1,::1",
+    ]
     inline = [
       "set -xo pipefail",
       "sudo mainline list | grep -E \"^[0-9]+\\.[0-9]+\" | grep -E \"^${var.kernel_version}\" | head -n 1 | tr -d ' ' | sed -e 's/Installed//' | xargs -I {} sudo mainline install {}"
@@ -161,6 +185,6 @@ build {
   provisioner "ansible" {
     playbook_file = "./ansible/configure.yml"
     galaxy_file = "./ansible/requirements.yml"
-    extra_arguments = [ "--extra-vars", "github_access_key=${var.github_access_key} kernel_version=${var.kernel_version} runner_name=${var.release_name}-${var.kernel_version} tag=ubuntu-${var.release_name} install_runner=${var.install_runner}" ]
+    extra_arguments = [ "--extra-vars", "github_access_key=${var.github_access_key} kernel_version=${var.kernel_version} runner_name=${var.release_name}-${var.kernel_version} tag=ubuntu-${var.release_name} install_runner=${var.install_runner} http_proxy=${var.http_proxy}" ]
   }
 }
