@@ -363,7 +363,7 @@ where
         #[cfg(feature = "packet-dump")]
         if let Ok(path) = std::env::var("PACKET_DUMP_FILE") {
             let mut file_out = File::create(&path)
-                .unwrap_or_else(|_| panic!("Error creating packet dump file {}", &path));
+                .unwrap_or_else(|_| panic!("Error creating packet dump file {}", path));
             file_out
                 .write_all(self.pcap_writer.lock().unwrap().get_mut())
                 .unwrap();
