@@ -41,7 +41,13 @@ variable "kernel_version" {
 }
 
 variable "key_import_user" {
-  type = string
+  type    = string
+  default = ""
+}
+
+variable "authorized_key_file" {
+  type    = string
+  default = ""
 }
 
 variable "install_runner" {
@@ -49,8 +55,6 @@ variable "install_runner" {
   default = true
 }
 
-# HTTP/HTTPS proxy for the guest. Leave empty for a direct connection.
-# Example: -var "http_proxy=http://10.0.0.1:3128"
 variable "http_proxy" {
   type = string
   default = ""

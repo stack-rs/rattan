@@ -66,15 +66,19 @@ packer build \
   -var "github_access_key=<git_PAT>" \
   -var "release_name=<Distribution>" \
   -var "kernel_version=<Kernel>" \
-  -var "key_import_user=<Public Key from GitHub User>" \
+  -var "key_import_user=<GitHub User>" \
+  -var "authorized_key_file=<Path to a .pub file>" \
   -var "http_proxy=<Proxy Address>" \
   .
 ```
 
-- `<git_PAT>` should be granted _Read and Write access to organization self hosted runners_.
+- `<git_PAT>` should be granted _Read and Write access to the `stack-rs/rattan` repository's self-hosted runners_ (repo `Administration` for a fine-grained PAT, or the `repo` scope for a classic PAT).
 - `<Distribution>` should be `jammy` (for Ubuntu 22.04), `focal` (for Ubutnu 20.04) or `noble` (Ubuntu 24.04).
 - `<Kernel>` should be `5.4`, `5.15`, `6.8`, or `6.12`.
-- `<GitHub User>` should be the user whose public keys will be imported to the VM.
+- `<GitHub User>` (optional) is a user whose public keys are pulled from GitHub and imported to the VM.
+- `<Path to a .pub file>` (optional) is a local public key file injected into the VM's `authorized_keys`, e.g. `~/.ssh/ubuntu_rsa.pub`. Supports `~` expansion; a bare relative path resolves against `ci/images`.
+
+Both `key_import_user` and `authorized_key_file` are optional and can be combined, but provide **at least one** of them to ensure ssh access. You then log in as the `rattan` user with the matching private key.
 
 If the guest must reach the internet through an HTTP proxy, add `-var "http_proxy=http://<host>:<port>"`.
 This routes the mainline kernel downloads, and Docker (daemon image pulls, the runner
@@ -83,6 +87,15 @@ are not proxied, if needed, uncomment the line at `image.pkr.hcl` by searching
 for `apt`. Omit it for a direct connection.
 
 If `packer build` command failed with error `Cloud not open '/var/lib/libvirt/images/<dist>-<kern_ver>`, refer to [this issue](https://github.com/dmacvicar/terraform-provider-libvirt/issues/1163), and follow user dylanf9797's solution on configuring apparmor to allow access to `/var/lib/libvirt/images`.
+
+`packer build` refuses to overwrite an existing image, so to rebuild a combination you must first delete its volume. Images are stored in the `default` pool under the name `<Distribution>-<Kernel>` (e.g. `focal-5.4`):
+
+```shell
+# List the current images
+virsh vol-list default
+# Delete one before rebuilding it
+virsh vol-delete --pool default <Distribution>-<Kernel>
+```
 
 ## Run Virtual Machines
 

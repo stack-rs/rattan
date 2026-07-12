@@ -77,12 +77,13 @@ source "libvirt" "image" {
             shell         = "/bin/bash"
             lock_passwd  = false
             hashed_passwd = "$6$rounds=4096$InVTnQ3fjMCSbc$ryRQrcU7ym0mvl.d7YxmR4HINu8/9u3XfG0KS4Ie59Pi8P5Xc9QoMRXOSVnEfpC4vJQn6Xa.2MHpBY6TeFZMH."
-            ssh_import_id = [
+            ssh_import_id = var.key_import_user != "" ? [
               "gh:${var.key_import_user}"
-            ]
-            ssh_authorized_keys = [
-              data.sshkey.install.public_key,
-            ]
+            ] : []
+            ssh_authorized_keys = concat(
+              [data.sshkey.install.public_key],
+              var.authorized_key_file != "" ? [trimspace(file(pathexpand(var.authorized_key_file)))] : []
+            )
           }
         ]
 
