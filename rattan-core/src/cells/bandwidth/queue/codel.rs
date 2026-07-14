@@ -299,11 +299,4 @@ where
     fn length(&self) -> usize {
         self.queue.len()
     }
-
-    fn retain<F>(&mut self, mut f: F)
-    where
-        F: FnMut(&P) -> bool,
-    {
-        self.queue.retain(|packet| f(packet));
-    }
 }

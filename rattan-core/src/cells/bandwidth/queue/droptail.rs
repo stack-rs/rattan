@@ -138,11 +138,30 @@ where
     fn length(&self) -> usize {
         self.queue.len()
     }
+}
 
-    fn retain<F>(&mut self, mut f: F)
+impl<P> DropTailQueue<P>
+where
+    P: Packet,
+{
+    /// Retain only the packets for which `f` returns `true`, dropping the rest
+    /// while keeping `now_bytes` consistent with the remaining packets.
+    ///
+    /// Used by the token bucket cell to drop packets that exceed the queue's
+    /// `max_size` when it is shrunk (see `TokenBucketCellEgress::set_config`).
+    pub fn retain<F>(&mut self, mut f: F)
     where
         F: FnMut(&P) -> bool,
     {
-        self.queue.retain(|packet| f(packet));
+        let extra_length = self.bw_type.extra_length();
+        let now_bytes = &mut self.now_bytes;
+        self.queue.retain(|packet| {
+            if f(packet) {
+                true
+            } else {
+                *now_bytes -= packet.l3_length() + extra_length;
+                false
+            }
+        });
     }
 }
