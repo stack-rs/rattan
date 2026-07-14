@@ -157,10 +157,4 @@ where
     fn get_front_size(&self) -> Option<usize>;
 
     fn length(&self) -> usize;
-
-    fn retain<F>(&mut self, _f: F)
-    where
-        F: FnMut(&P) -> bool,
-    {
-    }
 }
