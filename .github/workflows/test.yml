@@ -39,25 +39,17 @@ jobs:
       # Overrides the `debug = true` (for cargo flamegraph) in the root Cargo.toml
       # to cut release build artifact size and disk writes.
       CARGO_PROFILE_RELEASE_DEBUG: "line-tables-only"
+      # LLVM is preinstalled on the runners (apt: clang-N llvm-N libclang-N-dev).
+      # Point bindgen (via libbpf-sys) at the matching preinstalled libclang.
+      LIBCLANG_PATH: /usr/lib/llvm-${{ matrix.llvm }}/lib
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt update && sudo apt install ethtool iputils-ping iproute2 iperf3 pkg-config m4 libelf-dev libpcap-dev gcc-multilib libnftnl-dev libmnl-dev autoconf automake autopoint flex bison gawk libtool -y
-      - name: Cache LLVM and Clang
-        id: cache-llvm
-        uses: maxnowack/local-cache@v2
-        with:
-          path: |
-            C:/Program Files/LLVM
-            ./llvm
-          key: llvm-${{ matrix.llvm }}
-      - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v2
-        with:
-          version: ${{ matrix.llvm }}
-          cached: ${{ steps.cache-llvm.outputs.cache-hit }}
+      - name: Use preinstalled LLVM ${{ matrix.llvm }}
+        run: echo "/usr/lib/llvm-${{ matrix.llvm }}/bin" >> "$GITHUB_PATH"
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - run: cargo nextest run --profile ci -F http,xdp --release --workspace
