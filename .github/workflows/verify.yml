@@ -27,6 +27,11 @@ jobs:
           - kernel: "6.12"
             llvm: "17"
     runs-on: ${{ matrix.kernel }}
+    env:
+      # CI only needs line numbers for panic backtraces, not full DWARF.
+      # Overrides the `debug = true` (for cargo flamegraph) in the root Cargo.toml
+      # to cut release build artifact size and disk writes.
+      CARGO_PROFILE_RELEASE_DEBUG: "line-tables-only"
     steps:
       - uses: actions/checkout@v4
         with:
