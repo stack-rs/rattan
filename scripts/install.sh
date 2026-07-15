@@ -10,11 +10,12 @@ install_rattan() {
 }
 
 install_binary() {
-    sudo install -m 755 "$1" /usr/local/bin/rattan
-    sudo setcap 'cap_dac_override,cap_dac_read_search,cap_sys_ptrace,cap_net_admin,cap_sys_admin,cap_net_raw+ep' /usr/local/bin/rattan
+    local binary_name=$(basename $1)
+    sudo install -m 755 "$1" /usr/local/bin/${binary_name}
+    sudo setcap 'cap_dac_override,cap_dac_read_search,cap_sys_ptrace,cap_net_admin,cap_sys_admin,cap_net_raw+ep' /usr/local/bin/${binary_name}
 }
 
-# Config systemd-networkd to not change MAC address of veth interfaces
+# Config systemd-networkd to not change MAC address of veth and rvnic interfaces
 # Ref: https://github.com/stack-rs/rattan/issues/42
 config_networkd() {
     if [ -d "/lib/systemd/network" ]; then
@@ -22,6 +23,14 @@ config_networkd() {
 [Match]
 OriginalName=ns*-v*-*
 Driver=veth
+
+[Link]
+MACAddressPolicy=none
+EOF
+"
+        sudo sh -c "cat <<EOF >/lib/systemd/network/80-rattan-rv.link
+[Match]
+OriginalName=rattan*
 
 [Link]
 MACAddressPolicy=none
@@ -43,6 +52,7 @@ options:
 
 Example:
     $myname target/release/rattan
+    $myname target/release/rattan-rv
 
 EOL
     exit 1
