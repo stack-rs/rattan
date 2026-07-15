@@ -10,7 +10,7 @@ use rand::{rngs::StdRng, RngExt, SeedableRng};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::time::{Duration, Instant};
-use tracing::debug;
+use tracing::{debug, warn};
 
 #[cfg(feature = "serde")]
 use super::serde_default;
@@ -46,6 +46,19 @@ impl Default for PieQueueConfig {
 }
 
 impl PieQueueConfig {
+    fn validate(&self) -> Result<(), &'static str> {
+        if self.ref_del <= 0.0 || !self.ref_del.is_finite() {
+            return Err("PieQueueConfig: ref_del must be > 0 and finite");
+        }
+        if self.max_burst < 0.0 || !self.max_burst.is_finite() {
+            return Err("PieQueueConfig: max_burst must be >= 0 and finite");
+        }
+        if self.t_update <= Duration::ZERO {
+            return Err("PieQueueConfig: t_update must be > 0");
+        }
+        Ok(())
+    }
+
     pub fn new<A: Into<Option<usize>>, B: Into<Option<usize>>>(
         packet_limit: A,
         byte_limit: B,
@@ -67,7 +80,7 @@ impl PieQueueConfig {
 
 impl<P> From<PieQueueConfig> for PieQueue<P> {
     fn from(config: PieQueueConfig) -> Self {
-        PieQueue::new(config)
+        PieQueue::new(config).expect("PieQueueConfig validation failed")
     }
 }
 
@@ -87,10 +100,11 @@ pub struct PieQueue<P> {
 }
 
 impl<P> PieQueue<P> {
-    pub fn new(config: PieQueueConfig) -> Self {
+    pub fn new(config: PieQueueConfig) -> Result<Self, &'static str> {
+        config.validate()?;
         debug!(?config, "New PieQueue");
         let max_burst = config.max_burst;
-        Self {
+        Ok(Self {
             queue: VecDeque::new(),
             config,
             now_bytes: 0,
@@ -102,7 +116,7 @@ impl<P> PieQueue<P> {
             avg_drate: 0.0,
             burst_allowance: max_burst,
             rng: StdRng::seed_from_u64(42),
-        }
+        })
     }
 }
 
@@ -111,7 +125,7 @@ where
     P: Packet,
 {
     fn default() -> Self {
-        Self::new(PieQueueConfig::default())
+        Self::new(PieQueueConfig::default()).expect("default PieQueueConfig is valid")
     }
 }
 
@@ -235,6 +249,10 @@ where
     type Config = PieQueueConfig;
 
     fn configure(&mut self, config: Self::Config) {
+        if let Err(e) = config.validate() {
+            warn!("PieQueue: discard invalid configure: {}", e);
+            return;
+        }
         self.config = config;
     }
 
@@ -337,7 +355,7 @@ mod tests {
     #[test_log::test]
     fn test_pie_queue_basic() {
         let config = PieQueueConfig::default();
-        let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config).unwrap();
         assert!(queue.is_empty());
 
         let pkt1 = create_packet(500);
@@ -356,7 +374,7 @@ mod tests {
             packet_limit: Some(2),
             ..Default::default()
         };
-        let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config).unwrap();
 
         queue.enqueue(create_packet(100));
         queue.enqueue(create_packet(100));
@@ -373,7 +391,7 @@ mod tests {
             byte_limit: Some(150),
             ..Default::default()
         };
-        let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config).unwrap();
 
         queue.enqueue(create_packet(100)); // l3 length 86.
         assert_eq!(queue.length(), 1);
@@ -386,7 +404,7 @@ mod tests {
     #[test_log::test]
     fn test_pie_queue_burst_allowance() {
         let config = PieQueueConfig::default();
-        let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config).unwrap();
 
         // Force a high drop probability
         queue.p = 1.0;
@@ -410,7 +428,7 @@ mod tests {
     #[test_log::test]
     fn test_pie_queue_work_conserving() {
         let config = PieQueueConfig::default();
-        let mut queue: PieQueue<StdPacket> = PieQueue::new(config.clone());
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config.clone()).unwrap();
         queue.p = 1.0;
         queue.burst_allowance = 0.0;
 
@@ -439,7 +457,7 @@ mod tests {
     #[test_log::test]
     fn test_pie_queue_avg_drate_update() {
         let config = PieQueueConfig::default();
-        let mut queue: PieQueue<StdPacket> = PieQueue::new(config);
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config).unwrap();
 
         queue.enqueue(create_packet(10014)); // l3 length 10000
         queue.enqueue(create_packet(10014)); // l3 length 10000
@@ -472,7 +490,7 @@ mod tests {
     #[test_log::test]
     fn test_pie_queue_update_drop_probability() {
         let config = PieQueueConfig::default();
-        let mut queue: PieQueue<StdPacket> = PieQueue::new(config.clone());
+        let mut queue: PieQueue<StdPacket> = PieQueue::new(config.clone()).unwrap();
 
         // Fake high delay
         queue.avg_drate = 1000.0;
