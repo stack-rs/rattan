@@ -280,7 +280,7 @@ where
                 .is_none_or(|limit| self.now_bytes + packet_size <= limit);
 
         if !below_hard_limit {
-            self.count_packet = 0;
+            self.count_packet = -1;
             #[cfg(test)]
             tracing::trace!(
                 queue_len = self.queue.len(),
