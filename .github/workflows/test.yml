@@ -21,7 +21,6 @@ jobs:
   test-all-features:
     name: cargo test with all features
     strategy:
-      max-parallel: 1
       fail-fast: false
       matrix:
         include:
