@@ -22,8 +22,9 @@ use crate::cells::Packet;
 pub struct PieQueueConfig {
     pub packet_limit: Option<usize>,
     pub byte_limit: Option<usize>,
-    pub ref_del: f64,       // target delay (sec)
-    pub max_burst: f64,     // MAX_BURST (ms)
+    pub ref_del: f64,   // target delay (sec)
+    pub max_burst: f64, // MAX_BURST (ms)
+    #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde::duration"))]
     pub t_update: Duration, // update interval
     #[cfg_attr(
         feature = "serde",
@@ -254,6 +255,7 @@ where
             return;
         }
         self.config = config;
+        self.burst_allowance = self.burst_allowance.min(self.config.max_burst);
     }
 
     fn is_zero_buffer(&self) -> bool {

@@ -29,8 +29,8 @@ pub struct RedQueueConfig {
     // Packet transmission time in microseconds.
     // Used to compute the number of "virtual packet departures" during an idle period
     // for average queue length decay: `m = idle_time_us / pkt_tx_time`.
-    // The upper layer computes this from link bandwidth `C` and average packet size
-    // `avpkt` as `pkt_tx_time = avpkt * 8 / C`, then passes it down as a fixed config.
+    // The upper layer computes this from link bandwidth `C` and average packet size `avpkt`
+    // as `pkt_tx_time = avpkt * 8 / C` (C in Mbps), then passes it down as a fixed config.
     pub pkt_tx_time: f64,
     pub adaptive: bool, // enable adaptive mode (ARED): max_p is adjusted dynamically
 
