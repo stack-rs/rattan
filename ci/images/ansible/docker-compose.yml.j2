@@ -6,10 +6,16 @@ services:
     privileged: true
     environment:
       RUNNER_NAME: {{ runner_name }}
-      RUNNER_SCOPE: org
-      ORG_NAME: stack-rs
+      RUNNER_SCOPE: repo
+      REPO_URL: https://github.com/stack-rs/rattan
       ACCESS_TOKEN: {{ github_access_key }}
       LABELS: linux,x64,{{ kernel_version }}
+      HTTP_PROXY: "{{ http_proxy | default('') }}"
+      HTTPS_PROXY: "{{ http_proxy | default('') }}"
+      NO_PROXY: "localhost,127.0.0.1,::1"
+      http_proxy: "{{ http_proxy | default('') }}"
+      https_proxy: "{{ http_proxy | default('') }}"
+      no_proxy: "localhost,127.0.0.1,::1"
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -23,3 +29,4 @@ services:
     volumes:
       - '/var/run/docker.sock:/var/run/docker.sock'
       - '/sys:/sys'
+      - '/etc/runner/docker-config.json:/root/.docker/config.json:ro'

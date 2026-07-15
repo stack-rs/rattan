@@ -41,10 +41,21 @@ variable "kernel_version" {
 }
 
 variable "key_import_user" {
-  type = string
+  type    = string
+  default = ""
+}
+
+variable "authorized_key_file" {
+  type    = string
+  default = ""
 }
 
 variable "install_runner" {
   type = bool
   default = true
+}
+
+variable "http_proxy" {
+  type = string
+  default = ""
 }
