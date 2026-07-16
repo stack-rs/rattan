@@ -129,7 +129,7 @@ impl RedQueueConfig {
 
 impl<P> From<RedQueueConfig> for RedQueue<P> {
     fn from(config: RedQueueConfig) -> Self {
-        RedQueue::new(config)
+        RedQueue::new(config).expect("RedQueueConfig validation failed")
     }
 }
 
@@ -146,12 +146,10 @@ pub struct RedQueue<P> {
 }
 
 impl<P> RedQueue<P> {
-    pub fn new(config: RedQueueConfig) -> Self {
-        if let Err(e) = config.validate() {
-            panic!("RedQueue::new: {}", e);
-        }
+    pub fn new(config: RedQueueConfig) -> Result<Self, &'static str> {
+        config.validate()?;
         debug!(?config, "New RedQueue");
-        Self {
+        Ok(Self {
             queue: VecDeque::new(),
             config,
             now_bytes: 0,
@@ -160,7 +158,7 @@ impl<P> RedQueue<P> {
             idle_start: None,
             latest_max_p_update: None,
             rng: StdRng::seed_from_u64(42),
-        }
+        })
     }
 }
 
@@ -170,6 +168,7 @@ where
 {
     fn default() -> Self {
         Self::new(RedQueueConfig::default())
+            .expect("RedQueueConfig::default() should never fail validation")
     }
 }
 
@@ -357,7 +356,7 @@ mod tests {
             max_th: 2000,
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
+        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
 
         assert!(queue.is_empty());
 
@@ -379,7 +378,7 @@ mod tests {
             max_th: 200000,
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
+        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
 
         queue.enqueue(create_packet(100));
         queue.enqueue(create_packet(100));
@@ -398,7 +397,7 @@ mod tests {
             max_th: 200000,
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
+        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
 
         queue.enqueue(create_packet(100)); // l3 length 86.
         assert_eq!(queue.length(), 1);
@@ -416,7 +415,7 @@ mod tests {
             w_q: 1.0, // max weight, avg matches instantly
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
+        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
 
         // First packet
         queue.enqueue(create_packet(100));
@@ -443,7 +442,7 @@ mod tests {
             w_q: 1.0, // Instantly reach exact byte size
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
+        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
 
         // First packet: queue empty, avg remains 0.
         queue.enqueue(create_packet(514)); // L3 size = 514 - 14 (Ethernet header) = 500
@@ -467,7 +466,7 @@ mod tests {
             w_q: 1.0,
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
+        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
 
         // First packet: queue empty, avg = 0. L3 size = 200.
         queue.enqueue(create_packet(214));
@@ -531,7 +530,7 @@ mod tests {
             adaptive: true,
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
+        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
 
         // enqueue to make average_queue_length > target_max
         // target_max = min_th + 0.6 * (max_th - min_th) = 100 + 60 = 160
@@ -569,7 +568,7 @@ mod tests {
             adaptive: true,
             ..Default::default()
         };
-        let mut queue: RedQueue<StdPacket> = RedQueue::new(config);
+        let mut queue: RedQueue<StdPacket> = RedQueue::new(config).unwrap();
 
         // enqueue to make average_queue_length < target_min
         // target_min = min_th + 0.4 * (max_th - min_th) = 100 + 40 = 140

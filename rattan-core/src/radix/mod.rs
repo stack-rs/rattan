@@ -348,6 +348,12 @@ where
                     crate::config::BwCellBuildConfig::CoDel(config) => {
                         self.build_cell(id, config.into_factory())?;
                     }
+                    crate::config::BwCellBuildConfig::Red(config) => {
+                        self.build_cell(id, config.into_factory())?;
+                    }
+                    crate::config::BwCellBuildConfig::Pie(config) => {
+                        self.build_cell(id, config.into_factory())?;
+                    }
                 },
                 CellBuildConfig::BwReplay(bw_replay_config) => match bw_replay_config {
                     crate::config::BwReplayCellBuildConfig::Infinite(config) => {
@@ -360,6 +366,12 @@ where
                         self.build_cell(id, config.into_factory())?;
                     }
                     crate::config::BwReplayCellBuildConfig::CoDel(config) => {
+                        self.build_cell(id, config.into_factory())?;
+                    }
+                    crate::config::BwReplayCellBuildConfig::Red(config) => {
+                        self.build_cell(id, config.into_factory())?;
+                    }
+                    crate::config::BwReplayCellBuildConfig::Pie(config) => {
                         self.build_cell(id, config.into_factory())?;
                     }
                 },

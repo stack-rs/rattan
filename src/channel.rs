@@ -5,7 +5,10 @@ use netem_trace::{Bandwidth, Delay};
 use paste::paste;
 use rattan_core::{
     cells::bandwidth::{
-        queue::{CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig},
+        queue::{
+            CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
+            PieQueueConfig, RedQueueConfig,
+        },
         BwCellConfig,
     },
     config::{
@@ -92,6 +95,8 @@ enum QueueType {
     DropTail,
     DropHead,
     CoDel,
+    Red,
+    Pie,
 }
 
 // Deserialize queue args and create BwCellBuildConfig
@@ -170,6 +175,12 @@ impl ChannelArgs {
                 Some(QueueType::CoDel) => {
                     bw_q_args_into_config!(CoDel, self.uplink_queue_args.clone(), bandwidth)
                 }
+                Some(QueueType::Red) => {
+                    bw_q_args_into_config!(Red, self.uplink_queue_args.clone(), bandwidth)
+                }
+                Some(QueueType::Pie) => {
+                    bw_q_args_into_config!(Pie, self.uplink_queue_args.clone(), bandwidth)
+                }
             };
             uplink_count += 1;
             cells_config.insert(format!("up_{uplink_count}"), cell_config);
@@ -197,6 +208,12 @@ impl ChannelArgs {
                 Some(QueueType::CoDel) => {
                     bwreplay_q_args_into_config!(CoDel, self.uplink_queue_args.clone(), trace_file)
                 }
+                Some(QueueType::Red) => {
+                    bwreplay_q_args_into_config!(Red, self.uplink_queue_args.clone(), trace_file)
+                }
+                Some(QueueType::Pie) => {
+                    bwreplay_q_args_into_config!(Pie, self.uplink_queue_args.clone(), trace_file)
+                }
             };
             uplink_count += 1;
             cells_config.insert(format!("up_{uplink_count}"), cell_config);
@@ -219,6 +236,12 @@ impl ChannelArgs {
                 }
                 Some(QueueType::CoDel) => {
                     bw_q_args_into_config!(CoDel, self.downlink_queue_args.clone(), bandwidth)
+                }
+                Some(QueueType::Red) => {
+                    bw_q_args_into_config!(Red, self.downlink_queue_args.clone(), bandwidth)
+                }
+                Some(QueueType::Pie) => {
+                    bw_q_args_into_config!(Pie, self.downlink_queue_args.clone(), bandwidth)
                 }
             };
             downlink_count += 1;
@@ -250,6 +273,12 @@ impl ChannelArgs {
                         self.downlink_queue_args.clone(),
                         trace_file
                     )
+                }
+                Some(QueueType::Red) => {
+                    bwreplay_q_args_into_config!(Red, self.downlink_queue_args.clone(), trace_file)
+                }
+                Some(QueueType::Pie) => {
+                    bwreplay_q_args_into_config!(Pie, self.downlink_queue_args.clone(), trace_file)
                 }
             };
             downlink_count += 1;
