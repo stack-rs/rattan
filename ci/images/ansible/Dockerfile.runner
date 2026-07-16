@@ -1,0 +1,27 @@
+# Extends the upstream github-runner image with a preinstalled LLVM/Clang
+# toolchain, so CI jobs (bindgen via libbpf-sys, BPF compilation) don't fetch
+# LLVM on every run. Everything lands under /usr/lib/llvm-${LLVM_VERSION},
+# matching the PATH / LIBCLANG_PATH that the test and verify workflows expect.
+ARG BASE_TAG=ubuntu-noble
+FROM myoung34/github-runner:${BASE_TAG}
+
+# 14 for focal (kernel 5.4), 17 for jammy/noble. Overridden per image by ansible.
+ARG LLVM_VERSION=17
+
+# Prefer distro packages (present on noble for 17); fall back to apt.llvm.org
+# for versions the distro repos lack (14 on focal, 17 on jammy).
+RUN set -eux; \
+    export DEBIAN_FRONTEND=noninteractive; \
+    apt-get update; \
+    if ! apt-get install -y --no-install-recommends \
+            "clang-${LLVM_VERSION}" "llvm-${LLVM_VERSION}" "libclang-${LLVM_VERSION}-dev"; then \
+        apt-get install -y --no-install-recommends \
+            wget gnupg lsb-release ca-certificates software-properties-common; \
+        wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh; \
+        chmod +x /tmp/llvm.sh; \
+        /tmp/llvm.sh "${LLVM_VERSION}"; \
+        apt-get install -y --no-install-recommends "libclang-${LLVM_VERSION}-dev"; \
+    fi; \
+    test -x "/usr/lib/llvm-${LLVM_VERSION}/bin/clang"; \
+    test -e "/usr/lib/llvm-${LLVM_VERSION}/lib/libclang.so"; \
+    rm -rf /var/lib/apt/lists/* /tmp/llvm.sh

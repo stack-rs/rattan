@@ -4,6 +4,12 @@
     path: /etc/runner
     state: directory
 
+- name: derive LLVM version from kernel
+  ansible.builtin.set_fact:
+    # 5.4 (focal) pins LLVM 14; newer kernels use 17. Matches the test/verify
+    # workflow matrix and the LIBCLANG_PATH / PATH they set.
+    llvm_version: "{{ '14' if kernel_version == '5.4' else '17' }}"
+
 - name: write docker client proxy config for job-spawned containers
   become: true
   ansible.builtin.copy:
@@ -19,20 +25,44 @@
         }
       }
 
+- name: copy github-runner Dockerfile
+  become: true
+  ansible.builtin.copy:
+    src: Dockerfile.runner
+    dest: /etc/runner/Dockerfile.runner
+    mode: "0644"
+
 - name: copy github-runner docker-compose file
   become: true
   ansible.builtin.template:
     src: docker-compose.yml.j2
     dest: /etc/runner/docker-compose.yml
 
-- name: poll a image
+- name: build github-runner image with preinstalled LLVM
   become: true
   community.docker.docker_image:
-    name: "docker.io/myoung34/github-runner:{{ tag }}"
-    source: pull
+    name: rattan/github-runner
+    tag: "{{ tag }}"
+    source: build
+    force_source: true
+    build:
+      path: /etc/runner
+      dockerfile: Dockerfile.runner
+      # Pull a fresh upstream base each build.
+      pull: true
+      args:
+        BASE_TAG: "{{ tag }}"
+        LLVM_VERSION: "{{ llvm_version }}"
+        http_proxy: "{{ http_proxy | default('') }}"
+        https_proxy: "{{ http_proxy | default('') }}"
+        HTTP_PROXY: "{{ http_proxy | default('') }}"
+        HTTPS_PROXY: "{{ http_proxy | default('') }}"
+        no_proxy: "localhost,127.0.0.1,::1"
 
 - name: start the github-runner container
   become: true
   community.docker.docker_compose_v2:
     project_src: /etc/runner
     state: present
+    # Image is built locally above; never try to pull it from a registry.
+    pull: never
