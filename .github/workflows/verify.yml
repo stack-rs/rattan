@@ -36,7 +36,7 @@ jobs:
       # Point bindgen (via libbpf-sys) at the matching preinstalled libclang.
       LIBCLANG_PATH: /usr/lib/llvm-${{ matrix.llvm }}/lib
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
