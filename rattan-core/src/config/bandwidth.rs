@@ -35,6 +35,8 @@ pub enum BwCellBuildConfig<P: Packet> {
     DropTail(bandwidth::BwCellConfig<P, queue::DropTailQueue<P>>),
     DropHead(bandwidth::BwCellConfig<P, queue::DropHeadQueue<P>>),
     CoDel(bandwidth::BwCellConfig<P, queue::CoDelQueue<P>>),
+    Red(bandwidth::BwCellConfig<P, queue::RedQueue<P>>),
+    Pie(bandwidth::BwCellConfig<P, queue::PieQueue<P>>),
 }
 
 macro_rules! impl_bw_cell_into_factory {
@@ -46,7 +48,8 @@ macro_rules! impl_bw_cell_into_factory {
                 ) -> impl CellFactory<bandwidth::BwCell<P, queue::$queue<P>>> {
                     move |handle| {
                         let _guard = handle.enter();
-                        let queue = queue::$queue::<P>::new(self.queue_config.unwrap_or_default());
+                        let queue = queue::$queue::<P>::new(self.queue_config.unwrap_or_default())
+                            .map_err(|e| Error::ConfigError(e.to_string()))?;
                         BwCell::new(self.bandwidth, queue, self.bw_type.unwrap_or_default())
                     }
                 }
@@ -55,7 +58,14 @@ macro_rules! impl_bw_cell_into_factory {
     };
 }
 
-impl_bw_cell_into_factory!(InfiniteQueue, DropTailQueue, DropHeadQueue, CoDelQueue);
+impl_bw_cell_into_factory!(
+    InfiniteQueue,
+    DropTailQueue,
+    DropHeadQueue,
+    CoDelQueue,
+    RedQueue,
+    PieQueue
+);
 
 #[cfg_attr(
     feature = "serde",
@@ -68,6 +78,8 @@ pub enum BwReplayCellBuildConfig<P: Packet> {
     DropTail(BwReplayQueueConfig<P, queue::DropTailQueue<P>>),
     DropHead(BwReplayQueueConfig<P, queue::DropHeadQueue<P>>),
     CoDel(BwReplayQueueConfig<P, queue::CoDelQueue<P>>),
+    Red(BwReplayQueueConfig<P, queue::RedQueue<P>>),
+    Pie(BwReplayQueueConfig<P, queue::PieQueue<P>>),
 }
 
 #[cfg_attr(
@@ -207,7 +219,8 @@ macro_rules! impl_bw_replay_cell_into_factory {
                     move |handle| {
                         let _guard = handle.enter();
                         let trace = self.get_trace()?;
-                        let queue = queue::$queue::<P>::new(self.queue_config.unwrap_or_default());
+                        let queue = queue::$queue::<P>::new(self.queue_config.unwrap_or_default())
+                            .map_err(|e| Error::ConfigError(e.to_string()))?;
                         BwReplayCell::new(trace, queue, self.bw_type.unwrap_or_default())
                     }
                 }
@@ -216,4 +229,11 @@ macro_rules! impl_bw_replay_cell_into_factory {
     };
 }
 
-impl_bw_replay_cell_into_factory!(InfiniteQueue, DropTailQueue, DropHeadQueue, CoDelQueue);
+impl_bw_replay_cell_into_factory!(
+    InfiniteQueue,
+    DropTailQueue,
+    DropHeadQueue,
+    CoDelQueue,
+    RedQueue,
+    PieQueue
+);

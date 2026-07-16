@@ -792,7 +792,7 @@ fn test_replay() {
                 .build();
             BwReplayCell::new(
                 Box::new(trace) as Box<dyn BwTrace>,
-                DropTailQueue::new(DropTailQueueConfig::new(100, None, BwType::default())),
+                DropTailQueue::new(DropTailQueueConfig::new(100, None, BwType::default())).unwrap(),
                 None,
             )
         })

@@ -66,7 +66,7 @@ impl CoDelQueueConfig {
 
 impl<P> From<CoDelQueueConfig> for CoDelQueue<P> {
     fn from(config: CoDelQueueConfig) -> Self {
-        CoDelQueue::new(config)
+        CoDelQueue::new(config).expect("CoDelQueue::new should never fail")
     }
 }
 
@@ -85,9 +85,9 @@ pub struct CoDelQueue<P> {
 }
 
 impl<P> CoDelQueue<P> {
-    pub fn new(config: CoDelQueueConfig) -> Self {
+    pub fn new(config: CoDelQueueConfig) -> Result<Self, &'static str> {
         debug!(?config, "New CoDelQueue");
-        Self {
+        Ok(Self {
             queue: VecDeque::new(),
             config,
             now_bytes: 0,
@@ -97,7 +97,7 @@ impl<P> CoDelQueue<P> {
             first_above_time: None,
             drop_next: Instant::now(),
             ldelay: Duration::ZERO,
-        }
+        })
     }
 }
 
@@ -106,7 +106,7 @@ where
     P: Packet,
 {
     fn default() -> Self {
-        Self::new(CoDelQueueConfig::default())
+        Self::new(CoDelQueueConfig::default()).expect("CoDelQueue::new should never fail")
     }
 }
 

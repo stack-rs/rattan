@@ -38,7 +38,7 @@ impl DropHeadQueueConfig {
 
 impl<P> From<DropHeadQueueConfig> for DropHeadQueue<P> {
     fn from(config: DropHeadQueueConfig) -> Self {
-        DropHeadQueue::new(config)
+        DropHeadQueue::new(config).expect("DropHeadQueue::new should never fail")
     }
 }
 
@@ -52,23 +52,23 @@ pub struct DropHeadQueue<P> {
 }
 
 impl<P> DropHeadQueue<P> {
-    pub fn new(config: DropHeadQueueConfig) -> Self {
+    pub fn new(config: DropHeadQueueConfig) -> Result<Self, &'static str> {
         let packet_limit = config.packet_limit;
         let byte_limit = config.byte_limit;
         debug!(?config, "New DropHeadQueue");
-        Self {
+        Ok(Self {
             queue: VecDeque::new(),
             bw_type: config.bw_type,
             packet_limit,
             byte_limit,
             now_bytes: 0,
-        }
+        })
     }
 }
 
 impl<P> Default for DropHeadQueue<P> {
     fn default() -> Self {
-        Self::new(DropHeadQueueConfig::default())
+        Self::new(DropHeadQueueConfig::default()).expect("DropHeadQueue::new should never fail")
     }
 }
 

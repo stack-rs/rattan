@@ -1028,7 +1028,7 @@ mod tests {
         // A 256B + 14B packet needs 80ms transmission time.
         let bandwidth = Bandwidth::from_bps(25600);
 
-        let packet_queue = InfiniteQueue::new(InfiniteQueueConfig {});
+        let packet_queue = InfiniteQueue::new(InfiniteQueueConfig {}).unwrap();
         let cell = BwCell::new(bandwidth, packet_queue, BwType::NetworkLayer)?;
 
         let ingress = cell.sender();
@@ -1109,7 +1109,7 @@ mod tests {
         // A 256B packet needs 80ms transmission time.
         let bandwidth = Bandwidth::from_bps(25600);
         let packet_queue =
-            DropTailQueue::new(DropTailQueueConfig::new(None, 0, BwType::NetworkLayer));
+            DropTailQueue::new(DropTailQueueConfig::new(None, 0, BwType::NetworkLayer)).unwrap();
         let cell = BwCell::new(bandwidth, packet_queue, BwType::NetworkLayer)?;
 
         let ingress = cell.sender();
@@ -1181,7 +1181,7 @@ mod tests {
             .build();
 
         let packet_queue =
-            DropTailQueue::new(DropTailQueueConfig::new(None, 0, BwType::NetworkLayer));
+            DropTailQueue::new(DropTailQueueConfig::new(None, 0, BwType::NetworkLayer)).unwrap();
         let cell = BwReplayCell::new(
             Box::new(bandwidth_trace),
             packet_queue,

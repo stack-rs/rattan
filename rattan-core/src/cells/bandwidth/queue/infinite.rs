@@ -20,7 +20,7 @@ impl InfiniteQueueConfig {
 
 impl<P> From<InfiniteQueueConfig> for InfiniteQueue<P> {
     fn from(config: InfiniteQueueConfig) -> Self {
-        InfiniteQueue::new(config)
+        InfiniteQueue::new(config).expect("InfiniteQueue::new should never fail")
     }
 }
 
@@ -30,17 +30,17 @@ pub struct InfiniteQueue<P> {
 }
 
 impl<P> InfiniteQueue<P> {
-    pub fn new(_config: InfiniteQueueConfig) -> Self {
+    pub fn new(_config: InfiniteQueueConfig) -> Result<Self, &'static str> {
         debug!("New InfiniteQueue");
-        Self {
+        Ok(Self {
             queue: VecDeque::new(),
-        }
+        })
     }
 }
 
 impl<P> Default for InfiniteQueue<P> {
     fn default() -> Self {
-        Self::new(InfiniteQueueConfig::default())
+        Self::new(InfiniteQueueConfig::default()).expect("InfiniteQueue::new should never fail")
     }
 }
 

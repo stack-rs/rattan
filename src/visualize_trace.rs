@@ -261,6 +261,8 @@ pub fn write_visualize_trace<P: Packet>(
                     BwCellBuildConfig::Infinite(config) => config.bandwidth,
                     BwCellBuildConfig::DropHead(config) => config.bandwidth,
                     BwCellBuildConfig::DropTail(config) => config.bandwidth,
+                    BwCellBuildConfig::Red(config) => config.bandwidth,
+                    BwCellBuildConfig::Pie(config) => config.bandwidth,
                 }
                 .unwrap_or(Bandwidth::from_bps(u64::MAX));
                 trace_record.add_cell(
@@ -292,6 +294,8 @@ pub fn write_visualize_trace<P: Packet>(
                     BwReplayCellBuildConfig::DropHead(config) => config.get_trace(),
                     BwReplayCellBuildConfig::DropTail(config) => config.get_trace(),
                     BwReplayCellBuildConfig::Infinite(config) => config.get_trace(),
+                    BwReplayCellBuildConfig::Red(config) => config.get_trace(),
+                    BwReplayCellBuildConfig::Pie(config) => config.get_trace(),
                 }?;
 
                 let trace_points = expand_bw_trace(trace.as_mut(), start, end_time)
