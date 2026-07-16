@@ -39,6 +39,11 @@ pub struct RedQueueConfig {
         serde(default, skip_serializing_if = "serde_default")
     )]
     pub bw_type: BwType,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default = "default_red_seed", skip_serializing_if = "serde_default")
+    )]
+    pub seed: u64,
 }
 
 impl Default for RedQueueConfig {
@@ -53,8 +58,13 @@ impl Default for RedQueueConfig {
             pkt_tx_time: 120.0, // 1500 bytes * 8 / 100Mbps = 120 us
             adaptive: false,
             bw_type: BwType::default(),
+            seed: 42,
         }
     }
+}
+
+const fn default_red_seed() -> u64 {
+    42
 }
 
 impl RedQueueConfig {
@@ -125,6 +135,11 @@ impl RedQueueConfig {
         self.bw_type = bw_type;
         self
     }
+
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = seed;
+        self
+    }
 }
 
 impl<P> From<RedQueueConfig> for RedQueue<P> {
@@ -149,6 +164,7 @@ impl<P> RedQueue<P> {
     pub fn new(config: RedQueueConfig) -> Result<Self, &'static str> {
         config.validate()?;
         debug!(?config, "New RedQueue");
+        let seed = config.seed;
         Ok(Self {
             queue: VecDeque::new(),
             config,
@@ -157,7 +173,7 @@ impl<P> RedQueue<P> {
             count_packet: -1,
             idle_start: None,
             latest_max_p_update: None,
-            rng: StdRng::seed_from_u64(42),
+            rng: StdRng::seed_from_u64(seed),
         })
     }
 }

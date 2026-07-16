@@ -31,6 +31,11 @@ pub struct PieQueueConfig {
         serde(default, skip_serializing_if = "serde_default")
     )]
     pub bw_type: BwType,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default = "default_pie_seed", skip_serializing_if = "serde_default")
+    )]
+    pub seed: u64,
 }
 
 impl Default for PieQueueConfig {
@@ -42,8 +47,13 @@ impl Default for PieQueueConfig {
             max_burst: 150.0,
             t_update: Duration::from_millis(15),
             bw_type: BwType::default(),
+            seed: 42,
         }
     }
+}
+
+const fn default_pie_seed() -> u64 {
+    42
 }
 
 impl PieQueueConfig {
@@ -67,6 +77,7 @@ impl PieQueueConfig {
         max_burst: f64,
         t_update: Duration,
         bw_type: BwType,
+        seed: u64,
     ) -> Self {
         Self {
             packet_limit: packet_limit.into(),
@@ -75,6 +86,7 @@ impl PieQueueConfig {
             max_burst,
             t_update,
             bw_type,
+            seed,
         }
     }
 }
@@ -105,6 +117,7 @@ impl<P> PieQueue<P> {
         config.validate()?;
         debug!(?config, "New PieQueue");
         let max_burst = config.max_burst;
+        let seed = config.seed;
         Ok(Self {
             queue: VecDeque::new(),
             config,
@@ -116,7 +129,7 @@ impl<P> PieQueue<P> {
             start_measurement: None,
             avg_drate: 0.0,
             burst_allowance: max_burst,
-            rng: StdRng::seed_from_u64(42),
+            rng: StdRng::seed_from_u64(seed),
         })
     }
 }
