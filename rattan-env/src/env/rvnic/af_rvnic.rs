@@ -341,7 +341,7 @@ impl RvnicDriver {
         runtime: &Handle,
         meta: DriverMetaData,
     ) -> Self {
-        let (tx, rx) = mpsc::channel(1024);
+        let (tx, rx) = mpsc::channel(SEND_BUFFER_SIZE);
         let sender = Arc::new(RvnicSender { sender: tx });
         let receiver = RvnicReceiver::new(queue_id, rx_ring, meta.clone());
         tracing::info!(target: "RVNIC", "Built driver for {:?}", queue_id);
