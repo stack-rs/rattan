@@ -347,7 +347,7 @@ where
                                 return
                             }
                         }
-                        tokio::task::yield_now().await;
+                        tokio::task::consume_budget().await;
                     }
                 }
                 .instrument(span!(Level::DEBUG, "CoreRouter").or_current()),
