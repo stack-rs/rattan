@@ -30,7 +30,8 @@ use crate::{
     radix::{PacketLogMode, BASE_TS, PKT_LOG_MODE},
 };
 
-const SEND_CHANNEL_PACKETS: usize = 16384;
+const SEND_CHANNEL_PACKETS: usize = 32768;
+const RECV_CHANNEL_PACKETS: usize = 32768;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(transparent)]
@@ -244,7 +245,7 @@ where
         log_tx: Option<UnboundedSender<RattanLogOp>>,
         base_ts: i64,
     ) -> Result<Self, Error> {
-        let (tx, rx) = tokio::sync::mpsc::channel(1024);
+        let (tx, rx) = tokio::sync::mpsc::channel(RECV_CHANNEL_PACKETS);
         let flow_map = Arc::new(FlowMap::new(id));
         for d in driver.into_iter() {
             if D::use_blocking_recv() {
