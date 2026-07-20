@@ -46,7 +46,8 @@ macro_rules! impl_bw_cell_into_factory {
                 ) -> impl CellFactory<bandwidth::BwCell<P, queue::$queue<P>>> {
                     move |handle| {
                         let _guard = handle.enter();
-                        let queue = queue::$queue::<P>::new(self.queue_config.unwrap_or_default());
+                        let queue = queue::$queue::<P>::new(self.queue_config.unwrap_or_default())
+                            .map_err(|e| Error::ConfigError(e.to_string()))?;
                         BwCell::new(self.bandwidth, queue, self.bw_type.unwrap_or_default())
                     }
                 }
@@ -207,7 +208,8 @@ macro_rules! impl_bw_replay_cell_into_factory {
                     move |handle| {
                         let _guard = handle.enter();
                         let trace = self.get_trace()?;
-                        let queue = queue::$queue::<P>::new(self.queue_config.unwrap_or_default());
+                        let queue = queue::$queue::<P>::new(self.queue_config.unwrap_or_default())
+                            .map_err(|e| Error::ConfigError(e.to_string()))?;
                         BwReplayCell::new(trace, queue, self.bw_type.unwrap_or_default())
                     }
                 }

@@ -64,8 +64,10 @@ impl CoDelQueueConfig {
     }
 }
 
-impl<P> From<CoDelQueueConfig> for CoDelQueue<P> {
-    fn from(config: CoDelQueueConfig) -> Self {
+impl<P: Packet> TryFrom<CoDelQueueConfig> for CoDelQueue<P> {
+    type Error = &'static str;
+
+    fn try_from(config: CoDelQueueConfig) -> Result<Self, Self::Error> {
         CoDelQueue::new(config)
     }
 }
@@ -84,29 +86,9 @@ pub struct CoDelQueue<P> {
     ldelay: Duration,                  // sojourn time of last dequeued packet
 }
 
-impl<P> CoDelQueue<P> {
-    pub fn new(config: CoDelQueueConfig) -> Self {
-        debug!(?config, "New CoDelQueue");
-        Self {
-            queue: VecDeque::new(),
-            config,
-            now_bytes: 0,
-            count: 0,
-            lastcount: 0,
-            dropping: false,
-            first_above_time: None,
-            drop_next: Instant::now(),
-            ldelay: Duration::ZERO,
-        }
-    }
-}
-
-impl<P> Default for CoDelQueue<P>
-where
-    P: Packet,
-{
+impl<P: Packet> Default for CoDelQueue<P> {
     fn default() -> Self {
-        Self::new(CoDelQueueConfig::default())
+        Self::new(CoDelQueueConfig::default()).expect("CoDelQueue::new should never fail")
     }
 }
 
@@ -145,6 +127,21 @@ where
     P: Packet,
 {
     type Config = CoDelQueueConfig;
+
+    fn new(config: CoDelQueueConfig) -> Result<Self, &'static str> {
+        debug!(?config, "New CoDelQueue");
+        Ok(Self {
+            queue: VecDeque::new(),
+            config,
+            now_bytes: 0,
+            count: 0,
+            lastcount: 0,
+            dropping: false,
+            first_above_time: None,
+            drop_next: Instant::now(),
+            ldelay: Duration::ZERO,
+        })
+    }
 
     fn configure(&mut self, config: Self::Config) {
         self.config = config;

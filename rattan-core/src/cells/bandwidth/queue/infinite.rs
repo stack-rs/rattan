@@ -18,8 +18,10 @@ impl InfiniteQueueConfig {
     }
 }
 
-impl<P> From<InfiniteQueueConfig> for InfiniteQueue<P> {
-    fn from(config: InfiniteQueueConfig) -> Self {
+impl<P: Packet> TryFrom<InfiniteQueueConfig> for InfiniteQueue<P> {
+    type Error = &'static str;
+
+    fn try_from(config: InfiniteQueueConfig) -> Result<Self, Self::Error> {
         InfiniteQueue::new(config)
     }
 }
@@ -29,18 +31,9 @@ pub struct InfiniteQueue<P> {
     queue: VecDeque<P>,
 }
 
-impl<P> InfiniteQueue<P> {
-    pub fn new(_config: InfiniteQueueConfig) -> Self {
-        debug!("New InfiniteQueue");
-        Self {
-            queue: VecDeque::new(),
-        }
-    }
-}
-
-impl<P> Default for InfiniteQueue<P> {
+impl<P: Packet> Default for InfiniteQueue<P> {
     fn default() -> Self {
-        Self::new(InfiniteQueueConfig::default())
+        Self::new(InfiniteQueueConfig::default()).expect("InfiniteQueue::new should never fail")
     }
 }
 
@@ -49,6 +42,13 @@ where
     P: Packet,
 {
     type Config = InfiniteQueueConfig;
+
+    fn new(_config: InfiniteQueueConfig) -> Result<Self, &'static str> {
+        debug!("New InfiniteQueue");
+        Ok(Self {
+            queue: VecDeque::new(),
+        })
+    }
 
     fn configure(&mut self, _config: Self::Config) {}
 
