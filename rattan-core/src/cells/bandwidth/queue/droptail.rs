@@ -36,7 +36,7 @@ impl DropTailQueueConfig {
     }
 }
 
-impl<P> From<DropTailQueueConfig> for DropTailQueue<P> {
+impl<P: Packet> From<DropTailQueueConfig> for DropTailQueue<P> {
     fn from(config: DropTailQueueConfig) -> Self {
         DropTailQueue::new(config).expect("DropTailQueue::new should never fail")
     }
@@ -51,8 +51,19 @@ pub struct DropTailQueue<P> {
     now_bytes: usize,
 }
 
-impl<P> DropTailQueue<P> {
-    pub fn new(config: DropTailQueueConfig) -> Result<Self, &'static str> {
+impl<P: Packet> Default for DropTailQueue<P> {
+    fn default() -> Self {
+        Self::new(DropTailQueueConfig::default()).expect("DropTailQueue::new should never fail")
+    }
+}
+
+impl<P> PacketQueue<P> for DropTailQueue<P>
+where
+    P: Packet,
+{
+    type Config = DropTailQueueConfig;
+
+    fn new(config: DropTailQueueConfig) -> Result<Self, &'static str> {
         let packet_limit = config.packet_limit;
         let byte_limit = config.byte_limit;
         debug!(?config, "New DropTailQueue");
@@ -64,19 +75,6 @@ impl<P> DropTailQueue<P> {
             now_bytes: 0,
         })
     }
-}
-
-impl<P> Default for DropTailQueue<P> {
-    fn default() -> Self {
-        Self::new(DropTailQueueConfig::default()).expect("DropTailQueue::new should never fail")
-    }
-}
-
-impl<P> PacketQueue<P> for DropTailQueue<P>
-where
-    P: Packet,
-{
-    type Config = DropTailQueueConfig;
 
     fn configure(&mut self, config: Self::Config) {
         self.packet_limit = config.packet_limit;

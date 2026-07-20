@@ -19,7 +19,7 @@ use rattan_core::{
 use rattan_core::{
     cells::{
         bandwidth::{
-            queue::{DropTailQueue, DropTailQueueConfig, InfiniteQueueConfig},
+            queue::{DropTailQueue, DropTailQueueConfig, InfiniteQueueConfig, PacketQueue},
             BwCellConfig, BwReplayCell, BwReplayCellConfig, BwType,
         },
         ControlInterface, StdPacket,

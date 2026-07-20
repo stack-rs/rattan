@@ -990,7 +990,7 @@ mod tests {
 
     use super::*;
     use crate::cells::bandwidth::queue::{
-        DropTailQueue, DropTailQueueConfig, InfiniteQueue, InfiniteQueueConfig,
+        DropTailQueue, DropTailQueueConfig, InfiniteQueue, InfiniteQueueConfig, PacketQueue,
     };
     use crate::cells::{StdPacket, TestPacket};
 

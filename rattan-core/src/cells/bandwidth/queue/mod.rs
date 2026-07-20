@@ -126,6 +126,10 @@ where
     #[cfg(not(feature = "serde"))]
     type Config: Send + Debug;
 
+    fn new(config: Self::Config) -> Result<Self, &'static str>
+    where
+        Self: Sized;
+
     fn configure(&mut self, config: Self::Config);
 
     fn enqueue(&mut self, packet: P);

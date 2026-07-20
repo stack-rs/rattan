@@ -36,7 +36,7 @@ impl DropHeadQueueConfig {
     }
 }
 
-impl<P> From<DropHeadQueueConfig> for DropHeadQueue<P> {
+impl<P: Packet> From<DropHeadQueueConfig> for DropHeadQueue<P> {
     fn from(config: DropHeadQueueConfig) -> Self {
         DropHeadQueue::new(config).expect("DropHeadQueue::new should never fail")
     }
@@ -51,8 +51,19 @@ pub struct DropHeadQueue<P> {
     now_bytes: usize,
 }
 
-impl<P> DropHeadQueue<P> {
-    pub fn new(config: DropHeadQueueConfig) -> Result<Self, &'static str> {
+impl<P: Packet> Default for DropHeadQueue<P> {
+    fn default() -> Self {
+        Self::new(DropHeadQueueConfig::default()).expect("DropHeadQueue::new should never fail")
+    }
+}
+
+impl<P> PacketQueue<P> for DropHeadQueue<P>
+where
+    P: Packet,
+{
+    type Config = DropHeadQueueConfig;
+
+    fn new(config: DropHeadQueueConfig) -> Result<Self, &'static str> {
         let packet_limit = config.packet_limit;
         let byte_limit = config.byte_limit;
         debug!(?config, "New DropHeadQueue");
@@ -64,19 +75,6 @@ impl<P> DropHeadQueue<P> {
             now_bytes: 0,
         })
     }
-}
-
-impl<P> Default for DropHeadQueue<P> {
-    fn default() -> Self {
-        Self::new(DropHeadQueueConfig::default()).expect("DropHeadQueue::new should never fail")
-    }
-}
-
-impl<P> PacketQueue<P> for DropHeadQueue<P>
-where
-    P: Packet,
-{
-    type Config = DropHeadQueueConfig;
 
     fn configure(&mut self, config: Self::Config) {
         self.packet_limit = config.packet_limit;
