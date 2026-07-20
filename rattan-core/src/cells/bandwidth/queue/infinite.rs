@@ -18,9 +18,11 @@ impl InfiniteQueueConfig {
     }
 }
 
-impl<P: Packet> From<InfiniteQueueConfig> for InfiniteQueue<P> {
-    fn from(config: InfiniteQueueConfig) -> Self {
-        InfiniteQueue::new(config).expect("InfiniteQueue::new should never fail")
+impl<P: Packet> TryFrom<InfiniteQueueConfig> for InfiniteQueue<P> {
+    type Error = &'static str;
+
+    fn try_from(config: InfiniteQueueConfig) -> Result<Self, Self::Error> {
+        InfiniteQueue::new(config)
     }
 }
 

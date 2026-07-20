@@ -64,9 +64,11 @@ impl CoDelQueueConfig {
     }
 }
 
-impl<P: Packet> From<CoDelQueueConfig> for CoDelQueue<P> {
-    fn from(config: CoDelQueueConfig) -> Self {
-        CoDelQueue::new(config).expect("CoDelQueue::new should never fail")
+impl<P: Packet> TryFrom<CoDelQueueConfig> for CoDelQueue<P> {
+    type Error = &'static str;
+
+    fn try_from(config: CoDelQueueConfig) -> Result<Self, Self::Error> {
+        CoDelQueue::new(config)
     }
 }
 
@@ -84,8 +86,7 @@ pub struct CoDelQueue<P> {
     ldelay: Duration,                  // sojourn time of last dequeued packet
 }
 
-impl<P: Packet> Default for CoDelQueue<P>
-{
+impl<P: Packet> Default for CoDelQueue<P> {
     fn default() -> Self {
         Self::new(CoDelQueueConfig::default()).expect("CoDelQueue::new should never fail")
     }

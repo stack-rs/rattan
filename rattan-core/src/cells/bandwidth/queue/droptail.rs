@@ -36,9 +36,11 @@ impl DropTailQueueConfig {
     }
 }
 
-impl<P: Packet> From<DropTailQueueConfig> for DropTailQueue<P> {
-    fn from(config: DropTailQueueConfig) -> Self {
-        DropTailQueue::new(config).expect("DropTailQueue::new should never fail")
+impl<P: Packet> TryFrom<DropTailQueueConfig> for DropTailQueue<P> {
+    type Error = &'static str;
+
+    fn try_from(config: DropTailQueueConfig) -> Result<Self, Self::Error> {
+        DropTailQueue::new(config)
     }
 }
 

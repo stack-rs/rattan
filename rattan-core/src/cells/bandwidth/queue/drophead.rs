@@ -36,9 +36,11 @@ impl DropHeadQueueConfig {
     }
 }
 
-impl<P: Packet> From<DropHeadQueueConfig> for DropHeadQueue<P> {
-    fn from(config: DropHeadQueueConfig) -> Self {
-        DropHeadQueue::new(config).expect("DropHeadQueue::new should never fail")
+impl<P: Packet> TryFrom<DropHeadQueueConfig> for DropHeadQueue<P> {
+    type Error = &'static str;
+
+    fn try_from(config: DropHeadQueueConfig) -> Result<Self, Self::Error> {
+        DropHeadQueue::new(config)
     }
 }
 
