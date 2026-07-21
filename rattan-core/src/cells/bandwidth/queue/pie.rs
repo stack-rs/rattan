@@ -31,10 +31,7 @@ pub struct PieQueueConfig {
         serde(default, skip_serializing_if = "serde_default")
     )]
     pub bw_type: BwType,
-    #[cfg_attr(
-        feature = "serde",
-        serde(default = "default_pie_seed", skip_serializing_if = "serde_default")
-    )]
+    #[cfg_attr(feature = "serde", serde(default = "default_pie_seed"))]
     pub seed: u64,
 }
 
@@ -268,6 +265,9 @@ where
         if let Err(e) = config.validate() {
             warn!("PieQueue: discard invalid configure: {}", e);
             return;
+        }
+        if config.seed != self.config.seed {
+            self.rng = StdRng::seed_from_u64(config.seed);
         }
         self.config = config;
         self.burst_allowance = self.burst_allowance.min(self.config.max_burst);

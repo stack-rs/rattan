@@ -39,10 +39,7 @@ pub struct RedQueueConfig {
         serde(default, skip_serializing_if = "serde_default")
     )]
     pub bw_type: BwType,
-    #[cfg_attr(
-        feature = "serde",
-        serde(default = "default_red_seed", skip_serializing_if = "serde_default")
-    )]
+    #[cfg_attr(feature = "serde", serde(default = "default_red_seed"))]
     pub seed: u64,
 }
 
@@ -263,6 +260,9 @@ where
             warn!("RedQueue: discard invalid configure: {}", e);
             return;
         }
+        if config.seed != self.config.seed {
+            self.rng = StdRng::seed_from_u64(config.seed);
+        }
         self.config = config;
     }
 
@@ -283,7 +283,11 @@ where
                 >= Duration::from_millis(500)
             {
                 self.update_max_p();
-                self.latest_max_p_update = Some(now);
+                // Advance on a fixed 500 ms grid rather than anchoring to the current packet arrival time.
+                // Anchoring to now would reset the timer on every trigger and silently skip adjustment intervals
+                // when arrivals are sparse (e.g. one packet after a 2 s idle would fire only once instead of catching up over multiple enqueues).
+                self.latest_max_p_update =
+                    Some(self.latest_max_p_update.unwrap() + Duration::from_millis(500));
             }
         }
 
