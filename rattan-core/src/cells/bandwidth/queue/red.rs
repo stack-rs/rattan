@@ -63,6 +63,7 @@ impl Default for RedQueueConfig {
     }
 }
 
+#[cfg(feature = "serde")]
 const fn default_red_seed() -> u64 {
     42
 }
@@ -142,9 +143,11 @@ impl RedQueueConfig {
     }
 }
 
-impl<P> From<RedQueueConfig> for RedQueue<P> {
-    fn from(config: RedQueueConfig) -> Self {
-        RedQueue::new(config).expect("RedQueueConfig validation failed")
+impl<P: Packet> TryFrom<RedQueueConfig> for RedQueue<P> {
+    type Error = &'static str;
+
+    fn try_from(config: RedQueueConfig) -> Result<Self, Self::Error> {
+        RedQueue::new(config)
     }
 }
 
@@ -158,24 +161,6 @@ pub struct RedQueue<P> {
     idle_start: Option<Instant>,          // start time of current idle period
     latest_max_p_update: Option<Instant>, // latest time when max_p was updated (used in adaptive mode), set by first enqueue
     rng: StdRng,
-}
-
-impl<P> RedQueue<P> {
-    pub fn new(config: RedQueueConfig) -> Result<Self, &'static str> {
-        config.validate()?;
-        debug!(?config, "New RedQueue");
-        let seed = config.seed;
-        Ok(Self {
-            queue: VecDeque::new(),
-            config,
-            now_bytes: 0,
-            average_queue_length: 0.0,
-            count_packet: -1,
-            idle_start: None,
-            latest_max_p_update: None,
-            rng: StdRng::seed_from_u64(seed),
-        })
-    }
 }
 
 impl<P> Default for RedQueue<P>
@@ -256,6 +241,22 @@ where
     P: Packet,
 {
     type Config = RedQueueConfig;
+
+    fn new(config: RedQueueConfig) -> Result<Self, &'static str> {
+        config.validate()?;
+        debug!(?config, "New RedQueue");
+        let seed = config.seed;
+        Ok(Self {
+            queue: VecDeque::new(),
+            config,
+            now_bytes: 0,
+            average_queue_length: 0.0,
+            count_packet: -1,
+            idle_start: None,
+            latest_max_p_update: None,
+            rng: StdRng::seed_from_u64(seed),
+        })
+    }
 
     fn configure(&mut self, config: Self::Config) {
         if let Err(e) = config.validate() {

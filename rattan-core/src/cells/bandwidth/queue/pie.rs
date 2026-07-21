@@ -52,6 +52,7 @@ impl Default for PieQueueConfig {
     }
 }
 
+#[cfg(feature = "serde")]
 const fn default_pie_seed() -> u64 {
     42
 }
@@ -91,9 +92,11 @@ impl PieQueueConfig {
     }
 }
 
-impl<P> From<PieQueueConfig> for PieQueue<P> {
-    fn from(config: PieQueueConfig) -> Self {
-        PieQueue::new(config).expect("PieQueueConfig validation failed")
+impl<P: Packet> TryFrom<PieQueueConfig> for PieQueue<P> {
+    type Error = &'static str;
+
+    fn try_from(config: PieQueueConfig) -> Result<Self, Self::Error> {
+        PieQueue::new(config)
     }
 }
 
@@ -110,28 +113,6 @@ pub struct PieQueue<P> {
     avg_drate: f64,
     burst_allowance: f64,
     rng: StdRng,
-}
-
-impl<P> PieQueue<P> {
-    pub fn new(config: PieQueueConfig) -> Result<Self, &'static str> {
-        config.validate()?;
-        debug!(?config, "New PieQueue");
-        let max_burst = config.max_burst;
-        let seed = config.seed;
-        Ok(Self {
-            queue: VecDeque::new(),
-            config,
-            now_bytes: 0,
-            old_del: 0.0,
-            p: 0.0,
-            dq_count: 0,
-            start_update: None,
-            start_measurement: None,
-            avg_drate: 0.0,
-            burst_allowance: max_burst,
-            rng: StdRng::seed_from_u64(seed),
-        })
-    }
 }
 
 impl<P> Default for PieQueue<P>
@@ -262,6 +243,26 @@ where
     P: Packet,
 {
     type Config = PieQueueConfig;
+
+    fn new(config: PieQueueConfig) -> Result<Self, &'static str> {
+        config.validate()?;
+        debug!(?config, "New PieQueue");
+        let max_burst = config.max_burst;
+        let seed = config.seed;
+        Ok(Self {
+            queue: VecDeque::new(),
+            config,
+            now_bytes: 0,
+            old_del: 0.0,
+            p: 0.0,
+            dq_count: 0,
+            start_update: None,
+            start_measurement: None,
+            avg_drate: 0.0,
+            burst_allowance: max_burst,
+            rng: StdRng::seed_from_u64(seed),
+        })
+    }
 
     fn configure(&mut self, config: Self::Config) {
         if let Err(e) = config.validate() {
