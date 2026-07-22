@@ -14,6 +14,9 @@ categories.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [[example]]
+name = "channel"
+
+[[example]]
 name = "channel-xdp"
 required-features = ["xdp"]
 
