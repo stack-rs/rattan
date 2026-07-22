@@ -1,8 +1,328 @@
-// PIE Queue Implementation Reference:
-// https://www.rfc-editor.org/info/rfc8033
-// https://ieeexplore.ieee.org/document/6602305
-// Reproduced according to RFC 8033 Appendix B,
-// rather than original paper or RFC Appendix A.
+//! PIE (Proportional Integral controller Enhanced) queue.
+//!
+//! # References
+//!
+//! - PIE paper:
+//!   <https://ieeexplore.ieee.org/document/6602305>
+//! - RFC 8033 (PIE AQM):
+//!   <https://www.rfc-editor.org/info/rfc8033>
+//! - Linux kernel PIE:
+//!   [`include/net/pie.h`](https://github.com/torvalds/linux/blob/master/include/net/pie.h)
+//!   and [`net/sched/sch_pie.c`](https://github.com/torvalds/linux/blob/master/net/sched/sch_pie.c)
+//!   (referenced as "kernel" throughout this documentation)
+//!
+//! # RFC 8033 version: Appendix A vs. Appendix B
+//!
+//! RFC 8033 contains two descriptions of the PIE algorithm:
+//!
+//! - **Appendix A** is the "original paper" algorithm: configurable α/β with
+//!   *dynamic* per-probability-scaling, accumulated-probability-based drop
+//!   decisions, and an optional timestamp-based delay estimation path.
+//!
+//! - **Appendix B** is a simplified pseudo-code reference implementation:
+//!   fixed `α = 0.125`, `β = 1.25`, *static* `p_increment` damping tables,
+//!   per-packet random drop (no accumulation), and always drain-rate-based
+//!   delay estimation.
+//!
+//! The kernel follows **Appendix A** (with its own extensions).  This
+//! implementation follows **Appendix B**.  This is the most fundamental
+//! design difference and explains nearly every other divergence listed below.
+//!
+//! # Differences from the Linux kernel implementation
+//!
+//! The 16 differences below fall into three categories:
+//!
+//! | Category | Sections | Explanation |
+//! |----------|----------|-------------|
+//! | **RFC 8033 Appendix A vs. B** | §3, §4, §5, §12 | The kernel follows Appendix A; this implementation follows Appendix B. These are deliberate design choices, not omissions. |
+//! | **Kernel-specific extensions** | §6, §7, §8, §11, §13 | Features the Linux kernel added beyond what either RFC appendix describes. |
+//! | **Implementation / architectural choices** | §1, §2, §9, §10, §14, §15, §16 | Differences arising from the simulation context (floating-point, event-driven, seedable RNG) or architectural constraints. |
+//!
+//! ## 1. Fixed-point integers (kernel) vs. floating-point (here)
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | `prob` | `u64` scaled by `MAX_PROB` (`U64_MAX >> 8`) | `f64` in `[0.0, 1.0]` |
+//! | `avg_dq_rate` | `u32` scaled by `PIE_SCALE` (shift 8) | `f64` in B/s |
+//! | delay | `psched_time_t` (kernel time ticks) | `f64` in seconds |
+//! | `burst_time` | `psched_time_t` ticks | `f64` in milliseconds |
+//! | EWMA for drain rate | `avg = (avg - (avg >> 3)) + (count >> 3)` | `avg = 0.875 * avg + 0.125 * rate` |
+//! | `p_increment` damping | dynamic α/β bit-shifts (see §4) | `f64` division by `2048`/`512`/`…` |
+//!
+//! The EWMA update is mathematically identical (`1/8 = 0.125` weight).  The
+//! damping thresholds are also identical (see §4 below).
+//!
+//! ## 2. Drop-probability update trigger
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | trigger | dedicated kernel timer, fires every `tupdate` jiffies | event-driven, on `enqueue()` |
+//! | fires when idle? | yes — timer always runs | no — requires a packet arrival |
+//! | grid | timer re-arms for `jiffies + tupdate` | forward-shifted fixed `t_update` grid |
+//! | first fire | 500 ms after init | on first enqueue |
+//!
+//! **Kernel**: A dedicated timer (`adapt_timer`) fires every `tupdate`
+//! regardless of whether packets are arriving.  During prolonged idle periods
+//! the kernel therefore continues to decay `prob` and update state.
+//!
+//! **Here**: Probability update happens inside `enqueue()`.  When a packet
+//! arrives and at least `t_update` has elapsed since the last update, one
+//! call to `update_drop_probability()` is made and the timer is advanced by
+//! exactly `t_update` (not reset to current time).  This "fixed grid"
+//! approach allows multiple intervals to be caught up over successive packet
+//! arrivals after a long idle.  However, if no packets arrive, no updates
+//! occur.
+//!
+//! **Why event-driven instead of a dedicated timer?**  This simulator operates
+//! on *logical* (simulation) time, not wall-clock time.  A wall-clock timer
+//! cannot accurately target a logical-time instant, especially under
+//! variable-speed simulation, pause/resume, or replay scenarios.  Spawning an
+//! OS timer per queue instance would be prohibitively expensive when
+//! simulating hundreds or thousands of flows.
+//!
+//! ## 3. Alpha and Beta: configurable (kernel) vs. fixed (here)
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | definition | `struct pie_params.alpha`, `.beta` (user-tunable 0–32) | `tilde_alpha = 0.125`, `tilde_beta = 1.25` (hard-coded) |
+//! | internal scaling | `(param * MAX_PROB / PSCHED_TICKS_PER_SEC) >> 4` | direct `f64` |
+//! | defaults | α = 2, β = 20 → 2/16 = 0.125, 20/16 = 1.25 | 0.125, 1.25 |
+//! | tuning via | `tc qdisc ... pie alpha N beta M` | not configurable |
+//!
+//! The **default** values are equivalent: `2/16 = 0.125`, `20/16 = 1.25`.
+//! However, the kernel exposes α and β as user-tunable knobs and dynamically
+//! scales them based on current probability (described in §4).  This
+//! implementation hard-codes the RFC 8033 Appendix B base values and applies
+//! static damping to `p_increment` instead.
+//!
+//! ## 4. Probability-increment damping
+//!
+//! Both implementations damp the probability adjustment when `prob` is small,
+//! but through different mechanisms (Appendix A dynamically scales α/β;
+//! Appendix B statically divides `p_increment` — thresholds and effective
+//! damping factors are mathematically identical):
+//!
+//! **Kernel (Appendix A — dynamic α/β scaling):**
+//!
+//! When `prob < MAX_PROB / 10`:
+//! 1. α and β are halved (`>>= 1`).
+//! 2. Then repeatedly quartered (`>>= 2`) for each power-of-10 threshold:
+//!    `prob < MAX_PROB / 100` → quarter again, … up to `MAX_PROB / 10⁶`.
+//!
+//! **Here (Appendix B — static `p_increment` division):**
+//!
+//! `p_increment` is divided by a precomputed factor depending on `p`:
+//!
+//! | `p` range | Division factor |
+//! |-----------|----------------:|
+//! | `p ≥ 0.1` | 1 (no damping) |
+//! | `0.01 ≤ p < 0.1` | 2 |
+//! | `0.001 ≤ p < 0.01` | 8 |
+//! | `0.0001 ≤ p < 0.001` | 32 |
+//! | `0.00001 ≤ p < 0.0001` | 128 |
+//! | `0.000001 ≤ p < 0.00001` | 512 |
+//! | `p < 0.000001` | 2048 |
+//!
+//! The thresholds *and* the effective damping factors are **mathematically
+//! identical** between the two approaches.  The kernel modifies α/β before
+//! computing the delta; this implementation computes the full delta first,
+//! then divides.  Because `delta = α·Δcur + β·Δold`, scaling α and β by
+//! factor *k* is equivalent to scaling the delta by *k*.
+//!
+//! ## 5. Drop decision: probability accumulation (kernel) vs. per-packet random (here)
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | mechanism | `accu_prob` accumulates probability across packets | `rand < p` each packet |
+//! | drop trigger | accumulated value crosses threshold | immediate comparison |
+//! | burst tolerance | natural — multiple low-prob packets needed to trigger | via explicit `burst_allowance` check |
+//! | RFC version | Appendix A | Appendix B |
+//!
+//! **Kernel**: Maintains an `accu_prob` counter in `pie_drop_early()`.  Each
+//! arriving packet adds `local_prob` (possibly scaled by `bytemode`) to the
+//! accumulator.  A packet is dropped only when `accu_prob` crosses a
+//! threshold (`(MAX_PROB / 2) * 17`).  This naturally spaces out drops —
+//! several low-probability packets must arrive before one is dropped.
+//!
+//! **Here**: Each `should_drop()` call draws a fresh uniform random value and
+//! compares directly against `p`.  This is the simpler Appendix B approach
+//! and produces the same statistical drop rate over many packets; the
+//! difference is that drops are less evenly spaced (potentially clumpier)
+//! without accumulation.
+//!
+//! ## 6. ECN (Explicit Congestion Notification)
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | ECN marking | supported (`TCA_PIE_ECN` flag) | not supported |
+//! | mark condition | `prob ≤ MAX_PROB / 10` + packet is ECN-capable | N/A |
+//! | mark counter | `ecn_mark` stat | N/A |
+//!
+//! The kernel can mark ECN-capable packets (setting the CE codepoint) instead
+//! of dropping them when the drop probability is moderate.  This
+//! implementation always drops.  Adding ECN support would require extending
+//! the `Packet` trait with an ECN field.
+//!
+//! ## 7. Bytemode (packet-size-scaled probability)
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | feature | optional `bytemode` flag (`TCA_PIE_BYTEMODE`) | not supported |
+//! | scaling | `local_prob = prob * pkt_size / mtu` (for packets ≤ MTU) | N/A |
+//!
+//! When enabled, the kernel scales the drop probability proportionally to the
+//! packet size, making larger packets more likely to be dropped.  This
+//! implementation always treats all packets equally regardless of size.
+//!
+//! ## 8. Non-linear boost for high delay (>250 ms)
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | trigger | `qdelay > 250 ms` | not implemented |
+//! | effect | `delta += 2%` of max probability | N/A |
+//!
+//! When the estimated queue delay exceeds 250 ms, the kernel adds an extra
+//! 2% to the probability delta to more aggressively counteract severe
+//! congestion.  This boost is applied *after* the α/β damping, so it is not
+//! subject to the same scaling.  This implementation (following Appendix B)
+//! has no such non-linear term; the sole source of `p_increment` is the
+//! proportional-integral calculation, damped as described in §4.
+//!
+//! This is one of the more behaviourally significant differences: under
+//! severe congestion (bufferbloat), the kernel will increase its drop
+//! probability faster than this implementation.
+//!
+//! ## 9. Rapid decay condition and factor
+//!
+//! Both implementations reduce the drop probability when the queue is
+//! consistently uncongested, but the *trigger condition* and *decay factor*
+//! differ:
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | condition | `qdelay == 0` **and** `qdelay_old == 0` (exactly zero) | `cur_del < ref_del / 2` **and** `old_del < ref_del / 2` |
+//! | guard | `update_prob == true` (no overflow/underflow this round) | none |
+//! | retention factor | `63/64` ≈ 0.9844 (`prob -= prob / 64`) | `0.98` (`p *= 0.98`) |
+//!
+//! The kernel only decays when delay is *exactly* zero for two consecutive
+//! update periods — a stricter condition.  This implementation decays
+//! whenever the delay is below half the target (7.5 ms at defaults), which
+//! is a looser condition.  Combined with the faster decay factor (0.98 vs.
+//! 0.9844), this implementation may reduce `p` more aggressively during
+//! lightly-loaded periods.
+//!
+//! ## 10. Burst allowance reduction mechanism
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | reduced in | `pie_process_dequeue()` — every dequeue | `update_drop_probability()` — only when update fires |
+//! | reduced by | `dtime` (inter-dequeue interval, in psched ticks) | `elapsed_ms` (`t_update`, in milliseconds) |
+//! | floor | 0 (via `max_t(psched_time_t, ...)`) | 0 (via `.max(0.0)`) |
+//! | recharge condition | `prob == 0 && delay < target/2 && delay_old < target/2` | `p < EPSILON && cur_del < ref_del/2 && old_del < ref_del/2` |
+//! | recharge value | 150 ms (`PSCHED_TICKS_PER_SEC * 150 / 1000`) | `max_burst` (default 150.0 ms) |
+//!
+//! The kernel reduces `burst_time` on *every* dequeue by the actual
+//! inter-departure time, so burst allowance reflects real-time packet
+//! departures.  This implementation reduces `burst_allowance` only during
+//! probability updates, by the `t_update` interval.  During periods where
+//! updates fire regularly (steady packet arrivals), both behave similarly.
+//! During sparse arrivals where updates are caught up in bursts, the
+//! reduction granularity may differ.
+//!
+//! ## 11. Variable reset on sustained good behaviour
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | full variable reset | `pie_vars_init()` when `qdelay < target/2`, `qdelay_old < target/2`, `prob == 0`, and rate estimator has a valid reading | not performed |
+//! | effect of reset | clears `prob`, `avg_dq_rate`, `dq_count`, `dq_tstamp`, `accu_prob`; resets `burst_time` to 150 ms | only `burst_allowance` is recharged to `max_burst` |
+//!
+//! The kernel fully resets all PIE state variables when the queue has been
+//! well-behaved for long enough.  This implementation only recharges the
+//! burst allowance (see §10) and leaves `avg_drate`, `p`, and measurement
+//! state intact.  After a prolonged idle or light-load period followed by
+//! sudden congestion, this implementation may react with a stale (possibly
+//! too-low) `avg_drate`, causing a transient over-estimation of delay.
+//!
+//! ## 12. Delay estimation: always drain-rate-based vs. dual-mode
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | timestamp mode | supported (`dq_rate_estimator = false`) | not supported |
+//! | drain-rate mode | supported (`dq_rate_estimator = true`) | always active |
+//! | timestamp source | `pie_skb_cb.enqueue_time` from skb control block | N/A |
+//! | drain-rate threshold | 16 KiB (`QUEUE_THRESHOLD`) | 16 KiB (`dq_threshold`) |
+//! | measurement entry | `backlog >= 16384` | `now_bytes > 16384` |
+//! | EWMA weight | `1/8` (0.125) | `0.125` |
+//!
+//! The kernel can optionally measure delay directly from per-packet enqueue
+//! timestamps when the drain-rate estimator is disabled.  This
+//! implementation always estimates delay as `now_bytes / avg_drate`,
+//! equivalent to the kernel's `dq_rate_estimator = true` mode.
+//!
+//! The measurement cycle entry condition differs by one byte: the kernel
+//! uses `>=` while this implementation uses `>`.  With standard MTU packets
+//! (~1514 B with L2 overhead) this off-by-one is not practically observable.
+//!
+//! ## 13. Update guard: zero delay with non-zero backlog
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | guard | when `qdelay == 0` but `backlog != 0`, skip this round's probability update | not implemented |
+//!
+//! The kernel refrains from updating `prob` when the drain-rate estimator
+//! yields zero delay but the queue is not actually empty — this indicates
+//! the estimator has not yet converged.  This implementation always applies
+//! the probability update; if `avg_drate ≈ 0` (estimator not yet
+//! initialized), `cur_del` is forced to 0 via the `abs(avg_drate) < EPSILON`
+//! check.
+//!
+//! ## 14. Random-number generation
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | source | `get_random_u64()` (kernel CSPRNG) | `rand::rngs::StdRng` (ChaCha12) |
+//! | seeding | not seedable by userspace | user-configurable `seed` field |
+//!
+//! The kernel uses the kernel's CSPRNG for drop decisions.  This
+//! implementation uses a seedable ChaCha12 RNG, enabling deterministic,
+//! reproducible simulation runs.
+//!
+//! ## 15. Queue architecture
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | structure | full `Qdisc` with netlink configuration | self-contained `VecDeque` |
+//! | hard limit | single `limit` (packets) | dual `packet_limit` + `byte_limit` |
+//! | statistics | `tc_pie_xstats` (prob, delay, packets_in, dropped, overlimit, maxq, ecn_mark) | none |
+//!
+//! The kernel's PIE is a full Linux qdisc with netlink-based configuration
+//! (`tc qdisc ... pie`), statistics export, and lifecycle management.
+//! This implementation is a queue *component* within a larger simulation
+//! framework; it stores packets in an internal `VecDeque` and exposes the
+//! `PacketQueue` trait.
+//!
+//! The kernel's single `limit` is a packet count.  This implementation adds
+//! an independent `byte_limit` for byte-oriented capacity management.
+//!
+//! ## 16. Configurable parameters
+//!
+//! The kernel exposes several parameters that have no counterpart here:
+//!
+//! | Kernel parameter | `TCA_PIE_*` attribute | Purpose | Status here |
+//! |------------------|-----------------------|---------|-------------|
+//! | `alpha` | `TCA_PIE_ALPHA` | PI controller α gain (0–32) | fixed at 0.125 |
+//! | `beta` | `TCA_PIE_BETA` | PI controller β gain (0–32) | fixed at 1.25 |
+//! | `ecn` | `TCA_PIE_ECN` | enable ECN marking | not supported |
+//! | `bytemode` | `TCA_PIE_BYTEMODE` | scale drop prob by packet size | not supported |
+//! | `dq_rate_estimator` | `TCA_PIE_DQ_RATE_ESTIMATOR` | enable drain-rate-based delay estimation | always on |
+//!
+//! Parameters present here but not in the kernel:
+//!
+//! | Parameter | Purpose |
+//! |-----------|---------|
+//! | `bw_type` | configures L2 overhead for bandwidth calculation |
+//! | `seed` | deterministic RNG seed for reproducible simulation |
+//! | `byte_limit` | byte-oriented hard queue limit (kernel uses single packet `limit`) |
 
 use std::collections::VecDeque;
 
