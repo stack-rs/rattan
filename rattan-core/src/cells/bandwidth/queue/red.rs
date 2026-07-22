@@ -251,7 +251,7 @@ use crate::cells::Packet;
 /// # Constructing a config
 ///
 /// ```no_run
-/// # use rattan_core::cells::bandwidth::queue::red::RedQueueConfig;
+/// # use rattan_core::cells::bandwidth::queue::RedQueueConfig;
 /// // Struct-literal with defaults:
 /// let cfg = RedQueueConfig { min_th: 5000, ..Default::default() };
 ///

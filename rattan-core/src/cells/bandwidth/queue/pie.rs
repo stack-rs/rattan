@@ -347,7 +347,7 @@ use crate::cells::Packet;
 /// # Constructing a config
 ///
 /// ```no_run
-/// # use rattan_core::cells::bandwidth::queue::pie::PieQueueConfig;
+/// # use rattan_core::cells::bandwidth::queue::PieQueueConfig;
 /// # use rattan_core::cells::bandwidth::BwType;
 /// # use std::time::Duration;
 /// // Struct-literal with defaults:
