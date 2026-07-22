@@ -230,6 +230,27 @@ use super::serde_default;
 use super::{BwType, PacketQueue};
 use crate::cells::Packet;
 
+/// Configuration for a RED (Random Early Detection) queue.
+///
+/// # Field correspondence with the Linux kernel
+///
+/// | Field | Kernel equivalent | Notes |
+/// |-------|-------------------|-------|
+/// | `min_th` | `red_parms.qth_min` | Kernel stores as `u32`; here as `usize`. Default: 7500 (5 × 1500 B). |
+/// | `max_th` | `red_parms.qth_max` | Kernel stores as `u32`; here as `usize`. Default: 22500 (15 × 1500 B). |
+/// | `max_p` | `red_parms.max_P` | Kernel stores as Q0.32 fixed-point `u32`; here as `f64` in `[0.0, 1.0]`. Default: 0.02. |
+/// | `w_q` | `red_parms.Wlog` | Kernel stores log₂ weight as `u8` (weight = 1/(1<<Wlog)); here as direct `f64`. Default: 0.002. |
+/// | `pkt_tx_time` | *(no direct equivalent)* | Kernel uses `Scell_log` + `Stab[]` lookup table for idle-period decay. Here: µs per average packet, used as `m = idle_us / pkt_tx_time`. |
+/// | `adaptive` | *(no direct equivalent)* | Kernel ARED is always active (via `adapt_timer`); here it is a configurable toggle. |
+/// | `packet_limit` | *(no direct equivalent)* | Kernel has a single `q->limit` (from `tc_red_qopt.limit`) applied to the child qdisc. |
+/// | `byte_limit` | `q->limit` / `tc_red_qopt.limit` | Kernel's limit is byte-oriented and applied to the child qdisc (bfifo); here applied directly. |
+/// | `bw_type` | *(no direct equivalent)* | Configures L2 overhead for bandwidth calculation; simulation-specific. |
+/// | `seed` | *(no direct equivalent)* | Deterministic RNG seed; the kernel uses unseedable CSPRNG (`get_random_u32()`). |
+///
+/// Kernel parameters **not present** in this struct: `Plog` (probability scaling),
+/// `Scell_log` (cell-size logarithm), `Stab[]` (precomputed idle-decay table),
+/// ECN flags (`TC_RED_ECN`, `TC_RED_NODROP`).  See the module-level documentation
+/// for details.
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(default))]
 #[derive(Debug, Clone)]
 pub struct RedQueueConfig {

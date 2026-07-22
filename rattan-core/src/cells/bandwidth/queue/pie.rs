@@ -330,6 +330,23 @@ use super::serde_default;
 use super::{BwType, PacketQueue};
 use crate::cells::Packet;
 
+/// Configuration for a PIE (Proportional Integral controller Enhanced) queue.
+///
+/// # Field correspondence with the Linux kernel
+///
+/// | Field | Kernel equivalent | Notes |
+/// |-------|-------------------|-------|
+/// | `ref_del` | `pie_params.target` | Kernel stores in µs, converted to psched ticks internally. Here stored as seconds (`f64`). Default: 15 ms (0.015 s). |
+/// | `max_burst` | `pie_vars.burst_time` | Kernel initialises to `PSCHED_TICKS_PER_SEC * 150 / 1000` (150 ms in psched ticks). Here stored as milliseconds (`f64`). Default: 150.0 ms. |
+/// | `t_update` | `pie_params.tupdate` | Kernel stores in jiffies (`usecs_to_jiffies`). Here stored as `Duration`. Default: 15 ms. |
+/// | `packet_limit` | `pie_params.limit` / `sch->limit` | Kernel has a single packet-count limit. Here augmented with an independent `byte_limit`. |
+/// | `byte_limit` | *(no direct equivalent)* | Byte-oriented hard limit; not present in the kernel. |
+/// | `bw_type` | *(no direct equivalent)* | Configures L2 overhead for bandwidth calculation; simulation-specific. |
+/// | `seed` | *(no direct equivalent)* | Deterministic RNG seed; the kernel uses unseedable CSPRNG (`get_random_u64()`). |
+///
+/// Kernel parameters **not present** in this struct: `alpha`, `beta` (gains
+/// are hard-coded at 0.125 / 1.25), `ecn`, `bytemode`, `dq_rate_estimator`.
+/// See the module-level documentation §16 for details.
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(default))]
 #[derive(Debug, Clone)]
 pub struct PieQueueConfig {
