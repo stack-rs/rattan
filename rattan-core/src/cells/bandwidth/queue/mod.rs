@@ -15,8 +15,8 @@ mod codel;
 mod drophead;
 mod droptail;
 mod infinite;
-mod pie;
-mod red;
+pub mod pie;
+pub mod red;
 
 pub use codel::*;
 pub use drophead::*;

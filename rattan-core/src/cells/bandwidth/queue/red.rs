@@ -1,8 +1,240 @@
-// Combined RED Queue with Adaptive mode
-// Reference:
-//   RED:  https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=251892
-//   ARED: https://www.icir.org/floyd/papers/adaptiveRed.pdf
-//   Kernel RED/ARED: https://github.com/torvalds/linux/blob/master/include/net/red.h
+//! RED (Random Early Detection) queue with optional Adaptive mode (ARED).
+//!
+//! # References
+//!
+//! - RED paper: <https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=251892>
+//! - ARED paper: <https://www.icir.org/floyd/papers/adaptiveRed.pdf>
+//! - Linux kernel RED/ARED:
+//!   [`include/net/red.h`](https://github.com/torvalds/linux/blob/master/include/net/red.h)
+//!   and [`net/sched/sch_red.c`](https://github.com/torvalds/linux/blob/master/net/sched/sch_red.c)
+//!   (referenced as "kernel" throughout this documentation)
+//!
+//! # Differences from the Linux kernel implementation
+//!
+//! ## 1. Fixed-point integers (kernel) vs. floating-point (here)
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | `qavg` | Wlog-scaled integer (`u32`) | `f64` in bytes |
+//! | `max_P` | Q0.32 fixed-point (`u32`) | `f64` in `[0.0, 1.0]` |
+//! | weight | `Wlog` — weight `W = 1 / (1 << Wlog)` | `w_q` — direct `f64` weight |
+//! | division | replaced by `reciprocal_divide()` | native `f64` division |
+//!
+//! The EWMA update is mathematically equivalent:
+//!
+//! - Kernel: `qavg += backlog - (qavg >> Wlog)`
+//! - Here: `qavg = (1.0 - w_q) * qavg + w_q * backlog`
+//!
+//! when `w_q = 1.0 / (1 << Wlog)`.
+//!
+//! ## 2. Idle-period average-queue decay
+//!
+//! When the queue is empty, both implementations decay the average towards
+//! zero by simulating virtual packet departures.  The modelling differs:
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | time unit | cell time via `Scell_log` | `pkt_tx_time` (µs per packet) |
+//! | decay computation | precomputed `Stab[256]` lookup table | direct `powf(1.0 - w_q, m)` |
+//! | idle-time cap | `Scell_max` (max `255 << Scell_log`) | none (exponent may grow arbitrarily) |
+//!
+//! Both approaches implement the same formula from the original RED paper
+//! (Floyd & Jacobson, 1993, §5 "Calculating the average queue length"):
+//!
+//! > When a packet arrives and the queue is empty, we compute *m*, the number
+//! > of packets that could have been transmitted by the gateway during the
+//! > time that the line was free.  We then imagine that *m* packets have
+//! > arrived to an empty queue, and calculate the average queue size:
+//! >
+//! > **avg ← (1 − w_q)^m × avg**
+//!
+//! This implementation follows the paper literally: `m` is computed as
+//! `idle_us / pkt_tx_time` (where `pkt_tx_time` is the transmission time of
+//! one average packet), and decay is `avg *= powf(1.0 - w_q, m)`.  The kernel
+//! precomputes a logarithmic lookup table (`Stab[]`) indexed by idle duration
+//! scaled by `Scell_log` as a fixed-point approximation of `(1 − W)^m`,
+//! avoiding both floating-point and the `pow()` call at enqueue time.  The
+//! two are mathematically equivalent; the kernel trades some precision for
+//! integer-only computation.
+//!
+//! The `pkt_tx_time` parameter has no direct kernel equivalent.  The kernel
+//! separates idle modelling into `Wlog` (EWMA weight) and `Scell_log` (cell
+//! granularity), which are independently configurable.  Here, `w_q` controls
+//! the decay *rate* and `pkt_tx_time` controls how many virtual departures
+//! (`m`) an idle interval represents.
+//!
+//! ## 3. Random-number generation
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | source | `get_random_u32()` (kernel CSPRNG) | `rand::rngs::StdRng` (ChaCha12) |
+//! | seeding | not seedable by userspace | user-configurable `seed` field |
+//! | cached? | one `qR` per cycle, reused across packets | fresh `random_range(0.0..1.0)` each check |
+//!
+//! The kernel draws one random value per "cycle" (from the first packet in the
+//! between-threshold region until a mark/drop occurs) and caches it in `qR`.
+//! This implementation draws a fresh uniform random value on every
+//! `should_drop()` call.  Both produce the same statistical behaviour
+//! (geometric inter-drop spacing); the difference is purely an implementation
+//! choice.
+//!
+//! The seedable RNG enables deterministic, reproducible simulation runs.
+//!
+//! ## 4. Drop-probability computation
+//!
+//! Both implementations realise the same RED probability curve, but through
+//! different arithmetic paths:
+//!
+//! - **Kernel**: `red_mark_probability()` checks
+//!   `((qavg - qth_min) >> Wlog) * qcount >= qR`, where `qR` is uniform in
+//!   `[0, qth_delta)`.  This is the "uniform random numbers" (URN) method
+//!   with a cached threshold.
+//!
+//! - **Here**: Classical formula
+//!   `p_b = max_p * (avg - min_th) / (max_th - min_th)`,
+//!   then `p_a = p_b / (1.0 - count * p_b)`,
+//!   and compare `rand_val < p_a`.
+//!
+//! Both converge to the same geometric inter-drop distribution.  The kernel's
+//! approach saves a division per packet via `reciprocal_divide()`; this
+//! implementation's approach maps more directly onto the textbook RED
+//! description.
+//!
+//! ## 5. Adaptive RED (ARED) update cadence
+//!
+//! This is the most behaviourally significant difference.
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | trigger | kernel timer, fires every `HZ/2` (500 ms) | event-driven, on `enqueue()` |
+//! | fires when idle? | yes — timer always runs | no — requires a packet arrival |
+//! | grid | timer re-arms for `jiffies + HZ/2` | forward-shifted fixed 500 ms grid |
+//!
+//! **Kernel**: A dedicated timer (`adapt_timer`) fires every 500 ms regardless
+//! of whether packets are arriving.  Each firing acquires the qdisc lock,
+//! calls `red_adaptative_algo()`, and re-arms.  During prolonged idle periods
+//! the kernel therefore decays `max_P` towards 0.01 every 500 ms.
+//!
+//! **Here**: ARED adjustment happens inside `enqueue()`.  When a packet
+//! arrives and at least 500 ms have elapsed since the last adjustment, one
+//! call to `update_max_p()` is made and the timer is advanced by exactly 500
+//! ms (not reset to current time).  This "fixed grid" approach
+//! allows multiple intervals to be caught up over successive packet arrivals
+//! after a long idle.  However, if no packets arrive, no adjustments occur.
+//!
+//! The practical impact: after a long idle followed by a sparse trickle of
+//! packets, this implementation may converge `max_P` to its resting value more
+//! slowly than the kernel, because each enqueue accounts for at most one 500
+//! ms interval.
+//!
+//! **Why event-driven instead of a dedicated timer?**  This simulator operates
+//! on *logical* (simulation) time, not wall-clock time.  A wall-clock timer
+//! cannot accurately target a logical-time instant, especially under
+//! variable-speed simulation, pause/resume, or replay scenarios.  Worse,
+//! spawning an OS timer per queue instance would be prohibitively expensive
+//! when simulating hundreds or thousands of flows.
+//!
+//! ## 6. ARED `max_P` bound enforcement
+//!
+//! Both clamp `max_P` to `[0.01, 0.50]` (the ARED paper's range), but
+//! *when* the bounds are applied differs:
+//!
+//! - **Kernel**: checks `<= MAX_P_MAX` *before* increasing and `>= MAX_P_MIN`
+//!   *before* decreasing.  No explicit post-adjustment clamp — the value can
+//!   drift slightly past the nominal bounds in edge cases.
+//! - **Here**: always calls `clamp(0.01, 0.5)` unconditionally after every
+//!   adjustment, enforcing strict hard bounds.
+//!
+//! The ARED formulae themselves are identical:
+//!
+//! - Increase: `max_p += min(0.01, max_p / 4.0)`  (when `qavg > target_max`)
+//! - Decrease: `max_p *= 0.9`                     (when `qavg < target_min`)
+//! - Targets: `target_min = min_th + 0.4 * (max_th - min_th)`,
+//!   `target_max = min_th + 0.6 * (max_th - min_th)`
+//!
+//! Note: kernel integer arithmetic truncates in `(max_P / 10) * 9` (beta
+//! decay), while here `max_p *= 0.9` is exact in `f64`.  The difference is
+//! negligible in practice.
+//!
+//! ## 7. ECN (Explicit Congestion Notification)
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | ECN marking | supported (`TC_RED_ECN` flag) | not supported |
+//! | ECN nodrop | supported (`TC_RED_NODROP` flag) | not supported |
+//! | mark vs. drop counters | separate `prob_mark`/`prob_drop` | only drops |
+//!
+//! The kernel can mark ECN-capable packets instead of dropping them.  This
+//! implementation always drops.  Adding ECN support would require extending
+//! the `Packet` trait with an ECN field.
+//!
+//! ## 8. Queue architecture
+//!
+//! | Aspect | Kernel | This implementation |
+//! |--------|--------|---------------------|
+//! | structure | classful qdisc → child bfifo | self-contained `VecDeque` |
+//! | hard limit | `limit` on child qdisc (bytes) | `packet_limit` + `byte_limit` directly in config |
+//!
+//! The kernel's RED is a classful qdisc; it owns a child (typically `bfifo`)
+//! that holds the actual packet queue.  The `limit` parameter lives on the
+//! child.  This implementation is a flat `VecDeque`-based queue with both
+//! packet-count and byte-count hard limits checked before the RED drop
+//! decision.
+//!
+//! ## 9. Parameter validation
+//!
+//! The kernel validates `fls(qth) + Wlog < 32` (overflow prevention given
+//! fixed-point arithmetic), `Scell_log < 32`, and all `Stab[]` entries < 32.
+//! This implementation validates the semantically equivalent constraints in
+//! floating-point terms: `min_th < max_th`, `w_q ∈ (0.0, 1.0]`,
+//! `max_p ∈ [0.0, 1.0]`, and `pkt_tx_time > 0`.
+//!
+//! The kernel's overflow check (`fls(qth) + Wlog < 32`) is specific to
+//! `u32` fixed-point arithmetic where `qavg` is stored Wlog-scaled.  With
+//! `f64`, overflow is not a concern — the exponent range comfortably covers
+//! any practical queue size.  The `Scell_log` and `Stab[]` checks are
+//! likewise tied to the kernel's lookup-table idle model and have no
+//! equivalent here.  The current validation set is sufficient for a
+//! floating-point RED implementation.
+//!
+//! ## 10. `qcount` reset value
+//!
+//! - **Kernel**: resets `qcount = 0` after a probabilistic mark.
+//! - **Here**: resets `count_packet = -1` after a drop.
+//!
+//! Both produce **identical behaviour**.  In the kernel, the post-mark
+//! sequence is `qcount = 0 → ++qcount = 1 → probability check`, which yields
+//! `p_b` for the first packet of the new cycle.  Here, the sequence is
+//! `count_packet = -1 → count_packet += 1 = 0 → p_a = p_b / (1.0 - 0·p_b)
+//! = p_b`, giving the same first-packet probability.  Subsequent packets
+//! accumulate geometrically in both cases.
+//!
+//! The value `-1` was chosen deliberately over `0` for **internal
+//! consistency**: every path that resets `count_packet` (below `min_th`,
+//! above `max_th`, hard-limit drop, and probabilistic drop) uses the same
+//! sentinel `-1`.  Using a uniform reset value across all branches makes the
+//! code easier to reason about and avoids an unnecessary special case.
+//!
+//! ## Summary table
+//!
+//! | # | Area | Kernel | This impl |
+//! |---|------|--------|-----------|
+//! | 1 | Arithmetic | fixed-point (`u32`/Q0.32) | `f64` floating-point |
+//! | 2 | Weight | `Wlog` (log₂) | `w_q` (direct float) |
+//! | 3 | Idle decay | `Stab[]` table via `Scell_log` | `powf(1-w_q, m)` via `pkt_tx_time` |
+//! | 4 | `pkt_tx_time` | no direct equivalent | explicit µs-per-packet |
+//! | 5 | RNG | `get_random_u32()`, cached per cycle | `StdRng`, fresh each check |
+//! | 6 | Seed | not seedable | configurable `seed` |
+//! | 7 | Probability | URN + `reciprocal_divide()` | classical `p_b` / `p_a` formula |
+//! | 8 | ARED timing | kernel timer, always fires | event-driven on enqueue only |
+//! | 9 | ARED bounds | conditional pre-check | unconditional post-clamp |
+//! | 10 | ARED β precision | `(max_P/10)*9` (integer) | `*= 0.9` (float) |
+//! | 11 | ECN | full support | not supported |
+//! | 12 | Architecture | classful qdisc + child | self-contained `VecDeque` |
+//! | 13 | Hard limit(s) | child `limit` (bytes) | `packet_limit` + `byte_limit` |
+//! | 14 | Validation | `fls(qth)+Wlog<32` etc. | float range checks |
+//! | 15 | `qcount` reset | `0` after mark | `-1` after drop |
+//! | 16 | Idle-time cap | `Scell_max` | none |
 
 use std::collections::VecDeque;
 
