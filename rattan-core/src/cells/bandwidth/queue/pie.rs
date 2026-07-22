@@ -315,14 +315,7 @@
 //! | `ecn` | `TCA_PIE_ECN` | enable ECN marking | not supported |
 //! | `bytemode` | `TCA_PIE_BYTEMODE` | scale drop prob by packet size | not supported |
 //! | `dq_rate_estimator` | `TCA_PIE_DQ_RATE_ESTIMATOR` | enable drain-rate-based delay estimation | always on |
-//!
-//! Parameters present here but not in the kernel:
-//!
-//! | Parameter | Purpose |
-//! |-----------|---------|
-//! | `bw_type` | configures L2 overhead for bandwidth calculation |
-//! | `seed` | deterministic RNG seed for reproducible simulation |
-//! | `byte_limit` | byte-oriented hard queue limit (kernel uses single packet `limit`) |
+
 
 use std::collections::VecDeque;
 

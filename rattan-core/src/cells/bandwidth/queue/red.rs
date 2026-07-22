@@ -215,26 +215,7 @@
 //! sentinel `-1`.  Using a uniform reset value across all branches makes the
 //! code easier to reason about and avoids an unnecessary special case.
 //!
-//! ## Summary table
-//!
-//! | # | Area | Kernel | This impl |
-//! |---|------|--------|-----------|
-//! | 1 | Arithmetic | fixed-point (`u32`/Q0.32) | `f64` floating-point |
-//! | 2 | Weight | `Wlog` (log₂) | `w_q` (direct float) |
-//! | 3 | Idle decay | `Stab[]` table via `Scell_log` | `powf(1-w_q, m)` via `pkt_tx_time` |
-//! | 4 | `pkt_tx_time` | no direct equivalent | explicit µs-per-packet |
-//! | 5 | RNG | `get_random_u32()`, cached per cycle | `StdRng`, fresh each check |
-//! | 6 | Seed | not seedable | configurable `seed` |
-//! | 7 | Probability | URN + `reciprocal_divide()` | classical `p_b` / `p_a` formula |
-//! | 8 | ARED timing | kernel timer, always fires | event-driven on enqueue only |
-//! | 9 | ARED bounds | conditional pre-check | unconditional post-clamp |
-//! | 10 | ARED β precision | `(max_P/10)*9` (integer) | `*= 0.9` (float) |
-//! | 11 | ECN | full support | not supported |
-//! | 12 | Architecture | classful qdisc + child | self-contained `VecDeque` |
-//! | 13 | Hard limit(s) | child `limit` (bytes) | `packet_limit` + `byte_limit` |
-//! | 14 | Validation | `fls(qth)+Wlog<32` etc. | float range checks |
-//! | 15 | `qcount` reset | `0` after mark | `-1` after drop |
-//! | 16 | Idle-time cap | `Scell_max` | none |
+
 
 use std::collections::VecDeque;
 
