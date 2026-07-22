@@ -216,7 +216,6 @@
 //! code easier to reason about and avoids an unnecessary special case.
 //!
 
-
 use std::collections::VecDeque;
 
 use rand::{rngs::StdRng, RngExt, SeedableRng};
@@ -247,7 +246,7 @@ use crate::cells::Packet;
 ///    `max_th`, but large enough that `avg` tracks the true queue length
 ///    within a few RTTs.  The default (0.002) means the half-life is
 ///    `≈ 346 × pkt_tx_time` — about 42 ms at 100 Mbps with 1500 B packets.
-/// 4. For most uses, enable `adaptive = true`. 
+/// 4. For most uses, enable `adaptive = true`.
 ///
 /// # Constructing a config
 ///

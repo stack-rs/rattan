@@ -316,7 +316,6 @@
 //! | `bytemode` | `TCA_PIE_BYTEMODE` | scale drop prob by packet size | not supported |
 //! | `dq_rate_estimator` | `TCA_PIE_DQ_RATE_ESTIMATOR` | enable drain-rate-based delay estimation | always on |
 
-
 use std::collections::VecDeque;
 
 use rand::{rngs::StdRng, RngExt, SeedableRng};
