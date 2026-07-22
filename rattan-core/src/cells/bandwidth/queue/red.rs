@@ -231,6 +231,37 @@ use super::{BwType, PacketQueue};
 use crate::cells::Packet;
 
 /// Configuration for a RED (Random Early Detection) queue.
+/// # Quick-start configuration
+///
+/// The defaults are sensible for a 100 Mbps link carrying TCP traffic with
+/// 1500 B MTU.  To adapt them for a different link rate **R** (Mbps):
+///
+/// 1. Compute `pkt_tx_time = avpkt × 8 / R` (µs).  For 1500 B packets:
+///    `pkt_tx_time = 1500 * 8 / R`.  At 1 Gbps this is 12 µs; at 10 Mbps, 1200 µs.
+/// 2. Set `min_th` and `max_th` in **bytes** to bound the desired queuing
+///    delay.  With `pkt_tx_time` µs per packet, a threshold of `B` bytes
+///    represents roughly `B / avpkt × pkt_tx_time` µs of extra delay.
+///    Example: `min_th = 5 × avpkt` and `max_th = 15 × avpkt` (the defaults
+///    at avpkt = 1500 B) give ~600 µs of buffer at `min_th` on a 100 Mbps link.
+/// 3. `w_q` should be small enough that a single burst doesn't push `avg` past
+///    `max_th`, but large enough that `avg` tracks the true queue length
+///    within a few RTTs.  The default (0.002) means the half-life is
+///    `≈ 346 × pkt_tx_time` — about 42 ms at 100 Mbps with 1500 B packets.
+/// 4. For most uses, enable `adaptive = true`. 
+///
+/// # Constructing a config
+///
+/// ```no_run
+/// # use rattan_core::cells::bandwidth::queue::red::RedQueueConfig;
+/// // Struct-literal with defaults:
+/// let cfg = RedQueueConfig { min_th: 5000, ..Default::default() };
+///
+/// // Setter chain:
+/// let cfg = RedQueueConfig::default()
+///     .with_min_th(5000)
+///     .with_max_th(20000)
+///     .with_adaptive(true);
+/// ```
 ///
 /// # Field correspondence with the Linux kernel
 ///
@@ -254,25 +285,104 @@ use crate::cells::Packet;
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(default))]
 #[derive(Debug, Clone)]
 pub struct RedQueueConfig {
+    /// Hard limit on the number of packets in the queue.  Packets arriving when
+    /// the queue already holds this many are dropped unconditionally.
+    ///
+    /// `None` means no limit.  `Some(0)` makes the queue a zero-buffer (drop
+    /// everything).
+    ///
+    /// Default: `None`.
     pub packet_limit: Option<usize>,
-    pub byte_limit: Option<usize>,
-    pub w_q: f64,      // queue weight for calculating the average queue length
-    pub min_th: usize, // minimum threshold of average queue length
-    pub max_th: usize, // maximum threshold of average queue length
-    pub max_p: f64,    // maximum probability of dropping a packet
-    // Packet transmission time in microseconds.
-    // Used to compute the number of "virtual packet departures" during an idle period
-    // for average queue length decay: `m = idle_time_us / pkt_tx_time`.
-    // The upper layer computes this from link bandwidth `C` and average packet size `avpkt`
-    // as `pkt_tx_time = avpkt * 8 / C` (C in Mbps), then passes it down as a fixed config.
-    pub pkt_tx_time: f64,
-    pub adaptive: bool, // enable adaptive mode (ARED): max_p is adjusted dynamically
 
+    /// Hard limit on the total bytes in the queue (L3 length + L2 overhead from
+    /// [`bw_type`](Self::bw_type)).  Same semantics as
+    /// [`packet_limit`](Self::packet_limit).
+    ///
+    /// Default: `None`.
+    pub byte_limit: Option<usize>,
+
+    /// EWMA weight for the average queue length:
+    /// `avg = (1 − w_q) · avg + w_q · backlog`.
+    ///
+    /// Larger values make `avg` track the instantaneous queue length more
+    /// closely; smaller values smooth out bursts.  The original RED paper
+    /// recommends `0.002`.
+    ///
+    /// Valid range: `(0.0, 1.0]`.  `w_q = 1.0` makes `avg` equal the
+    /// instantaneous backlog (useful for testing).
+    ///
+    /// Default: `0.002`.
+    pub w_q: f64,
+
+    /// Lower threshold for the average queue length, in **bytes**.
+    ///
+    /// When `avg < min_th`, no packets are dropped.  Should be large enough to
+    /// absorb transient bursts without drops, but small enough to keep queuing
+    /// delay acceptable.  A common rule of thumb is `5 × avpkt`.
+    ///
+    /// Must satisfy `min_th < max_th`.
+    ///
+    /// Default: `7500` (5 × 1500).
+    pub min_th: usize,
+
+    /// Upper threshold for the average queue length, in **bytes**.
+    ///
+    /// When `avg ≥ max_th`, every packet is dropped.  The original RED paper
+    /// suggests `max_th ≥ 3 × min_th`.
+    ///
+    /// Must satisfy `min_th < max_th`.
+    ///
+    /// Default: `22500` (3 × 7500).
+    pub max_th: usize,
+
+    /// Maximum drop probability in the probabilistic region between `min_th`
+    /// and `max_th`.  Small values mean gentle drop-back; large values mean
+    /// aggressive dropping.
+    ///
+    /// When `adaptive = true` (ARED mode), `max_p` is automatically tuned
+    /// within `[0.01, 0.5]` — the configured value is just the starting point.
+    ///
+    /// Valid range: `[0.0, 1.0]`.
+    ///
+    /// Default: `0.02` (2%).
+    pub max_p: f64,
+
+    /// Transmission time of one average-sized packet, in **microseconds**.
+    ///
+    /// Used for idle-period average queue decay.  Compute as
+    /// `avpkt (bytes) × 8 / link_rate (Mbps)`.  Example: 1500 B at 100 Mbps →
+    /// `120 µs`.
+    ///
+    /// Valid range: `> 0`.
+    ///
+    /// Default: `120.0` (1500 B at 100 Mbps).
+    pub pkt_tx_time: f64,
+
+    /// Enable Adaptive RED (ARED): `max_p` is dynamically adjusted every 500 ms
+    /// to keep `avg` within the target band.
+    ///
+    /// Enable when you don't know the right `max_p` for your traffic mix;
+    /// disable for reproducible experiments.
+    ///
+    /// Default: `false`.
+    pub adaptive: bool,
+
+    /// L2 overhead mode for byte accounting.  The extra length from
+    /// [`BwType::extra_length()`] is added to each packet's L3 length when
+    /// checking [`byte_limit`](Self::byte_limit).
+    ///
+    /// Default: [`BwType::NetworkLayer`] (no overhead).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "serde_default")
     )]
     pub bw_type: BwType,
+
+    /// Seed for the deterministic RNG used in drop decisions.  Two queues with
+    /// identical configs, traffic, and seed make identical drop decisions,
+    /// enabling reproducible simulations.
+    ///
+    /// Default: `42`.
     #[cfg_attr(feature = "serde", serde(default = "default_red_seed"))]
     pub seed: u64,
 }

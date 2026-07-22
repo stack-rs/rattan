@@ -332,6 +332,34 @@ use crate::cells::Packet;
 
 /// Configuration for a PIE (Proportional Integral controller Enhanced) queue.
 ///
+/// # Quick-start configuration
+///
+/// The defaults follow RFC 8033 and are suitable for most Internet traffic:
+///
+/// - `ref_del = 15 ms` — typical target for wired Internet paths.
+/// - `t_update = 15 ms` — RFC-specified update interval.
+/// - `max_burst = 150 ms` — allows a burst of roughly 10 back-to-back
+///   packets before the drop probability takes effect.
+///
+/// For **data-centre** links (sub-millisecond RTT), consider reducing
+/// `ref_del` (e.g. 1–5 ms) and `t_update` proportionally.  For
+/// **satellite** or high-latency links, increase `ref_del` accordingly.
+///
+/// # Constructing a config
+///
+/// ```no_run
+/// # use rattan_core::cells::bandwidth::queue::pie::PieQueueConfig;
+/// # use rattan_core::cells::bandwidth::BwType;
+/// # use std::time::Duration;
+/// // Struct-literal with defaults:
+/// let cfg = PieQueueConfig { ref_del: 0.005, ..Default::default() };
+///
+/// // Direct construction:
+/// let cfg = PieQueueConfig::new(None, None, 0.005, 100.0,
+///                               Duration::from_millis(15),
+///                               BwType::default(), 42);
+/// ```
+///
 /// # Field correspondence with the Linux kernel
 ///
 /// | Field | Kernel equivalent | Notes |
@@ -350,17 +378,75 @@ use crate::cells::Packet;
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(default))]
 #[derive(Debug, Clone)]
 pub struct PieQueueConfig {
+    /// Hard limit on the number of packets in the queue.  Packets arriving when
+    /// the queue already holds this many are dropped unconditionally.
+    ///
+    /// `None` means no limit.  `Some(0)` makes the queue a zero-buffer (drop
+    /// everything).
+    ///
+    /// Default: `None`.
     pub packet_limit: Option<usize>,
+
+    /// Hard limit on the total bytes in the queue (L3 length + L2 overhead from
+    /// [`bw_type`](Self::bw_type)).  Same semantics as
+    /// [`packet_limit`](Self::packet_limit).
+    ///
+    /// Default: `None`.
     pub byte_limit: Option<usize>,
-    pub ref_del: f64,   // target delay (sec)
-    pub max_burst: f64, // MAX_BURST (ms)
+
+    /// Target queuing delay, in **seconds**.  PIE adjusts the drop probability
+    /// to keep the estimated queue delay near this value.
+    ///
+    /// RFC 8033 recommends 15 ms (`0.015`) for wired Internet paths.  Reduce
+    /// for data-centre links (e.g. 0.001–0.005); increase for high-latency
+    /// links.
+    ///
+    /// Valid range: `> 0`, must be finite.
+    ///
+    /// Default: `0.015` (15 ms).
+    pub ref_del: f64,
+
+    /// Maximum burst allowance, in **milliseconds**.
+    ///
+    /// When PIE first starts dropping, a burst allowance equal to `max_burst`
+    /// lets short bursts through without drops.  
+    ///
+    /// RFC 8033 recommends 150 ms.  Reduce for low-RTT environments to make
+    /// PIE react faster; increase for bursty traffic.
+    ///
+    /// Valid range: `≥ 0`, must be finite.
+    ///
+    /// Default: `150.0` (150 ms).
+    pub max_burst: f64,
+
+    /// Interval between drop-probability updates.
+    ///
+    /// PIE re-evaluates the drop probability on this cadence.  RFC 8033
+    /// specifies 15 ms.  Shorter intervals make PIE more responsive but
+    /// increase the update frequency; longer intervals smooth the response.
+    ///
+    /// Must be `> Duration::ZERO`.
+    ///
+    /// Default: `Duration::from_millis(15)`.
     #[cfg_attr(feature = "serde", serde(with = "crate::utils::serde::duration"))]
-    pub t_update: Duration, // update interval
+    pub t_update: Duration,
+
+    /// L2 overhead mode for byte accounting.  The extra length from
+    /// [`BwType::extra_length()`] is added to each packet's L3 length when
+    /// checking [`byte_limit`](Self::byte_limit).
+    ///
+    /// Default: [`BwType::NetworkLayer`] (no overhead).
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "serde_default")
     )]
     pub bw_type: BwType,
+
+    /// Seed for the deterministic RNG used in drop decisions.  Two queues with
+    /// identical configs, traffic, and seed make identical drop decisions,
+    /// enabling reproducible simulations.
+    ///
+    /// Default: `42`.
     #[cfg_attr(feature = "serde", serde(default = "default_pie_seed"))]
     pub seed: u64,
 }
