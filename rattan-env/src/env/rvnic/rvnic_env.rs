@@ -37,6 +37,21 @@ pub static UMEM: OnceCell<Arc<Umem>> = OnceCell::const_new();
 struct RvnicPacketRecycler {
     drop_rings: HashMap<QueueID, (DropRing, Vec<u64>)>,
     rx: mpsc::UnboundedReceiver<(QueueID, u64)>,
+    /// Number of tokens recycled per queue, reported when the recycler exits.
+    /// A token is recycled once the packet it indexes is dropped, so this is
+    /// the per-queue drop count of the run.
+    drop_stat: HashMap<QueueID, u32>,
+}
+
+impl Drop for RvnicPacketRecycler {
+    fn drop(&mut self) {
+        let mut drop_total = 0;
+        for (queue_id, dropped) in self.drop_stat.iter() {
+            tracing::info!(target: "rvnic", "Recycled {} tokens on {}", dropped, queue_id);
+            drop_total += dropped;
+        }
+        tracing::info!(target: "rvnic", "Recycled {} tokens in total", drop_total);
+    }
 }
 
 // If token is Some,  try to batch the tokens until there are BATCH_SIZE tokens
@@ -118,7 +133,10 @@ impl RvnicPacketRecycler {
             };
 
             let (queue_id, token) = match recv_with_timeout(&mut self.rx, timeout).await {
-                Ok(Some((queue_id, token))) => (Some(queue_id), Some(token)),
+                Ok(Some((queue_id, token))) => {
+                    *self.drop_stat.entry(queue_id).or_default() += 1;
+                    (Some(queue_id), Some(token))
+                }
                 Ok(None) => {
                     // The other side of the channel has been closed.
                     break;
@@ -477,6 +495,7 @@ fn build_rvnic_pair(queue_nums: u32) -> rvnic::Result<RvnicBuildArtifact> {
                 .into_iter()
                 .map(|(id, ring)| (id, (ring, Vec::with_capacity(BATCH_SIZE)))),
         ),
+        drop_stat: HashMap::new(),
     };
 
     let (left, right): (Vec<_>, Vec<_>) = rx_tx_rings
