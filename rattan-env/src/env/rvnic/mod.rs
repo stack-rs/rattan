@@ -11,6 +11,9 @@ pub use rvnic_env::{RvnicEnv, RvnicEnvConfig, RvnicEnvMode};
 pub(crate) mod constants {
     pub const RVNIC_DEVICES: u32 = 2;
     pub const BATCH_SIZE: usize = 32;
+    // Size of internal driver in RvnicDriver
+    pub const SEND_BUFFER_SIZE: usize = 32768;
+
     // Waiting at most `SEND_BATCH_MAX_TIME_US` microseconds until trying to send the current batch which does not meet
     // the desired batch size.
     pub const SEND_BATCH_MAX_TIME_US: u64 = 1000;
