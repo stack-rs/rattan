@@ -16,8 +16,9 @@ target/
 # Ignore container volume mount points
 tmp/
 
-# Ignore VSCode configurations
+# Ignore editor configurations
 .vscode
+.zed
 
 # Ignore flamegraph artifacts
 perf.data
