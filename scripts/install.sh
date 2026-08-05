@@ -6,7 +6,13 @@ set -e
 install_rattan() {
     local binary_path=${1:-"rattan"}
     install_binary "$binary_path"
-    config_networkd
+
+    if systemctl cat systemd-networkd.service >/dev/null 2>&1; then
+        config_networkd
+    fi
+    if systemctl cat NetworkManager.service >/dev/null 2>&1; then
+        config_nm
+    fi
 }
 
 install_binary() {
@@ -39,6 +45,18 @@ EOF
         sudo systemctl daemon-reload
         sudo systemctl restart systemd-networkd.service
     fi
+}
+
+config_nm() {
+    sudo mkdir -p /etc/NetworkManager/conf.d
+    sudo sh -c "cat <<EOF >/etc/NetworkManager/conf.d/80-rattan-unmanaged.conf
+# Do not manage interfaces created and owned by rattan.
+# These interfaces manage their own lifecycle (addresses, up/down state).
+[keyfile]
+unmanaged-devices=interface-name:ns*-v*-*;interface-name:rattan*
+EOF
+"
+    sudo systemctl reload NetworkManager.service
 }
 
 usage() {
