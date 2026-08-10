@@ -260,6 +260,9 @@ where
     P: Packet + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<P> {
+        if cfg!(feature = "first-payload") && TRACE_START_INSTANT.get().is_none() {
+            return self.egress.recv().await;
+        }
         // Wait for FirstPacket notify if not started yet
         #[cfg(feature = "first-packet")]
         crate::wait_until_started!(self, FirstPacket);
