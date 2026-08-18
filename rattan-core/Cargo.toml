@@ -15,6 +15,7 @@ categories.workspace = true
 
 [[example]]
 name = "channel-xdp"
+required-features = ["xdp"]
 
 [[bench]]
 harness = false
@@ -98,3 +99,4 @@ serde = [
   "dep:serde_json",
   "rattan-env/serde",
 ]
+xdp = ["rattan-env/xdp"]
