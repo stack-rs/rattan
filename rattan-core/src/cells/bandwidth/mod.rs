@@ -38,6 +38,59 @@ fn transfer_time(length: usize, bandwidth: Bandwidth, bw_type: BwType) -> Delay 
     }
 }
 
+#[derive(Clone, Debug, derive_more::Deref, derive_more::DerefMut)]
+struct Transmitting<P: Packet> {
+    #[deref]
+    #[deref_mut]
+    pub packet: P,
+    /// At the time of `packet.get_timestamp()`, what portion of the packet has not been partially transmitted
+    /// [0,1]
+    unsent_portion: f64,
+}
+
+impl<P: Packet> Transmitting<P> {
+    fn start(mut packet: P, start_time: Instant) -> Self {
+        packet.delay_until(start_time);
+        Self {
+            packet,
+            unsent_portion: 1.0f64,
+        }
+    }
+
+    /// Update the unsent_portion
+    /// given that the sending rate is `last_rate` during the period [`packet.get_timestamp()` , current)
+    fn update(&mut self, last_rate: Bandwidth, bw_type: BwType, current: Instant) {
+        let last_time = self.get_timestamp();
+        self.delay_until(current);
+        if last_rate.is_zero() {
+            return;
+        }
+        let total_packet_time = transfer_time(self.l3_length(), last_rate, bw_type);
+        let sent_for = current.duration_since(last_time);
+
+        let sent_portion = sent_for.div_duration_f64(total_packet_time);
+        self.unsent_portion = f64::max(0.0f64, self.unsent_portion - sent_portion);
+    }
+
+    fn finish_time(&self, rate: Bandwidth, bw_type: BwType) -> Instant {
+        // A packet whose transmission is already complete leaves right away, even if the
+        // bandwidth has just dropped to zero.
+        if self.unsent_portion == 0.0 {
+            return self.get_timestamp();
+        }
+        let transfer_time = if rate.is_zero() {
+            LARGE_DURATION
+        } else {
+            transfer_time(self.l3_length(), rate, bw_type).mul_f64(self.unsent_portion)
+        };
+        self.get_timestamp() + transfer_time
+    }
+
+    fn take(self) -> P {
+        self.packet
+    }
+}
+
 // Bandwidth calculation type, deciding the extra length of the packet
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -101,69 +154,7 @@ where
     state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
-    transmitting_packet: Option<P>,
-}
-
-/// Handle bandwidth changes for `BwCell` and `BwReplayCell`.
-///
-/// This function adjusts timestamps under the assumption that:
-/// - transmission progress is linear with respect to bandwidth
-/// - the packet is already partially transmitted when the bandwidth changes
-///
-/// Parameters:
-/// - `logical_start_transmission_at`:
-///   The logical time when the current packet *started* transmission,
-///   assuming the **old bandwidth** was used from that moment on.
-/// - `scheduled_to_send_at`:
-///   The logical time when the packet *would have finished* transmission
-///   if the bandwidth change had **not** happened.
-/// - `change_time`:
-///   The logical time at which the bandwidth change occurs.
-/// - `change_ratio`:
-///   `old_bandwidth / new_bandwidth`.
-///   A value < 1 means bandwidth increased; > 1 means bandwidth decreased.
-///
-/// Return:
-/// - `(new_logical_transmission_start, new_next_available)`
-///
-///   These two timestamps preserve the *already-transmitted fraction*
-///   and rescale the *remaining transmission time* according to the new bandwidth.
-///
-/// Intuition:
-/// At `change_time`, the packet is partially transmitted.
-/// We:
-/// 1. Reinterpret the past transmission under the **new bandwidth**
-///    to compute a new logical start time.
-/// 2. Rescale the remaining transmission time to compute the new finish time.
-///
-/// Example:
-/// - A packet started transmission at 100ms with bandwidth = 1 pkt/s
-/// - It was scheduled to finish at 1100ms (total 1 second)
-/// - Bandwidth increases to 5 pkt/s at 300ms
-///
-/// At 300ms:
-/// - 200ms worth of transmission has occurred at the old rate
-/// - That corresponds to `200ms * (1 / 5) = 40ms` at the new rate
-///
-/// So:
-/// - New logical start time = `300ms - 40ms = 260ms`
-/// - Remaining time = `800ms * (1 / 5) = 160ms`
-/// - New finish time = `300ms + 160ms = 460ms`
-fn calculate_bw_change(
-    logical_start_transmission_at: Instant,
-    scheduled_to_send_at: Instant,
-    change_time: Instant,
-    change_ratio: f64,
-) -> (Instant, Instant) {
-    // Fraction already transmitted, rescaled to the new bandwidth
-    let sent_time = change_time
-        .duration_since(logical_start_transmission_at)
-        .mul_f64(change_ratio);
-    // Remaining transmission time, rescaled to the new bandwidth
-    let unsent_time = scheduled_to_send_at
-        .duration_since(change_time)
-        .mul_f64(change_ratio);
-    (change_time - sent_time, change_time + unsent_time)
+    transmitting_packet: Option<Transmitting<P>>,
 }
 
 impl<P, Q> BwCellEgress<P, Q>
@@ -175,14 +166,8 @@ where
         if let Some(bandwidth) = config.bandwidth {
             if let Some(transmitting_packet) = self.transmitting_packet.as_mut() {
                 let change_time = Instant::now();
-                let change_ratio = self.bandwidth.as_gbps_f64() / bandwidth.as_gbps_f64();
-                let (new_logical_transmission_start, next_available) = calculate_bw_change(
-                    transmitting_packet.get_timestamp(),
-                    self.next_available,
-                    change_time,
-                    change_ratio,
-                );
-                transmitting_packet.delay_until(new_logical_transmission_start);
+                transmitting_packet.update(self.bandwidth, self.bw_type, change_time);
+                let next_available = transmitting_packet.finish_time(bandwidth, self.bw_type);
                 #[cfg(test)]
                 tracing::debug!(
                     "Packet scheduled to be sent at {:?} is rescheduled to {:?}",
@@ -218,20 +203,18 @@ where
     }
 
     #[inline(always)]
-    fn set_transmitting_packet(&mut self, mut packet: P) {
+    fn set_transmitting_packet(&mut self, packet: P) {
         if self.transmitting_packet.is_none() {
             let start_transmission = self.next_available.max(packet.get_timestamp());
-            let transfer_time = transfer_time(packet.l3_length(), self.bandwidth, self.bw_type);
-            // For calculation in update_bw. Not the logical sending time.
-            packet.delay_until(start_transmission);
-            self.next_available = start_transmission + transfer_time;
+            let transmitting_packet = Transmitting::start(packet, start_transmission);
+            self.next_available = transmitting_packet.finish_time(self.bandwidth, self.bw_type);
             #[cfg(test)]
             tracing::debug!(
                 "Packet at {:?} is going to be delayed until {:?}",
-                relative_time(packet.get_timestamp()),
+                relative_time(transmitting_packet.get_timestamp()),
                 relative_time(self.next_available)
             );
-            self.transmitting_packet = packet.into();
+            self.transmitting_packet = transmitting_packet.into();
         } else {
             #[cfg(test)]
             tracing::debug!(
@@ -285,7 +268,7 @@ where
 
         let packet_to_send = self.transmitting_packet.take().map(|mut p| {
             p.delay_until(self.next_available);
-            p
+            p.take()
         });
         if let Some(next_packet) = self.packet_queue.dequeue_at(self.next_available) {
             // Here, self.transmitting_packet can not be Some, thus the next_packet would not be dropped.
@@ -344,7 +327,7 @@ where
             .take_if(|_| self.next_available <= Instant::now())
             .map(|mut p| {
                 p.delay_until(self.next_available);
-                p
+                p.take()
             })
     }
 
@@ -539,7 +522,7 @@ where
     state: AtomicCellState,
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
-    transmitting_packet: Option<P>,
+    transmitting_packet: Option<Transmitting<P>>,
 }
 
 impl<P, Q> BwReplayCellEgress<P, Q>
@@ -565,21 +548,10 @@ where
             return;
         };
 
-        let Some(change_ratio) =
-            last_bandwidth.map(|last| last.as_gbps_f64() / bandwidth.as_gbps_f64())
-        else {
-            // If the last_bandwidth is unknown, nothing to adjust.
-            return;
-        };
+        let last_bandwidth = last_bandwidth.cloned().unwrap_or(bandwidth);
 
-        let (new_logical_transmission_start, next_available) = calculate_bw_change(
-            transmitting_packet.get_timestamp(),
-            self.next_available,
-            change_time,
-            change_ratio,
-        );
-
-        transmitting_packet.delay_until(new_logical_transmission_start);
+        transmitting_packet.update(last_bandwidth, self.bw_type, change_time);
+        let next_available = transmitting_packet.finish_time(bandwidth, self.bw_type);
         #[cfg(test)]
         tracing::debug!(
             "Packet scheduled to be sent at {:?} is rescheduled to {:?}",
@@ -649,26 +621,24 @@ where
     }
 
     #[inline(always)]
-    fn set_transmitting_packet(&mut self, mut packet: P) {
+    fn set_transmitting_packet(&mut self, packet: P) {
         if self.transmitting_packet.is_none() {
             let start_transmission = self.next_available.max(packet.get_timestamp());
-            let transfer_time = self
+            let transmitting_packet = Transmitting::start(packet, start_transmission);
+            let bandwidth = self
                 .current_bandwidth
                 .get_at_timestamp(start_transmission)
-                .map(|bw| transfer_time(packet.l3_length(), *bw, self.bw_type))
-                // release the packet immediately (aka infinity bandwidth) when no available bandwidth has been set.
-                .unwrap_or_default();
+                .cloned()
+                .unwrap_or(Bandwidth::ZERO);
+            self.next_available = transmitting_packet.finish_time(bandwidth, self.bw_type);
 
-            // For calculation in update_bw. Not the logical sending time.
-            packet.delay_until(start_transmission);
-            self.next_available = start_transmission + transfer_time;
             #[cfg(test)]
             tracing::debug!(
                 "Packet at {:?} is going to be delayed until {:?}",
-                relative_time(packet.get_timestamp()),
+                relative_time(transmitting_packet.get_timestamp()),
                 relative_time(self.next_available)
             );
-            self.transmitting_packet = packet.into();
+            self.transmitting_packet = transmitting_packet.into();
         } else {
             #[cfg(test)]
             tracing::debug!(
@@ -729,7 +699,7 @@ where
 
         let packet_to_send = self.transmitting_packet.take().map(|mut p| {
             p.delay_until(self.next_available);
-            p
+            p.take()
         });
         if let Some(next_packet) = self.packet_queue.dequeue_at(self.next_available) {
             // Here, self.transmitting_packet can not be Some, thus the next_packet would not be dropped.
@@ -790,7 +760,7 @@ where
             .take_if(|_| self.next_available <= Instant::now())
             .map(|mut p| {
                 p.delay_until(self.next_available);
-                p
+                p.take()
             })
     }
 
@@ -1234,6 +1204,187 @@ mod tests {
         }
 
         compare_receive_time(receive_time);
+
+        Ok(())
+    }
+
+    /// Simulate the departure schedule of an ideal fluid server fed by the rectangular-wave
+    /// trace used in [`rectangular_wave_bw_replay`]: `x_kbps` during the first 10ms of each
+    /// 20ms period and `y_kbps` during the second 10ms. All `packet_cnt` packets arrive at
+    /// the same instant, `arrival_offset` after the trace start instant, so the returned
+    /// durations are the expected logical departure delays relative to that arrival instant.
+    /// This mirrors exactly what the cell does: a packet in transmission makes progress at
+    /// the current rate and is rescheduled with the remaining portion whenever the trace
+    /// changes rate.
+    fn expected_departure_delays(
+        x_kbps: u64,
+        y_kbps: u64,
+        packet_cnt: usize,
+        l3_len: usize,
+        arrival_offset: Duration,
+    ) -> Vec<Duration> {
+        assert!(x_kbps > 0 || y_kbps > 0, "the trace must not be all-zero");
+        let bw_type = BwType::NetworkLayer;
+        let segment = Duration::from_millis(10);
+
+        let mut delays = Vec::with_capacity(packet_cnt);
+        // Departure time of the previous packet, relative to the arrival instant.
+        let mut departure = Duration::ZERO;
+
+        for _ in 0..packet_cnt {
+            // Fraction of the packet that still has to be transmitted.
+            let mut remaining = 1.0f64;
+            loop {
+                // Index of the trace segment the packet is currently in.
+                let segment_index = (arrival_offset + departure).as_nanos() / segment.as_nanos();
+                // End of that segment, relative to the arrival instant.
+                let segment_end = segment * (segment_index as u32 + 1) - arrival_offset;
+                let rate_bps = (if segment_index % 2 == 0 {
+                    x_kbps
+                } else {
+                    y_kbps
+                }) * 1000;
+
+                if rate_bps == 0 {
+                    // No progress is made while the trace has zero bandwidth.
+                    departure = segment_end;
+                    continue;
+                }
+
+                let full_transfer = transfer_time(l3_len, Bandwidth::from_bps(rate_bps), bw_type);
+                let served = (segment_end - departure).div_duration_f64(full_transfer);
+                if served >= remaining {
+                    departure += full_transfer.mul_f64(remaining);
+                    break;
+                }
+                remaining -= served;
+                departure = segment_end;
+            }
+            delays.push(departure);
+        }
+        delays
+    }
+
+    /// A burst of `PACKET_CNT` packets is sent through a `BwReplayCell` whose trace is a
+    /// repeated rectangular wave: `x_kbps` for the first 10ms of each 20ms period and
+    /// `y_kbps` for the second 10ms. As the cell is configured with an `InfiniteQueue`, the
+    /// packets (all arriving at the same instant) should leave according to the departure
+    /// schedule of an ideal fluid server fed by the same wave. Both the wall-clock receive
+    /// time and the logical departure timestamp are checked.
+    #[rstest]
+    #[case(100, 100)]
+    #[case(100, 200)]
+    #[case(100, 0)]
+    #[test_log::test]
+    fn rectangular_wave_bw_replay(#[case] x_kbps: u64, #[case] y_kbps: u64) -> Result<(), Error> {
+        // A 200B L3 payload takes 16ms to transmit at 100kbps and 8ms at 200kbps.
+        const L3_LEN: usize = 200;
+        const PACKET_CNT: usize = 100;
+        const BUFFER_SIZE: usize = L3_LEN + 14; // 14B Ethernet header
+        const WALL_CLOCK_TOLERANCE: Duration = Duration::from_millis(2);
+
+        let _span = span!(Level::INFO, "rectangular_wave_bw_replay", x_kbps, y_kbps).entered();
+        tracing::info!(
+            "Rectangular wave: 10ms at {} kbps, then 10ms at {} kbps",
+            x_kbps,
+            y_kbps
+        );
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        let _guard = rt.enter();
+
+        let bandwidth_trace = RepeatedBwPatternConfig::new()
+            .pattern(vec![
+                Box::new(StaticBwConfig {
+                    bw: Some(Bandwidth::from_kbps(x_kbps)),
+                    duration: Some(Duration::from_millis(10)),
+                }) as Box<dyn BwTraceConfig>,
+                Box::new(StaticBwConfig {
+                    bw: Some(Bandwidth::from_kbps(y_kbps)),
+                    duration: Some(Duration::from_millis(10)),
+                }) as Box<dyn BwTraceConfig>,
+            ])
+            .build();
+
+        let packet_queue =
+            InfiniteQueue::<TestPacket<StdPacket>>::new(InfiniteQueueConfig {}).unwrap();
+        let cell = BwReplayCell::new(
+            Box::new(bandwidth_trace),
+            packet_queue,
+            BwType::NetworkLayer,
+        )?;
+
+        let ingress = cell.sender();
+        let mut egress = cell.into_receiver();
+        egress.reset();
+        egress.change_state(CellState::Normal);
+
+        // All packets arrive at the real current instant, so the cell processes them in
+        // real time no matter when the trace-start instant was calibrated (e.g. by another
+        // test that ran earlier in the same process). The expected delays then depend on
+        // the phase of the rectangular wave at the arrival instant, which is just the
+        // arrival offset from the trace start.
+        let trace_start = *TRACE_START_INSTANT
+            .get()
+            .expect("egress.reset() should initialize TRACE_START_INSTANT");
+        let logical_send_time = Instant::now();
+        let arrival_offset = logical_send_time - trace_start;
+        let logical_start = Instant::now();
+
+        for i in 0..PACKET_CNT {
+            ingress.enqueue(TestPacket::with_timestamp(
+                &[i as u8; BUFFER_SIZE],
+                logical_send_time,
+            ))?;
+        }
+
+        let expected_delays =
+            expected_departure_delays(x_kbps, y_kbps, PACKET_CNT, L3_LEN, arrival_offset);
+
+        let mut actual_receive_times = Vec::with_capacity(PACKET_CNT);
+        let mut recv_cnt = 0;
+        while recv_cnt < PACKET_CNT {
+            let Some(received) = rt.block_on(async { egress.dequeue().await }) else {
+                continue;
+            };
+
+            let expected_delay = expected_delays[recv_cnt];
+
+            // Check 1: wall-clock receive time.
+            let actual_receive_time = logical_start.elapsed();
+            let expected_receive_time =
+                (logical_send_time + expected_delay).saturating_duration_since(logical_start);
+            let diff = actual_receive_time.as_secs_f64() - expected_receive_time.as_secs_f64();
+            assert!(
+                diff.abs() <= WALL_CLOCK_TOLERANCE.as_secs_f64(),
+                "packet {recv_cnt}: expected to be received at {expected_receive_time:?}, got {actual_receive_time:?}"
+            );
+            actual_receive_times.push(actual_receive_time);
+
+            // Check 2: logical timestamp when the packet leaves the cell.
+            assert_eq!(
+                expected_delay,
+                received.delay(),
+                "unexpected logical departure delay of packet {recv_cnt}"
+            );
+            assert_eq!(
+                received.packet.buf[0] as usize, recv_cnt,
+                "packets should leave the cell in FIFO order"
+            );
+
+            tracing::debug!(
+                "Packet {recv_cnt} delayed by {:?} (logical) and {:?} (wall-clock)",
+                received.delay(),
+                actual_receive_time
+            );
+            recv_cnt += 1;
+        }
+
+        tracing::info!(?actual_receive_times, "Actual receive times:");
+        tracing::info!(?expected_delays, "Expected receive times:");
 
         Ok(())
     }
