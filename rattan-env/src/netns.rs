@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::os::fd::{AsFd, BorrowedFd};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
@@ -8,9 +8,17 @@ use std::thread::{self, JoinHandle};
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::{setns, unshare, CloneFlags};
 use nix::unistd::gettid;
-use tracing::{debug, error, info, trace};
+use once_cell::sync::OnceCell;
+use tracing::{debug, error, info, trace, warn};
 
 use crate::error::NsError;
+
+/// Serializes the persist directory setup across processes.
+const PERSIST_LOCK_PATH: &str = "/var/run/rattan-netns.lock";
+
+/// Set once this process has set up the persist directory. A failed setup leaves it unset,
+/// so the next call retries.
+static PERSIST_DIR_READY: OnceCell<()> = OnceCell::new();
 
 /// Defines a NetNs environment behavior.
 pub trait Env {
@@ -57,29 +65,99 @@ impl DefaultEnv {
     }
 
     fn persistent_internal<P: AsRef<Path>>(ns_path: P) -> Result<(), NsError> {
-        // create an empty file at the mount point
-        let _ = File::create(&ns_path).map_err(NsError::CreateNsError)?;
+        let ns_path = ns_path.as_ref();
 
-        // Create a new netns for the current thread.
-        unshare(CloneFlags::CLONE_NEWNET).map_err(NsError::UnshareError)?;
-        // bind mount the netns from the current thread (from /proc) onto the mount point.
-        // This persists the ns, even when there are no threads in the ns.
-        let src = Self::get_current_netns_path();
+        // create an empty file at the mount point
+        let _ = File::create(ns_path).map_err(NsError::CreateNsError)?;
+
+        let result = (|| {
+            // Create a new netns for the current thread.
+            unshare(CloneFlags::CLONE_NEWNET).map_err(NsError::UnshareError)?;
+            // bind mount the netns from the current thread (from /proc) onto the mount point.
+            // This persists the ns, even when there are no threads in the ns.
+            let src = Self::get_current_netns_path();
+            mount(
+                Some(src.as_path()),
+                ns_path,
+                Some("none"),
+                MsFlags::MS_BIND,
+                Some(""),
+            )
+            .map_err(|e| {
+                NsError::MountError(
+                    format!("(BIND) {} to {}", src.display(), ns_path.display()),
+                    e,
+                )
+            })
+        })();
+
+        // drop the placeholder file so a failed bind leaves nothing behind
+        if result.is_err() {
+            let _ = std::fs::remove_file(ns_path);
+        }
+
+        result
+    }
+
+    /// Counts how many mounts are stacked on the persist directory.
+    fn mount_layers(&self) -> usize {
+        let Ok(target) = std::fs::canonicalize(self.persist_dir()) else {
+            return 0;
+        };
+        let Ok(mountinfo) = std::fs::read_to_string("/proc/self/mountinfo") else {
+            return 0;
+        };
+        let target = target.to_string_lossy();
+        mountinfo
+            .lines()
+            .filter(|line| line.split(' ').nth(4).is_some_and(|point| point == target))
+            .count()
+    }
+
+    /// Takes an exclusive lock held until the returned file is dropped.
+    fn lock_persist_dir() -> Result<File, NsError> {
+        let path = PathBuf::from(PERSIST_LOCK_PATH);
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|e| NsError::LockError(path.clone(), e))?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(NsError::LockError(path, std::io::Error::last_os_error()));
+        }
+        Ok(file)
+    }
+
+    /// Bind mounts the persist directory onto itself to make it a mount point.
+    fn bind_persist_dir(persist_dir: &Path) -> Result<(), NsError> {
         mount(
-            Some(src.as_path()),
-            ns_path.as_ref(),
+            Some(persist_dir),
+            persist_dir,
             Some("none"),
-            MsFlags::MS_BIND,
+            MsFlags::MS_BIND | MsFlags::MS_REC,
             Some(""),
         )
         .map_err(|e| {
             NsError::MountError(
-                format!("(BIND) {} to {}", src.display(), ns_path.as_ref().display()),
+                format!(
+                    "(BIND|REC) {} to {}",
+                    persist_dir.display(),
+                    persist_dir.display()
+                ),
                 e,
             )
-        })?;
+        })
+    }
 
-        Ok(())
+    fn share_persist_dir(persist_dir: &Path) -> Result<(), nix::errno::Errno> {
+        mount(
+            Some(""),
+            persist_dir,
+            Some("none"),
+            MsFlags::MS_SHARED | MsFlags::MS_REC,
+            Some(""),
+        )
     }
 
     fn persistent<P: AsRef<Path>>(&self, ns_path: P) -> Result<(), NsError> {
@@ -103,52 +181,55 @@ impl DefaultEnv {
 
 impl Env for DefaultEnv {
     /// Initialize the environment.
+    ///
+    /// The persist directory is a process-wide, machine-wide resource: it is set up once and
+    /// never torn down. Every stacked mount left on it multiplies the cost of creating a netns,
+    /// because the directory is shared and each new netns mount propagates to every peer, so
+    /// this runs at most once per process and is serialized across processes by a lock file.
     fn init(&self) -> Result<(), NsError> {
-        // Create the directory for mounting network namespaces.
-        // This needs to be a shared mount-point in case it is mounted in to
-        // other namespaces (containers)
-        let persist_dir = self.persist_dir();
-        std::fs::create_dir_all(&persist_dir).map_err(NsError::CreateNsDirError)?;
+        PERSIST_DIR_READY.get_or_try_init(|| {
+            // Create the directory for mounting network namespaces.
+            // This needs to be a shared mount-point in case it is mounted in to
+            // other namespaces (containers)
+            let persist_dir = self.persist_dir();
+            std::fs::create_dir_all(&persist_dir).map_err(NsError::CreateNsDirError)?;
 
-        // Remount the namespace directory shared. This will fail if it is not
-        // already a mount-point, so bind-mount it on to itself to "upgrade" it
-        // to a mount-point.
-        let mut made_netns_persist_dir_mount: bool = false;
-        while let Err(e) = mount(
-            Some(""),
-            &persist_dir,
-            Some("none"),
-            MsFlags::MS_SHARED | MsFlags::MS_REC,
-            Some(""),
-        ) {
-            // Fail unless we need to make the mount point
-            if e != nix::errno::Errno::EINVAL || made_netns_persist_dir_mount {
-                return Err(NsError::MountError(
-                    format!("(SHARED|REC) {}", persist_dir.display()),
-                    e,
-                ));
+            let _lock = Self::lock_persist_dir()?;
+
+            // Upgrade the directory to a mount point only when nothing is mounted on it yet.
+            if self.mount_layers() == 0 {
+                Self::bind_persist_dir(&persist_dir)?;
             }
-            // Recursively remount /var/<persist> on itself. The recursive flag is
-            // so that any existing netns bind-mounts are carried over.
-            mount(
-                Some(&persist_dir),
-                &persist_dir,
-                Some("none"),
-                MsFlags::MS_BIND | MsFlags::MS_REC,
-                Some(""),
-            )
-            .map_err(|e| {
-                NsError::MountError(
-                    format!(
-                        "(BIND|REC) {} to {}",
-                        persist_dir.display(),
-                        persist_dir.display()
-                    ),
-                    e,
-                )
-            })?;
-            made_netns_persist_dir_mount = true;
-        }
+
+            // Remount the namespace directory shared, retrying once behind the bind mount in
+            // case the mountinfo check above was wrong.
+            if let Err(e) = Self::share_persist_dir(&persist_dir) {
+                if e != nix::errno::Errno::EINVAL {
+                    return Err(NsError::MountError(
+                        format!("(SHARED|REC) {}", persist_dir.display()),
+                        e,
+                    ));
+                }
+                Self::bind_persist_dir(&persist_dir)?;
+                Self::share_persist_dir(&persist_dir).map_err(|e| {
+                    NsError::MountError(format!("(SHARED|REC) {}", persist_dir.display()), e)
+                })?;
+            }
+
+            let layers = self.mount_layers();
+            if layers > 1 {
+                warn!(
+                    "{} has {} stacked mounts, so every new netns costs {} mount entries and \
+                     fs.mount-max will reject them once enough run in parallel; \
+                     unstack them with `clean_stdenv.sh --mounts`",
+                    persist_dir.display(),
+                    layers,
+                    layers + 1
+                );
+            }
+
+            Ok(())
+        })?;
         Ok(())
     }
 

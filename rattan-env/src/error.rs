@@ -43,6 +43,8 @@ pub enum NsError {
     UnmountError(std::path::PathBuf, nix::Error),
     #[error("Failed to unshare, {0}")]
     UnshareError(nix::Error),
+    #[error("Failed to lock {0}, {1}")]
+    LockError(std::path::PathBuf, std::io::Error),
     #[error("Failed to join thread, {0}")]
     JoinThreadError(String),
     #[error("Can not setns, {0}")]
