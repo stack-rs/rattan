@@ -44,7 +44,6 @@ mod visualize_trace;
 // mod log_converter;
 #[cfg(feature = "nat")]
 mod nat;
-// mod docker;
 
 use env_var::add_runtime_env_var;
 
@@ -70,9 +69,6 @@ pub struct Arguments {
     // Verbose debug output
     // #[arg(short, long)]
     // verbose: bool,
-    // Run in docker mode
-    // #[arg(long)]
-    // docker: bool,
     #[command(subcommand)]
     subcommand: CliCommand,
 
@@ -248,11 +244,6 @@ fn main() -> ExitCode {
     // Parse Arguments
     let opts = Arguments::parse();
     tracing::debug!("{:?}", opts);
-    // if opts.docker {
-    //     docker::docker_main(opts).unwrap();
-    //     return;
-    // }
-
     // Install Tracing Subscriber
     let subscriber =
         tracing_subscriber::registry().with(tracing_subscriber::fmt::layer().with_filter(
