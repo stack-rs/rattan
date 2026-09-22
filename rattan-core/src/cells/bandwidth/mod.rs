@@ -131,6 +131,7 @@ where
     P: Packet + Send,
 {
     fn enqueue(&self, packet: P) -> Result<(), Error> {
+        tokio::task::no_lifo_this_poll();
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;

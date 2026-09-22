@@ -74,7 +74,7 @@ serde_json = "1.0.149"
 tempfile = "3"
 test-log = { version = "0.2.18", features = ["trace"] }
 thiserror = "2.0.0"
-tokio = { version = "1.51.1", features = [
+tokio = { version = "1.53.1", features = [
   "macros",
   "net",
   "rt-multi-thread",
@@ -130,6 +130,9 @@ toml = "1.0.1"
 tracing = { workspace = true }
 tracing-appender = "0.2.3"
 tracing-subscriber = { workspace = true }
+
+[patch.crates-io]
+tokio = { git = "https://github.com/stack-rs/tokio_for_rattan", rev = "a939359179a775b7c8d9a0d017ea4c93438a7164" }
 
 [build-dependencies]
 shadow-rs = "1.7.0"

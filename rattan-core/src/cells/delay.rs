@@ -102,6 +102,7 @@ where
                     "Skipped ingress round up as not started");
             }
         }
+        tokio::task::no_lifo_this_poll();
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;

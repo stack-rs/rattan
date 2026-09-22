@@ -3280,9 +3280,8 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.52.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b67dee974fe86fd92cc45b7a95fdd2f99a36a6d7b0d431a231178d3d670bbcc6"
+version = "1.53.1"
+source = "git+https://github.com/stack-rs/tokio_for_rattan?rev=a939359179a775b7c8d9a0d017ea4c93438a7164#a939359179a775b7c8d9a0d017ea4c93438a7164"
 dependencies = [
  "libc",
  "mio",
