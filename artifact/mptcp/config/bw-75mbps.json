@@ -1,0 +1,19 @@
+{
+    "RepeatedBwPatternConfig": {
+        "pattern": [
+            {
+                "TraceBwConfig": {
+                    "pattern": [
+                        [
+                            "100ms",
+                            [
+                                "75.000Mbps"
+                            ]
+                        ]
+                    ]
+                }
+            }
+        ],
+        "count": 0
+    }
+}

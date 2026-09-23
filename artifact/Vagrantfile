@@ -1,0 +1,89 @@
+# Start with ./up.sh micro or ./up.sh mptcp. Plain vagrant up does not complete
+# setup because further provisioning is needed after a reboot.
+# Keep only one guest running to avoid competing for CPU and memory.
+# Use vagrant halt <guest> before switching. See README.md for the full workflow.
+
+REPO_ROOT = File.expand_path("..", __dir__)
+
+def host_cpuset(count)
+  by_socket = {}
+  Dir.glob("/sys/devices/system/cpu/cpu[0-9]*/topology").each do |dir|
+    cpu = dir[%r{/cpu(\d+)/}, 1].to_i
+    siblings = File.read("#{dir}/thread_siblings_list").split(/[,-]/).map(&:to_i)
+    next unless cpu == siblings.min
+
+    socket = File.read("#{dir}/physical_package_id").strip.to_i
+    (by_socket[socket] ||= []) << cpu
+  end
+
+  roomy = by_socket.keys.sort.find { |s| by_socket[s].size >= count }
+  chosen = roomy ? by_socket[roomy] : by_socket.values.flatten
+  chosen.sort.first(count).join(",") if chosen.size >= count
+rescue SystemCallError
+  nil
+end
+
+RSYNC_EXCLUDE = [
+  ".git/",
+  ".vagrant/",
+  "target/",
+  "results/",
+  "scenarios/",
+  "rvnic/librvnic/target/",
+  "rvnic/kernel/*.ko",
+  "rvnic/kernel/*.o",
+].freeze
+
+Vagrant.configure("2") do |config|
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+  config.vm.synced_folder REPO_ROOT, "/home/vagrant/rattan",
+                          type: "rsync", rsync__exclude: RSYNC_EXCLUDE
+
+  config.ssh.insert_key = true
+
+  if ENV["RATTAN_AE_HTTP_PROXY"] && Vagrant.has_plugin?("vagrant-proxyconf")
+    config.proxy.http = ENV["RATTAN_AE_HTTP_PROXY"]
+    config.proxy.https = ENV["RATTAN_AE_HTTP_PROXY"]
+    config.proxy.no_proxy = "localhost,127.0.0.1"
+  end
+
+  config.vm.define "micro", primary: true do |micro|
+    micro.vm.box = "debian/trixie64"
+    micro.vm.hostname = "rattan-micro"
+    micro.vm.network "private_network", ip: "192.168.121.10"
+
+    micro.vm.provider "libvirt" do |lv|
+      lv.cpus = 16
+      lv.memory = 65536
+      lv.cpu_mode = "host-passthrough"
+      lv.machine_virtual_size = 60
+      cpuset = ENV["RATTAN_AE_CPUSET_MICRO"] || host_cpuset(16)
+      lv.cpuset = cpuset if cpuset
+    end
+
+    micro.vm.provision "base", type: "shell", privileged: false,
+                               inline: "rattan/artifact/setup-vm.sh micro-base"
+    micro.vm.provision "build", type: "shell", privileged: false, run: "never",
+                                inline: "rattan/artifact/setup-vm.sh micro"
+  end
+
+  config.vm.define "mptcp", autostart: false do |mptcp|
+    mptcp.vm.box = "bento/ubuntu-24.04"
+    mptcp.vm.hostname = "rattan-mptcp"
+    mptcp.vm.network "private_network", ip: "192.168.121.11"
+
+    mptcp.vm.provider "libvirt" do |lv|
+      lv.cpus = 40
+      lv.memory = 16384
+      lv.cpu_mode = "host-passthrough"
+      lv.machine_virtual_size = 128
+      cpuset = ENV["RATTAN_AE_CPUSET_MPTCP"] || host_cpuset(40)
+      lv.cpuset = cpuset if cpuset
+    end
+
+    mptcp.vm.provision "kernel", type: "shell", privileged: false,
+                                 inline: "rattan/artifact/setup-vm.sh mptcp-kernel"
+    mptcp.vm.provision "expr", type: "shell", privileged: false, run: "never",
+                               inline: "rattan/artifact/setup-vm.sh mptcp-expr"
+  end
+end

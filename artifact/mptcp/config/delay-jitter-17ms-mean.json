@@ -1,0 +1,31 @@
+{
+    "RepeatedDelayPatternConfig": {
+        "pattern": [
+            {
+                "StaticDelayConfig": {
+                    "delay": "22.5ms",
+                    "duration": "20ms"
+                }
+            },
+            {
+                "StaticDelayConfig": {
+                    "delay": "7.5ms",
+                    "duration": "10ms"
+                }
+            },
+            {
+                "StaticDelayConfig": {
+                    "delay": "36.5ms",
+                    "duration": "30ms"
+                }
+            },
+            {
+                "StaticDelayConfig": {
+                    "delay": "2.0ms",
+                    "duration": "40ms"
+                }
+            }
+        ],
+        "count": 0
+    }
+}

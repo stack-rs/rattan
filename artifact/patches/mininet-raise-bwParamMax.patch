@@ -1,0 +1,13 @@
+Raise Mininet's bandwidth limit from 1 Gbps to 100 Gbps. Figure 5 sweeps to 6 Gbps.
+
+--- a/mininet/link.py
++++ b/mininet/link.py
+@@ -235,7 +235,7 @@
+
+     # The parameters we use seem to work reasonably up to 1 Gb/sec
+     # For higher data rates, we will probably need to change them.
+-    bwParamMax = 1000
++    bwParamMax = 100000
+
+     def bwCmds( self, bw=None, speedup=0, use_hfsc=False, use_tbf=False,
+                 latency_ms=None, enable_ecn=False, enable_red=False ):

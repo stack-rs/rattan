@@ -1,0 +1,11 @@
+.vagrant/
+
+results/
+
+microbench/scenarios/
+mptcp/config/bw-*mbps-trace-*.json
+
+mptcp/app/target/
+
+__pycache__/
+.ruff_cache/

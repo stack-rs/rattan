@@ -1,0 +1,10 @@
+[package]
+name = "mptcp_app"
+version = "0.1.0"
+edition = "2024"
+
+# Built on its own, outside Rattan's workspace.
+[workspace]
+
+[dependencies]
+clap = "4.6.1"

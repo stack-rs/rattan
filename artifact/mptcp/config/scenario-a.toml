@@ -1,0 +1,84 @@
+[env]
+mode = "Isolated"
+left_veth_count = 2
+right_veth_count = 2
+
+[cells.bw1]
+type = "BwReplay"
+trace = "bw-60mbps.json"
+queue = "DropTail"
+queue_config = { packet_limit = 175 }
+
+[cells.bw2]
+type = "BwReplay"
+trace = "bw-90mbps.json"
+queue = "DropTail"
+queue_config = { packet_limit = 337 }
+
+[cells.shadow]
+type = "Shadow"
+
+[cells.bottleneck]
+type = "BwReplay"
+trace = "bw-75mbps.json"
+queue = "DropTail"
+queue_config = { packet_limit = 281 }
+
+[cells.router]
+type = "Router"
+egress_connections = ["delay1", "delay2"]
+
+[[cells.router.routing_table]]
+prefix = "10.2.1.1/24"
+interface_id = 0
+
+[[cells.router.routing_table]]
+prefix = "10.2.2.1/24"
+interface_id = 1
+
+[[cells.router.routing_table]]
+prefix = "10.2.0.0/16"
+
+[cells.delay1]
+type = "DelayReplay"
+trace = "delay-jitter-15ms-mean.json"
+
+[cells.delay2]
+type = "Delay"
+delay = "15ms"
+
+[cells.loss1]
+type = "Loss"
+pattern = [0.001]
+
+[cells.loss2]
+type = "Loss"
+pattern = [0]
+
+[cells.delay_back1]
+type = "Delay"
+delay = "20ms"
+
+[cells.delay_back2]
+type = "Delay"
+delay = "30ms"
+
+[links]
+
+left1 = "bw1"
+bw1 = "shadow"
+left2 = "bw2"
+bw2 = "shadow"
+
+shadow = "bottleneck"
+bottleneck = "router"
+
+delay1 = "loss1"
+loss1 = "right1"
+delay2 = "loss2"
+loss2 = "right2"
+
+right1 = "delay_back1"
+delay_back1 = "left1"
+right2 = "delay_back2"
+delay_back2 = "left2"

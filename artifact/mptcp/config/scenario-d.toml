@@ -1,0 +1,57 @@
+[env]
+mode = "Isolated"
+left_veth_count = 2
+right_veth_count = 2
+
+[cells.bw1]
+type = "BwReplay"
+trace = "bw-60mbps-trace-high-variance.json"
+queue = "DropTail"
+queue_config = { packet_limit = 55 }
+
+[cells.bw2]
+type = "BwReplay"
+trace = "bw-60mbps-trace-low-variance.json"
+queue = "DropTail"
+queue_config = { packet_limit = 175 }
+
+[cells.delay1]
+type = "DelayReplay"
+trace = "delay-jitter-17ms-mean.json"
+
+[cells.delay2]
+type = "DelayReplay"
+trace = "delay-switch-every-2s.json"
+
+[cells.loss1]
+type = "Loss"
+pattern = [0]
+
+[cells.loss2]
+type = "Loss"
+pattern = [0]
+
+[cells.delay_back1]
+type = "Delay"
+delay = "20ms"
+
+[cells.delay_back2]
+type = "Delay"
+delay = "20ms"
+
+[links]
+
+left1 = "bw1"
+bw1 = "delay1"
+left2 = "bw2"
+bw2 = "delay2"
+
+delay1 = "loss1"
+loss1 = "right1"
+delay2 = "loss2"
+loss2 = "right2"
+
+right1 = "delay_back1"
+delay_back1 = "left1"
+right2 = "delay_back2"
+delay_back2 = "left2"
