@@ -29,12 +29,12 @@ exit
 # Back on the host
 ./fetch-results.sh micro     # save to results/micro/
 vagrant halt micro
-./up.sh mptcp                # ~15 min with a cached VM image, longer on the first run
+./up.sh mptcp                # ~15 min with 40 vCPUs and a cached VM image
 vagrant ssh mptcp
 
 # Inside mptcp
 cd ~/rattan/artifact/mptcp
-./run-benchmark.sh --paper   # Table 2, ~10 min
+./run-benchmark.sh --paper   # Table 2, ~10 min with 40 vCPUs
 exit
 
 # Back on the host
@@ -57,26 +57,38 @@ Guest setup and experiments took roughly **4 hours** on our 40-core host with VM
 
 Each experiment produces a CSV. The microbenchmarks also produce plots for Figures 5–7.
 
-Times are approximate on our 40-core host and vary with hardware.
+Time estimates are for our 40-core host with 40 vCPUs for `mptcp`. Your times may differ.
 
 ## Requirements
 
 A Debian 12+ or Ubuntu 20.04+ host with hardware virtualization, and:
 
-- 40 physical cores, kept free of other workloads during experiments. §5.1 alone needs 16.
+- At least 16 **physical CPU cores, not hyper-threads**; 40 recommended. An 8-core/16-thread CPU counts as 8 cores. Avoid other workloads during experiments.
 - 24 GiB of memory.
 - 35 GB of free disk.
 
 Setup requires Internet access and installs all dependencies. No proprietary software is needed.
 
-Only one guest runs at a time. Each gets:
+Default VM resources:
 
 | | `micro` (§5.1) | `mptcp` (§5.2) |
 | :--- | :--- | :--- |
-| vCPUs | 16 | 40 |
+| vCPUs | 16 | up to 40 |
 | Memory | 16 GiB | 16 GiB |
 
-**Paper and artifact environments.** §5.1 used an Intel Core i7-10700F with 64 GiB RAM, Debian 13 and Linux 6.12.88. §5.2 used an Intel Xeon E5-2690 v2 with 128 GiB RAM, Ubuntu 24.04 and MPTCP v0.96. The guests use the same distributions, with Linux 6.12 for `micro` and MPTCP v0.96 based on Linux 5.4.301 for `mptcp`.
+`micro` requires 16 physical cores. `mptcp` uses up to 40, limited by the host's core count. Fewer cores mean fewer parallel transfers and longer setup and experiment times.
+
+To choose the MPTCP vCPU count, set it when creating the VM (minimum 2, maximum the host's physical core count):
+
+```bash
+RATTAN_AE_CPUS_MPTCP=16 ./up.sh mptcp
+```
+
+The setting is saved in `.vagrant/mptcp-cpus` for later commands.
+
+To change an existing VM to 24 vCPUs, for example, run `RATTAN_AE_CPUS_MPTCP=24 vagrant reload mptcp`. This restarts the VM and updates both the vCPU count and the host CPUs it can use.
+
+**Paper and artifact environments.** §5.1 used an Intel Core i7-10700F with 64 GiB RAM, Debian 13 and Linux 6.12.88. §5.2 used a dual-socket system with two Intel Xeon E5-2690 v2 processors, 128 GiB RAM, Ubuntu 24.04 and MPTCP v0.96. The guests use the same distributions, with Linux 6.12 for `micro` and MPTCP v0.96 based on Linux 5.4.301 for `mptcp`.
 
 ### Dependencies
 
@@ -109,14 +121,14 @@ This installs libvirt, QEMU and Vagrant. **Log out and back in afterwards** for 
 vagrant ssh micro
 ```
 
-`up.sh` installs dependencies, reboots the guest and completes the build. Repeat `./up.sh micro` to resume a failed setup. CPU placement is automatic and can be overridden with `RATTAN_AE_CPUSET_MICRO` or `RATTAN_AE_CPUSET_MPTCP` before creating the guest.
+`up.sh` installs dependencies, reboots the guest and completes the build; `vagrant up` alone does not finish setup. Repeat `./up.sh micro` to resume a failed setup. By default, each VM uses one hardware thread per selected physical core. To choose the host CPUs yourself, set `RATTAN_AE_CPUSET_MICRO` or `RATTAN_AE_CPUSET_MPTCP` before creating the VM.
 
 After finishing §5.1, switch to the other guest:
 
 ```bash
 exit
 vagrant halt micro
-./up.sh mptcp     # ~15 min with a cached VM image, longer on the first run
+./up.sh mptcp     # ~15 min with 40 vCPUs and a cached VM image
 vagrant ssh mptcp
 ```
 
@@ -171,8 +183,8 @@ Runs 8 to 512 concurrent instances of one path, each 16 Mbps with 20 ms delay in
 
 ```bash
 cd ~/rattan/artifact/mptcp
-./run-benchmark.sh --paper   # ~10 min, recommended
-./run-benchmark.sh --quick   # ~5 min
+./run-benchmark.sh --paper   # ~10 min with 40 vCPUs, recommended
+./run-benchmark.sh --quick   # ~5 min with 40 vCPUs
 ```
 
 Times a 50 MiB transfer over one MPTCP connection with a subflow on each of two emulated paths, for four path scenarios, three subflow schedulers and six congestion control algorithms. [mptcp/config/](mptcp/config/) contains the four scenarios described in §5.2. `--quick` repeats each combination 3 times and `--paper` repeats it 10 times, as in the paper.

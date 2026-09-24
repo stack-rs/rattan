@@ -52,7 +52,7 @@ release=$("${KERNEL_MAKE[@]}" -s kernelrelease)
     die "the source calls itself '$release', not '$MPTCP_KERNEL_RELEASE'.
   MPTCP_COMMIT in versions.sh has probably moved to a different stable release."
 
-log "Building $release on $(cpu_count) CPUs, this takes about 10 minutes"
+log "Building $release on $(cpu_count) CPUs, about 10 minutes on 40"
 "${KERNEL_MAKE[@]}" -j"$(cpu_count)"
 
 log "Installing the modules"

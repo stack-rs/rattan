@@ -3,9 +3,13 @@
 # Keep only one guest running to avoid competing for CPU and memory.
 # Use vagrant halt <guest> before switching. See README.md for the full workflow.
 
+require "fileutils"
+require "rexml/document"
+
 REPO_ROOT = File.expand_path("..", __dir__)
 
-def host_cpuset(count)
+# The first hardware thread of each physical core, by socket.
+def host_cores
   by_socket = {}
   Dir.glob("/sys/devices/system/cpu/cpu[0-9]*/topology").each do |dir|
     cpu = dir[%r{/cpu(\d+)/}, 1].to_i
@@ -15,12 +19,71 @@ def host_cpuset(count)
     socket = File.read("#{dir}/physical_package_id").strip.to_i
     (by_socket[socket] ||= []) << cpu
   end
+  by_socket
+end
 
-  roomy = by_socket.keys.sort.find { |s| by_socket[s].size >= count }
-  chosen = roomy ? by_socket[roomy] : by_socket.values.flatten
-  chosen.sort.first(count).join(",") if chosen.size >= count
-rescue SystemCallError
-  nil
+HOST_CORES = host_cores
+PHYSICAL_CORES = HOST_CORES.values.sum(&:size)
+
+# Selects one hardware thread per core, on one socket if one is big enough.
+def pin_to_cores(machine, guest, count)
+  if count > PHYSICAL_CORES
+    # Vagrant loads every guest's configuration, so raising here would also
+    # break commands for the other guest. Refuse only to start this one.
+    machine.trigger.before :up, :reload do |t|
+      t.warn = "#{guest} needs #{count} physical cores, this host has #{PHYSICAL_CORES}"
+      t.abort = true
+    end
+    return
+  end
+
+  roomy = HOST_CORES.keys.sort.find { |s| HOST_CORES[s].size >= count }
+  chosen = roomy ? HOST_CORES[roomy] : HOST_CORES.values.flatten
+  machine.vm.provider "libvirt" do |lv|
+    lv.cpus = count
+    lv.cpuset = ENV["RATTAN_AE_CPUSET_#{guest.upcase}"] || chosen.sort.first(count).join(",")
+  end
+
+  # vagrant-libvirt updates the vCPU count on start, but leaves cpuset unchanged.
+  # Update the persistent definition before it starts (or restarts) an existing VM.
+  machine.trigger.before :up, :reload do |t|
+    t.ruby do |_env, vm|
+      next unless vm.provider_name == :libvirt && vm.id
+
+      connection = vm.provider.driver.connection
+      domain = connection.client.lookup_domain_by_uuid(vm.id)
+      flags = Libvirt::Domain::XML_SECURE | Libvirt::Domain::XML_INACTIVE
+      xml = REXML::Document.new(domain.xml_desc(flags))
+      vcpu = xml.elements["domain/vcpu"]
+      cpuset = vm.provider_config.cpuset
+      next if vcpu.attributes["cpuset"] == cpuset
+
+      vcpu.attributes["cpuset"] = cpuset
+      connection.define_domain(xml.to_s)
+    end
+  end
+end
+
+# vagrant-libvirt reapplies the vCPU count on every start, so a count given
+# through RATTAN_AE_CPUS_MPTCP is saved for later vagrant commands.
+def mptcp_cpus
+  saved = File.join(__dir__, ".vagrant", "mptcp-cpus")
+  given = ENV["RATTAN_AE_CPUS_MPTCP"]
+  if given
+    count = Integer(given, exception: false)
+    unless count&.between?(2, PHYSICAL_CORES)
+      raise "RATTAN_AE_CPUS_MPTCP must be from 2 to #{PHYSICAL_CORES}, " \
+            "the host's physical cores, not '#{given}'"
+    end
+
+    FileUtils.mkdir_p(File.dirname(saved))
+    File.write(saved, count.to_s)
+    count
+  elsif File.exist?(saved)
+    Integer(File.read(saved))
+  else
+    [40, PHYSICAL_CORES].min
+  end
 end
 
 RSYNC_EXCLUDE = [
@@ -52,12 +115,10 @@ Vagrant.configure("2") do |config|
     micro.vm.hostname = "rattan-micro"
     micro.vm.network "private_network", ip: "192.168.121.10"
 
+    pin_to_cores(micro, "micro", 16)
     micro.vm.provider "libvirt" do |lv|
-      lv.cpus = 16
       lv.memory = 16384
       lv.cpu_mode = "host-passthrough"
-      cpuset = ENV["RATTAN_AE_CPUSET_MICRO"] || host_cpuset(16)
-      lv.cpuset = cpuset if cpuset
     end
 
     micro.vm.provision "base", type: "shell", privileged: false,
@@ -71,12 +132,10 @@ Vagrant.configure("2") do |config|
     mptcp.vm.hostname = "rattan-mptcp"
     mptcp.vm.network "private_network", ip: "192.168.121.11"
 
+    pin_to_cores(mptcp, "mptcp", mptcp_cpus)
     mptcp.vm.provider "libvirt" do |lv|
-      lv.cpus = 40
       lv.memory = 16384
       lv.cpu_mode = "host-passthrough"
-      cpuset = ENV["RATTAN_AE_CPUSET_MPTCP"] || host_cpuset(40)
-      lv.cpuset = cpuset if cpuset
     end
 
     mptcp.vm.provision "kernel", type: "shell", privileged: false,
