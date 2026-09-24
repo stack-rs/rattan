@@ -21,6 +21,20 @@ require_not_root() {
     [ "$(id -u)" -ne 0 ] || die "Run this as a normal user, not root. It calls sudo where needed."
 }
 
+# libvirt runs its own dnsmasq on the guest network, which binds the DNS
+# socket to the network's address. If another resolver already owns the
+# wildcard :53 socket, libvirt's dnsmasq cannot start and the guest network
+# fails to activate with 'Address already in use'. Warn before that happens.
+check_dns_conflict() {
+    have_cmd ss || return 0
+    if ss -H -u -l -n 'sport = :53' 2>/dev/null | awk '{print $4}' \
+        | grep -Eq '^(0\.0\.0\.0|\[::\]|\*):53$'; then
+        warn "another resolver already owns port 53 on the wildcard address"
+        warn "  libvirt's dnsmasq for the guest network will fail with 'Address already in use'"
+        warn "  see the Troubleshooting section of artifact/README.md"
+    fi
+}
+
 keep_sudo_alive() {
     sudo -v
     (

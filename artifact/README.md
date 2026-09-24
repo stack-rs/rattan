@@ -222,6 +222,7 @@ Results stay in the guest. To copy them out, run on the host:
 ## Troubleshooting
 
 - **`vagrant` says permission denied, or cannot reach libvirt.** The group membership from `setup-host.sh` has not taken effect. Log out and back in.
+- **`Error while activating network ... dnsmasq: failed to create listening socket for 192.168.121.1: Address already in use`.** Another DNS resolver on the host already owns port 53 on the wildcard address, so libvirt's `dnsmasq` cannot bind the guest network's address. This is usually a second `dnsmasq` instance. Find it with `sudo ss -ulnp | grep ':53 '`, then bind it to the loopback address only: add `bind-interfaces` and `listen-address=127.0.0.1` to `/etc/dnsmasq.conf` and restart it with `sudo systemctl restart dnsmasq`.
 - **A setup stage failed partway.** Run `./up.sh <guest>` again. Every stage skips what is already done.
 - **`cannot load the rattan_vnic module`.** The guest is running a kernel the module was not built against. Rebuild with `~/rattan/artifact/scripts/build-rattan.sh micro`.
 - **The `mptcp` guest booted the wrong kernel.** `uname -r` should say `5.4.301`. Run `./up.sh mptcp` again on the host.

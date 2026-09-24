@@ -25,6 +25,7 @@ mptcp)
 esac
 
 require_cmd vagrant
+check_dns_conflict
 
 log "[1/3] Creating $machine and running the '$first' stage"
 vagrant up "$machine" --no-provision
