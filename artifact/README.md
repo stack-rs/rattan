@@ -61,7 +61,7 @@ Times are approximate on our 40-core host and vary with hardware.
 
 ## Requirements
 
-A Linux host with hardware virtualization, and:
+A Debian 12+ or Ubuntu 20.04+ host with hardware virtualization, and:
 
 | | For §5.1 (`micro`) | For §5.2 (`mptcp`) |
 | :--- | :--- | :--- |
@@ -77,6 +77,8 @@ Keep these cores free of other workloads during experiments. Setup requires Inte
 
 | What | Version | Installed by |
 | :--- | :--- | :--- |
+| Vagrant, vagrant-libvirt | pinned release | `setup-host.sh` |
+| libvirt, QEMU | the host distribution's | `setup-host.sh` |
 | Rattan and the RVNIC module | this repository | `scripts/build-rattan.sh` |
 | Rust | current stable via rustup | `scripts/install-rust.sh` |
 | Mahimahi | pinned commit | `scripts/install-mahimahi.sh` |
@@ -84,7 +86,7 @@ Keep these cores free of other workloads during experiments. Setup requires Inte
 | MPTCP v0.96 kernel | pinned commit, Linux 5.4.301 | `scripts/setup-mptcp-kernel.sh` |
 | iperf3, Open vSwitch, matplotlib | the distribution's | the setup scripts |
 
-Mahimahi, Mininet and MPTCP revisions are fixed in [scripts/versions.sh](scripts/versions.sh). Mahimahi's fork removes unused web-replay tools. The [Mininet patch](patches/mininet-raise-bwParamMax.patch) allows rates above 1 Gbps.
+Vagrant, vagrant-libvirt, Mahimahi, Mininet and MPTCP versions are fixed in [scripts/versions.sh](scripts/versions.sh). Mahimahi's fork removes unused web-replay tools. The [Mininet patch](patches/mininet-raise-bwParamMax.patch) allows rates above 1 Gbps.
 
 ## Setting up
 

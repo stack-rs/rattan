@@ -1,6 +1,9 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 
+VAGRANT_VERSION='2.4.9'
+VAGRANT_LIBVIRT_VERSION='0.12.2'
+
 MAHIMAHI_REPO='https://github.com/BobAnkh/mahimahi-prune.git'
 MAHIMAHI_COMMIT='3ff069d2f72ca186f3b01fde37a177924ba34739'
 
