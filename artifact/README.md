@@ -77,7 +77,7 @@ Keep these cores free of other workloads during experiments. Setup requires Inte
 
 | What | Version | Installed by |
 | :--- | :--- | :--- |
-| Vagrant, vagrant-libvirt | pinned release | `setup-host.sh` |
+| Vagrant and its plugins | pinned release | `setup-host.sh` |
 | libvirt, QEMU | the host distribution's | `setup-host.sh` |
 | Rattan and the RVNIC module | this repository | `scripts/build-rattan.sh` |
 | Rust | current stable via rustup | `scripts/install-rust.sh` |
@@ -86,7 +86,7 @@ Keep these cores free of other workloads during experiments. Setup requires Inte
 | MPTCP v0.96 kernel | pinned commit, Linux 5.4.301 | `scripts/setup-mptcp-kernel.sh` |
 | iperf3, Open vSwitch, matplotlib | the distribution's | the setup scripts |
 
-Vagrant, vagrant-libvirt, Mahimahi, Mininet and MPTCP versions are fixed in [scripts/versions.sh](scripts/versions.sh). Mahimahi's fork removes unused web-replay tools. The [Mininet patch](patches/mininet-raise-bwParamMax.patch) allows rates above 1 Gbps.
+Vagrant, Mahimahi, Mininet and MPTCP versions are fixed in [scripts/versions.sh](scripts/versions.sh). Mahimahi's fork removes unused web-replay tools. The [Mininet patch](patches/mininet-raise-bwParamMax.patch) allows rates above 1 Gbps.
 
 ## Setting up
 

@@ -34,11 +34,15 @@ else
 fi
 
 log "Installing vagrant-libvirt $VAGRANT_LIBVIRT_VERSION"
-if vagrant plugin list 2>/dev/null | grep -q '^vagrant-libvirt '; then
-    log "  already present, skipping"
-else
-    vagrant plugin install vagrant-libvirt --plugin-version "$VAGRANT_LIBVIRT_VERSION"
-fi
+installed_plugins=$(vagrant plugin list 2>/dev/null)
+for plugin in "fog-libvirt $FOG_LIBVIRT_VERSION" "vagrant-libvirt $VAGRANT_LIBVIRT_VERSION"; do
+    read -r name version <<<"$plugin"
+    if grep -qF "$name ($version," <<<"$installed_plugins"; then
+        log "  $name $version already present, skipping"
+    else
+        vagrant plugin install "$name" --plugin-version "$version"
+    fi
+done
 
 log "Adding $USER to the kvm and libvirt groups"
 sudo usermod -aG kvm "$USER"
