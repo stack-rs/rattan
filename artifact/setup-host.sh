@@ -55,9 +55,15 @@ cat <<'EOF'
 
 Host setup done.
 
-Log out and back in for the group membership to take effect, then:
+Start a guest from rattan/artifact/ with up.sh.
 
-    vagrant up micro      # microbenchmarks (§5.1), ~25 min
-    vagrant up mptcp      # multipath benchmark (§5.2), ~20 min + kernel build
+    ./up.sh micro        # microbenchmarks (§5.1)
+    # or
+    ./up.sh mptcp        # multipath benchmark (§5.2)
+
+Do not use vagrant up directly. up.sh handles the required reboots and
+completes provisioning.
+
+Read README.md for the full setup and experiment workflow.
 
 EOF
