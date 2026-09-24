@@ -9,9 +9,6 @@ source lib.sh
 : "${LOG_TAG:=setup:micro-base}"
 require_not_root
 
-log "Growing the root filesystem"
-grow_root_fs
-
 log "Installing build tools and the measurement tools the experiments drive"
 apt_install \
     build-essential pkg-config git curl ca-certificates rsync \

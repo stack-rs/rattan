@@ -63,13 +63,18 @@ Times are approximate on our 40-core host and vary with hardware.
 
 A Debian 12+ or Ubuntu 20.04+ host with hardware virtualization, and:
 
-| | For §5.1 (`micro`) | For §5.2 (`mptcp`) |
-| :--- | :--- | :--- |
-| Physical cores | 16 | 40 |
-| Memory | 64 GiB | 16 GiB |
-| Disk | 60 GB | 128 GB |
+- 40 physical cores, kept free of other workloads during experiments. §5.1 alone needs 16.
+- 24 GiB of memory.
+- 35 GB of free disk.
 
-Keep these cores free of other workloads during experiments. Setup requires Internet access and installs all dependencies. No proprietary software is needed.
+Setup requires Internet access and installs all dependencies. No proprietary software is needed.
+
+Only one guest runs at a time. Each gets:
+
+| | `micro` (§5.1) | `mptcp` (§5.2) |
+| :--- | :--- | :--- |
+| vCPUs | 16 | 40 |
+| Memory | 16 GiB | 16 GiB |
 
 **Paper and artifact environments.** §5.1 used an Intel Core i7-10700F with 64 GiB RAM, Debian 13 and Linux 6.12.88. §5.2 used an Intel Xeon E5-2690 v2 with 128 GiB RAM, Ubuntu 24.04 and MPTCP v0.96. The guests use the same distributions, with Linux 6.12 for `micro` and MPTCP v0.96 based on Linux 5.4.301 for `mptcp`.
 

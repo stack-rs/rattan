@@ -19,10 +19,6 @@ if [ "$(uname -r)" = "$MPTCP_KERNEL_RELEASE" ]; then
     exit 0
 fi
 
-log "Growing the root filesystem"
-apt_install cloud-guest-utils lvm2
-grow_root_fs
-
 log "Installing what the kernel build needs"
 apt_install \
     build-essential bc flex bison libelf-dev libssl-dev \

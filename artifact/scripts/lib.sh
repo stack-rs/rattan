@@ -76,39 +76,6 @@ clone_at() {
     git -C "$dir" checkout --quiet --detach "$commit"
 }
 
-grow_partition() {
-    local part=$1 disk number
-    disk=$(lsblk -no PKNAME "$part" 2>/dev/null | head -1)
-    if [ -z "$disk" ]; then
-        warn "  cannot tell which disk $part is on, leaving it alone"
-        return
-    fi
-    number=${part#"/dev/$disk"}
-    number=${number#p}
-    sudo growpart "/dev/$disk" "$number" >/dev/null 2>&1 || true
-}
-
-grow_root_fs() {
-    local before after root_src pv
-    before=$(df --output=size -BG / | tail -1 | tr -dc '0-9')
-    root_src=$(findmnt -no SOURCE /)
-
-    if [[ "$root_src" == /dev/mapper/* ]]; then
-        pv=$(sudo pvs --noheadings -o pv_name 2>/dev/null | head -1 | tr -d ' ')
-        if [ -n "$pv" ]; then
-            grow_partition "$pv"
-            sudo pvresize "$pv" >/dev/null 2>&1 || true
-        fi
-        sudo lvextend -l +100%FREE "$root_src" >/dev/null 2>&1 || true
-    else
-        grow_partition "$(realpath "$root_src")"
-    fi
-    sudo resize2fs "$root_src" >/dev/null 2>&1 || true
-
-    after=$(df --output=size -BG / | tail -1 | tr -dc '0-9')
-    log "  root filesystem: ${before}G -> ${after}G"
-}
-
 cpu_count() { getconf _NPROCESSORS_ONLN; }
 
 toml_strings() {

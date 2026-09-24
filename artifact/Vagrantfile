@@ -54,9 +54,8 @@ Vagrant.configure("2") do |config|
 
     micro.vm.provider "libvirt" do |lv|
       lv.cpus = 16
-      lv.memory = 65536
+      lv.memory = 16384
       lv.cpu_mode = "host-passthrough"
-      lv.machine_virtual_size = 60
       cpuset = ENV["RATTAN_AE_CPUSET_MICRO"] || host_cpuset(16)
       lv.cpuset = cpuset if cpuset
     end
@@ -76,7 +75,6 @@ Vagrant.configure("2") do |config|
       lv.cpus = 40
       lv.memory = 16384
       lv.cpu_mode = "host-passthrough"
-      lv.machine_virtual_size = 128
       cpuset = ENV["RATTAN_AE_CPUSET_MPTCP"] || host_cpuset(40)
       lv.cpuset = cpuset if cpuset
     end
