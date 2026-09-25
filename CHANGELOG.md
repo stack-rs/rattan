@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2](https://github.com/stack-rs/rattan/compare/rattan-v0.1.1...rattan-v0.1.2) - 2026-07-24
+
+### Features
+
+- *(queue)* Implement RED and PIE queues ([#197](https://github.com/stack-rs/rattan/pull/197)) - ([a18829c](https://github.com/stack-rs/rattan/commit/a18829caafbc50082c0e7931579b4eff8d48dfa7))
+
+### Refactor
+
+- *(cell)* Change PacketQueue::dequeue to dequeue_at(ts) ([#198](https://github.com/stack-rs/rattan/pull/198)) - ([a11e8a1](https://github.com/stack-rs/rattan/commit/a11e8a16f0543ce42fd308584c72f349f18410bc))
+- *(queue)* Split module into multiple files ([#193](https://github.com/stack-rs/rattan/pull/193)) - ([bb351ee](https://github.com/stack-rs/rattan/commit/bb351ee99f83b64cc2c59860925ad926525c9ecf))
+- *(queue)* Unify Queue::new() to return Result ([#208](https://github.com/stack-rs/rattan/pull/208)) - ([b0e3a3f](https://github.com/stack-rs/rattan/commit/b0e3a3fb7d3aa3b003d695cfe1aef4f52b2f9a31))
+- *(queue)* Remove retain from PacketQueue trait - ([0410b0a](https://github.com/stack-rs/rattan/commit/0410b0ad2c0d09d2f58ef78d62579bd919407351))
+
+### Documentation
+
+- *(guide)* Update installation tips - ([390c796](https://github.com/stack-rs/rattan/commit/390c79638a9a035e136a83f838a780d859d2a178))
+
+### Styling
+
+- *(clippy)* Resolve clippy warnings - ([dafb830](https://github.com/stack-rs/rattan/commit/dafb830ef0ab46cff118febb58a31da95b07e868))
+- *(clippy)* Resolve clippy warnings - ([7f72dbe](https://github.com/stack-rs/rattan/commit/7f72dbe71969044011629756102cc7328af4de85))
+
+### Miscellaneous Tasks
+
+- *(scripts)* Support remote pre-compiled binary - ([d34e51e](https://github.com/stack-rs/rattan/commit/d34e51e826d4841ffcff3b66c85806e59eb93746))
+- *(test)* Reduce test concurrency to 1 - ([4ace463](https://github.com/stack-rs/rattan/commit/4ace463c5b59e7ec8cf3d34cf4769d69294653df))
+- *(test)* Add HTTP proxy support and expand VM build guide - ([9d81cf3](https://github.com/stack-rs/rattan/commit/9d81cf34f080e9a2eb789e4c4f91fb0a58a58497))
+- Reduce self-hosted runner disk I/O ([#207](https://github.com/stack-rs/rattan/pull/207)) - ([ef70e84](https://github.com/stack-rs/rattan/commit/ef70e84d08eac53cccf38bfef520eec5b2ca71c7))
+
+### Build
+
+- *(deps)* Fix cargo audit warnings - ([83341d7](https://github.com/stack-rs/rattan/commit/83341d7b2a2cc96ab2e4f630e56d88fe8d4ce70f))
+
+
 ## [0.1.1](https://github.com/stack-rs/rattan/compare/rattan-v0.1.0...rattan-v0.1.1) - 2026-03-10
 
 ### Features

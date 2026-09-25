@@ -51,8 +51,8 @@ once_cell = { workspace = true }
 parking_lot = { workspace = true }
 pcap-file = { workspace = true }
 rand = { workspace = true }
-rattan-env = { path = "../rattan-env", version = "0.1.1" }
-rattan-log = { path = "../rattan-log", version = "0.1.1" }
+rattan-env = { path = "../rattan-env", version = "0.1.2" }
+rattan-log = { path = "../rattan-log", version = "0.1.2" }
 regex = "1.7.3"
 serde = { workspace = true, optional = true }
 serde_json = { version = "1.0.96", optional = true }

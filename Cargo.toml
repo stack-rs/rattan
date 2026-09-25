@@ -17,7 +17,7 @@ resolver = "2"
 members = [".", "rattan-core", "rattan-env", "rattan-log"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.86"
 homepage = "https://github.com/stack-rs/rattan"
@@ -110,8 +110,8 @@ nix = { workspace = true }
 once_cell = { workspace = true }
 paste = "1.0.14"
 rand = { workspace = true }
-rattan-core = { path = "rattan-core", features = ["serde"], version = "0.1.1" }
-rattan-log = { path = "rattan-log", version = "0.1.1" }
+rattan-core = { path = "rattan-core", features = ["serde"], version = "0.1.2" }
+rattan-log = { path = "rattan-log", version = "0.1.2" }
 serde = { workspace = true }
 serde_json = "1.0.114"
 shadow-rs = { version = "1.7.0", default-features = false }
