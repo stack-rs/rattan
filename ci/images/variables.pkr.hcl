@@ -53,6 +53,7 @@ variable "authorized_key_file" {
 variable "install_runner" {
   type = bool
   default = true
+  description = "Install the GitHub runner: the compose file in /etc/runner, the runner image, and the rattan-runner systemd service enabled at boot. Set to false for a plain VM without a runner."
 }
 
 variable "http_proxy" {

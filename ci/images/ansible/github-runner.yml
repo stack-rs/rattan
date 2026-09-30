@@ -31,8 +31,20 @@
     name: "docker.io/myoung34/github-runner:{{ tag }}"
     source: pull
 
-- name: start the github-runner container
+- name: install rattan-runner systemd service
   become: true
-  community.docker.docker_compose_v2:
-    project_src: /etc/runner
-    state: present
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../systemd/rattan-runner.service"
+    dest: /etc/systemd/system/rattan-runner.service
+    owner: root
+    group: root
+    mode: "0644"
+
+# Only enable here: the runner registers itself on first boot of the real VM
+# instead of inside the packer build VM (where it could pick up CI jobs).
+- name: enable rattan-runner service at boot
+  become: true
+  ansible.builtin.systemd:
+    name: rattan-runner.service
+    daemon_reload: true
+    enabled: true
