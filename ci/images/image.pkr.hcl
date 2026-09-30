@@ -157,7 +157,8 @@ build {
     expect_disconnect = true
   }
   provisioner "breakpoint" {
-    note = "You can examine the created domain with virt-manager, virsh or via SSH"
+    disable = !var.breakpoints
+    note    = "You can examine the created domain with virt-manager, virsh or via SSH"
   }
   provisioner "shell" {
     environment_vars = [
@@ -181,7 +182,8 @@ build {
     inline_shebang = "/bin/bash"
   }
   provisioner "breakpoint" {
-    note = "You can examine the created domain with virt-manager, virsh or via SSH"
+    disable = !var.breakpoints
+    note    = "You can examine the created domain with virt-manager, virsh or via SSH"
   }
   provisioner "ansible" {
     playbook_file = "./ansible/configure.yml"

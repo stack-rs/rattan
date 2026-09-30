@@ -1,0 +1,17 @@
+[Unit]
+Description=Rattan runner
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/etc/runner
+ExecStartPre=-/usr/bin/docker compose down
+ExecStart=/usr/bin/docker compose up --pull never --force-recreate --abort-on-container-exit
+ExecStop=/usr/bin/docker compose down
+Restart=always
+RestartSec=10
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

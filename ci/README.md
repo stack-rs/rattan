@@ -78,6 +78,10 @@ packer build \
 - `<GitHub User>` (optional) is a user whose public keys are pulled from GitHub and imported to the VM.
 - `<Path to a .pub file>` (optional) is a local public key file injected into the VM's `authorized_keys`, e.g. `~/.ssh/ubuntu_rsa.pub`. Supports `~` expansion; a bare relative path resolves against `ci/images`.
 
+Add `-var "install_runner=false"` to build a plain VM without the GitHub runner (defaults to `true`).
+
+The build runs unattended by default. Add `-var "breakpoints=true"` to pause at the breakpoints (after cloud-init finishes and before Ansible runs) and wait for Enter, so you can inspect the domain with virt-manager, virsh or SSH.
+
 Both `key_import_user` and `authorized_key_file` are optional and can be combined, but provide **at least one** of them to ensure ssh access. You then log in as the `rattan` user with the matching private key.
 
 If the guest must reach the internet through an HTTP proxy, add `-var "http_proxy=http://<host>:<port>"`.
@@ -103,5 +107,42 @@ Run VMs on a machine with `libvirtd` available. Must first create the image usin
 
 ```shell
 # In ci/libvirt
-virsh create ./libvirt/<Distribution>-<Kernel>.xml
+virsh create ./<Distribution>-<Kernel>.xml
 ```
+
+When `install_runner` is `true` (the default), the GitHub runner container is managed by the systemd unit [`systemd/rattan-runner.service`](./systemd/rattan-runner.service), which is installed to `/etc/systemd/system/` in the image and **enabled at boot**. It is not started during `packer build`, so the runner only registers itself with GitHub once the VM is booted, and should show up as online under the repository's _Settings → Actions → Runners_ within a minute or two. No manual step is needed.
+
+## Check the runner (optional)
+
+If the runner does not come online, use
+
+```shell
+virsh domifaddr <Distribution>-<Kernel>
+```
+
+to show the address of the machine, then ssh into it as `rattan@<IP>` using the keys imported when creating the image. The service runs `docker compose` in `/etc/runner` and can be managed with:
+
+```shell
+sudo systemctl status rattan-runner
+sudo systemctl restart rattan-runner
+sudo journalctl -u rattan-runner -f
+```
+
+## Stop and remove VMs
+
+VMs started with `virsh create` are transient, so they disappear from `virsh list --all` once stopped and there is nothing to undefine.
+
+```shell
+# Graceful shutdown (ACPI), which also stops the rattan-runner service
+virsh shutdown <Distribution>-<Kernel>
+# Force it off if it does not respond
+virsh destroy <Distribution>-<Kernel>
+```
+
+The VM writes directly to its image volume, so to get a clean machine (or to rebuild with `packer build`), stop the VM and delete the volume:
+
+```shell
+virsh vol-delete --pool default <Distribution>-<Kernel>
+```
+
+If the runner still shows up as offline under the repository's _Settings → Actions → Runners_ afterwards, remove it there.

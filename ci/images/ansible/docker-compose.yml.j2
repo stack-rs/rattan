@@ -2,7 +2,7 @@ services:
   worker:
     image: rattan/github-runner:{{ tag }}
     container_name: github-runner
-    restart: always
+    restart: "no"
     privileged: true
     environment:
       RUNNER_NAME: {{ runner_name }}
