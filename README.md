@@ -14,7 +14,7 @@ We support Linux only at the moment. Currently, kernel version v5.4, v5.15, v6.8
 
 This branch is the artifact for the paper:
 
-> **#2689 Rattan: An Extensible and Scalable Modular Internet Path Emulator.** *2026 USENIX Annual Technical Conference (USENIX ATC '26).*
+> **#2689 Rattan: An Extensible and Scalable Modular Internet Path Emulator.** *The 2026 ACM SIGOPS Annual Technical Conference (SIGOPS ATC 2026).*
 
 See the [artifact guide](artifact/README.md) to get started.
 

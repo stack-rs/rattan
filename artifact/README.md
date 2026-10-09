@@ -1,6 +1,6 @@
 # Rattan artifact
 
-Artifact for *#2689 Rattan: An Extensible and Scalable Modular Internet Path Emulator* (USENIX ATC '26), licensed under [Apache-2.0](../LICENSE).
+Artifact for *#2689 Rattan: An Extensible and Scalable Modular Internet Path Emulator* (*The 2026 ACM SIGOPS Annual Technical Conference (SIGOPS ATC 2026)*), licensed under [Apache-2.0](../LICENSE).
 
 ## Quick start
 
