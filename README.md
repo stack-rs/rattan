@@ -18,6 +18,8 @@ This branch is the artifact for the paper:
 
 See the [artifact guide](artifact/README.md) to get started.
 
+The paper's distributed orchestrator is available in the separate [Mitosis](https://github.com/stack-rs/mitosis) repository.
+
 ## Project structure
 
 ```

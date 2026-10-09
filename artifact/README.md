@@ -57,6 +57,8 @@ Guest setup and experiments took roughly **4 hours** on our 40-core host with VM
 
 Each experiment produces a CSV. The microbenchmarks also produce plots for Figures 5–7.
 
+These experiments run standalone. The paper's distributed orchestrator is available separately as [Mitosis](https://github.com/stack-rs/mitosis).
+
 Time estimates are for our 40-core host with 40 vCPUs for `mptcp`. Your times may differ.
 
 ## Requirements
