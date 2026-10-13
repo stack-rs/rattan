@@ -2,7 +2,9 @@
 """Check iperf3 throughput against the capacity of a Mahimahi trace.
 
 Each line of a Mahimahi trace is a millisecond timestamp with one chance to
-send a 1500 byte packet, and the trace loops when it ends.
+send a 1500 byte packet, and the trace loops when it ends. iperf3 only counts
+the TCP payload, which is 1448 bytes of each 1500 byte packet (20 IP + 20 TCP
++ 12 timestamp option), so the capacity is counted with 1448.
 
 Usage: check_trace.py TRACE IPERF_JSON MIN_UTIL MAX_UTIL
 Exits with 1 if the utilization is outside [MIN_UTIL, MAX_UTIL].
@@ -10,7 +12,7 @@ Exits with 1 if the utilization is outside [MIN_UTIL, MAX_UTIL].
 import json
 import sys
 
-PACKET_BITS = 1500 * 8
+PACKET_BITS = 1448 * 8
 
 
 def trace_capacity_bits(path, seconds):

@@ -7,7 +7,7 @@ set -e
 DURATION=${DURATION:-20}
 DELAY=${DELAY:-10ms}
 MIN_UTIL=${MIN_UTIL:-0.85}
-MAX_UTIL=${MAX_UTIL:-1.02}
+MAX_UTIL=${MAX_UTIL:-1.05}
 
 # Traces from the Orca paper (SIGCOMM '20), pinned to a commit
 NYC_COMMIT=ac6717b5f113bf899344e91ffc57e472daf29954
