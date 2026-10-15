@@ -55,3 +55,5 @@ jobs:
           path: |
             ci/scripts/cache/verify.html
             ci/scripts/cache/verify_log.tar.gz
+      - name: Real trace verification
+        run: /bin/bash ./ci/scripts/test_trace.sh
