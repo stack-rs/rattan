@@ -28,6 +28,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install system dependencies
+        run: sudo apt update && sudo apt install pkg-config m4 clang llvm libelf-dev libpcap-dev gcc-multilib libnftnl-dev libmnl-dev autoconf automake autopoint flex bison gawk libtool -y
+
       - name: Run release-plz
         uses: release-plz/action@v0.5
         env:
