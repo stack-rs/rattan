@@ -567,7 +567,7 @@ mod tests {
             // Because tests are run with root privileges, insta review will not have sufficient privilege to update the snapshot file.
             // To update the snapshot, set the environment variable INSTA_UPDATE to always
             // so that insta will update the snapshot file during the test run (but without confirming).
-            assert_json_snapshot!(loss_seq)
+            assert_json_snapshot!(loss_seq);
         }
         Ok(())
     }
