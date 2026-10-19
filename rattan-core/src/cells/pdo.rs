@@ -466,7 +466,13 @@ mod tests {
 
         let mut departures = vec![];
         while departures.len() < count {
-            let Some(packet) = rt.block_on(async { egress.dequeue().await }) else {
+            // Fail instead of hanging forever if some packet never leaves the cell.
+            let packet = rt
+                .block_on(async {
+                    tokio::time::timeout(Duration::from_secs(5), egress.dequeue()).await
+                })
+                .expect("timed out waiting for a packet to leave the cell");
+            let Some(packet) = packet else {
                 continue;
             };
             let departure = packet.get_timestamp();
