@@ -48,6 +48,7 @@ libc = "0.2.141"
 netem-trace = { version = "0.4.4", features = [
   "human",
   "mahimahi",
+  "pdo-model",
   "serde",
   "trace-ext",
 ] }
