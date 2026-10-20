@@ -1,7 +1,7 @@
-# configuration for https://github.com/MarcoIeni/release-plz
+# configuration for https://github.com/release-plz/release-plz
 
 [workspace]
-# path of the git-cliff configuration
+# path of the git-cliff configuration (the changelog template is defined inline below)
 # changelog_config = "cliff.toml"
 # enable changelog updates
 changelog_update = true
@@ -9,16 +9,16 @@ changelog_update = true
 dependencies_update = true
 # create tags for the releases
 git_tag_enable = true
-# disable GitHub releases
+# create GitHub releases (disabled: cargo-dist creates them from the tags, see release.yml)
 git_release_enable = false
 # labels for the release PR
 pr_labels = ["release"]
 pr_name = "chore: release v{{ version }}"
-# disallow updating repositories with uncommitted changes
+# allow updating repositories with uncommitted changes
 allow_dirty = true
-# disallow packaging with uncommitted changes
+# allow packaging with uncommitted changes
 publish_allow_dirty = true
-# disable running `cargo-semver-checks`
+# run `cargo-semver-checks`
 semver_check = true
 
 [changelog]
@@ -86,6 +86,7 @@ commit_parsers = [
   { message = "^refactor", group = "<!-- 2 -->Refactor" },
   { message = "^style", group = "<!-- 5 -->Styling" },
   { message = "^test", group = "<!-- 6 -->Testing" },
+  { message = "^chore: release", skip = true },
   { message = "^chore\\(release\\): prepare for", skip = true },
   { message = "^chore\\(deps.*\\)", skip = true },
   { message = "^chore\\(pr\\)", skip = true },
