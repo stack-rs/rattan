@@ -13,11 +13,13 @@
 
 #include <linux/jiffies.h>
 #include <linux/ktime.h>
+#include <linux/list.h>
 #include <linux/netdevice.h>
 #include <linux/refcount.h>
 #include <linux/skbuff.h>
 #include <linux/spinlock.h>
 #include <linux/wait.h>
+#include <linux/workqueue.h>
 
 #include "rattan_vnic_uapi.h"
 
@@ -36,50 +38,52 @@
 #define RATTAN_RX_TIMEOUT_NS 64000    /* Or after N nanoseconds (64µs) */
 
 /*
- * SKB tracking hash table configuration
+ * Pending-packet slots - one per UMEM chunk
+ *
+ * Every packet handed to userspace is bound to exactly one UMEM chunk, so the
+ * chunk index doubles as the slot index and the token is simply
+ *
+ *     token = gen << 32 | chunk_index
+ *
+ * where gen is a per-slot generation, bumped on every insert, that makes stale
+ * or replayed tokens miss instead of aliasing onto whatever packet occupies the
+ * chunk now. gen is never 0, so neither is a valid token.
+ *
+ * The slot state word packs gen with a FREE/LIVE/BUSY tag and every ownership
+ * change is a single cmpxchg on it. A correct userspace never makes two CPUs
+ * contend for one slot (the chunk's owner is also the slot's owner), but the
+ * device node is world-accessible, so a duplicated token or a live chunk put
+ * back on FILL must fail the cmpxchg rather than double-free the skb.
+ *
+ *   FREE(g) --insert--> BUSY(g) --publish--> LIVE(g+1)
+ *   LIVE(g) --claim---> BUSY(g) --release--> FREE(g)   (or back to LIVE(g))
+ *
+ * BUSY is only ever held for a few non-sleeping instructions, and a claimer that
+ * finds it treats the token as a miss rather than waiting.
+ *
+ * Chunks are returned to the COMP ring of the queue that originally supplied
+ * them (slot->rings), which preserves per-queue buffer ownership.
  */
-#define SKB_HASH_BITS 16 /* 2^16 = 65536 buckets */
-#define SKB_HASH_SIZE (1 << SKB_HASH_BITS)
+#define RATTAN_SLOT_FREE 0
+#define RATTAN_SLOT_LIVE 1
+#define RATTAN_SLOT_BUSY 2
+#define RATTAN_SLOT_TAG_MASK 3
 
-/*
- * SKB tracking entry - holds pending packets for payload retrieval
- *
- * This is stored in a GLOBAL hash table so tokens can be used across
- * different vNIC instances (e.g., receive on rattan0, forward via rattan1).
- *
- * Note: UMEM chunk management is handled entirely by userspace. The kernel
- * only tracks the SKB. When cloning for multicast, userspace allocates a
- * new chunk, copies the header, and passes the chunk address in the TX
- * descriptor.
- *
- * Chunks are returned to the COMP ring of the same queue/device that
- * originally supplied the chunk. This preserves per-queue buffer ownership
- * and means userspace should recycle completions back into the matching
- * queue's FILL ring.
- */
-struct rattan_queue;
+#define RATTAN_SLOT_STATE(gen, tag) (((u64)(u32)(gen) << 2) | (tag))
+#define RATTAN_SLOT_GEN(state) ((u32)((state) >> 2))
+#define RATTAN_TOKEN(idx, gen) (((u64)(u32)(gen) << 32) | (u32)(idx))
+#define RATTAN_TOKEN_IDX(token) ((u32)(token))
+#define RATTAN_TOKEN_GEN(token) ((u32)((token) >> 32))
 
-struct skb_entry {
-    struct hlist_node node;     /* Hash table linkage */
-    u64 token;                  /* Unique token for this packet */
+struct rattan_rings;
+
+struct rattan_pending {
+    u64 state;                  /* RATTAN_SLOT_STATE(gen, tag) */
     struct sk_buff *skb;        /* The actual packet */
-    ktime_t timestamp;          /* When packet was received (for GC) */
-    u64 chunk_addr;             /* Original RX chunk backing this token */
-    bool has_chunk;             /* True if this entry owns chunk_addr */
-    u16 qid;                    /* Queue that provided the original chunk */
-    struct rattan_rings *rings; /* Rings that own completion for chunk_addr */
+    struct rattan_rings *rings; /* Rings that own completion for this chunk */
+    u32 stamp;                  /* jiffies at insert, for GC */
+    u16 qid;                    /* Queue that provided the chunk */
 };
-
-/*
- * Per-bucket locked hash table for SKB tracking
- *
- * Using per-bucket locks instead of a single global lock improves
- * scalability when multiple CPUs/devices are processing different tokens.
- */
-struct skb_bucket {
-    struct hlist_head head;
-    spinlock_t lock;
-} ____cacheline_aligned;
 
 /*
  * UMEM context - tracks pinned userspace memory
@@ -90,6 +94,7 @@ struct skb_bucket {
  */
 struct rattan_umem {
     refcount_t refcount; /* Number of devices using this UMEM */
+    struct list_head node; /* On rattan_umems, for GC */
     struct page **pages;
     unsigned long nr_pages;
     void *mapped;   /* Kernel virtual address */
@@ -97,6 +102,9 @@ struct rattan_umem {
     u32 chunk_size; /* Chunk size */
     u32 headroom;   /* Headroom in each chunk */
     u32 nr_chunks;  /* Number of chunks */
+    u8 chunk_shift; /* ilog2(chunk_size) */
+
+    struct rattan_pending *pending; /* nr_chunks slots, indexed by chunk */
 };
 
 /*
@@ -116,6 +124,39 @@ struct rattan_rings {
     struct rattan_fill_ring *fill;
     struct rattan_comp_ring *comp;
     struct rattan_drop_ring *drop;
+
+    /*
+     * The last put can come from softirq (a token completed by NAPI, or
+     * released via the DROP ring, after this queue's device closed), but
+     * vunmap() and unpinning must not run there. The cleanup is deferred.
+     */
+    struct work_struct cleanup_work;
+};
+
+/*
+ * Debug/instrumentation counters, per CPU so that the xmit and NAPI CPUs of a
+ * queue never share a line. Only counted while debug_stats_interval_ms != 0.
+ */
+struct rattan_queue_dbg {
+    u64 xmit_ok;           /* Packets enqueued to RX ring for userspace */
+    u64 xmit_rx_full;      /* start_xmit blocked by RX ring full */
+    u64 xmit_fill_empty;   /* start_xmit blocked by empty FILL ring */
+    u64 xmit_nomem;        /* start_xmit blocked by allocation failure */
+    u64 xmit_invalid_addr; /* start_xmit saw invalid chunk address */
+    u64 rx_notify;         /* Userspace wake notifications */
+    u64 kick_rx;           /* RX kick requests from userspace */
+    u64 kick_rx_remote;    /* RX kicks sent via remote IPI */
+    u64 napi_polls;        /* NAPI poll invocations */
+    u64 napi_complete;     /* NAPI completion events */
+    u64 napi_budget_stop;  /* NAPI stopped due to budget exhaustion */
+    u64 napi_tx_empty;     /* NAPI found TX ring empty */
+    u64 napi_comp_full;    /* NAPI blocked by COMP ring full */
+    u64 napi_token_miss;   /* NAPI saw TX token lookup miss */
+    u64 napi_rx_ok;        /* Packets injected into kernel RX path */
+    u64 napi_rx_drop;      /* Packets dropped by kernel RX path */
+    u64 comp_ok;           /* Chunk completions pushed to COMP ring */
+    u64 comp_full;         /* Chunk completions dropped due to full COMP */
+    u64 recycle_token;     /* Tokens recycled successfully */
 };
 
 /*
@@ -144,26 +185,8 @@ struct rattan_queue {
     int napi_cpu;            /* Target CPU (-1 = use caller's CPU) */
     atomic_t napi_scheduled; /* Avoid redundant IPIs for remote NAPI */
 
-    /* Debug/instrumentation counters */
-    atomic64_t dbg_xmit_ok;              /* Packets enqueued to RX ring for userspace */
-    atomic64_t dbg_xmit_rx_full;         /* start_xmit blocked by RX ring full */
-    atomic64_t dbg_xmit_fill_empty;      /* start_xmit blocked by empty FILL ring */
-    atomic64_t dbg_xmit_nomem;           /* start_xmit blocked by allocation failure */
-    atomic64_t dbg_xmit_invalid_addr;    /* start_xmit saw invalid chunk address */
-    atomic64_t dbg_rx_notify;            /* Userspace wake notifications */
-    atomic64_t dbg_kick_rx;              /* RX kick requests from userspace */
-    atomic64_t dbg_kick_rx_remote;       /* RX kicks sent via remote IPI */
-    atomic64_t dbg_napi_polls;           /* NAPI poll invocations */
-    atomic64_t dbg_napi_complete;        /* NAPI completion events */
-    atomic64_t dbg_napi_budget_stop;     /* NAPI stopped due to budget exhaustion */
-    atomic64_t dbg_napi_tx_empty;        /* NAPI found TX ring empty */
-    atomic64_t dbg_napi_comp_full;       /* NAPI blocked by COMP ring full */
-    atomic64_t dbg_napi_token_miss;      /* NAPI saw TX token lookup miss */
-    atomic64_t dbg_napi_rx_ok;           /* Packets injected into kernel RX path */
-    atomic64_t dbg_napi_rx_drop;         /* Packets dropped by kernel RX path */
-    atomic64_t dbg_comp_ok;              /* Chunk completions pushed to COMP ring */
-    atomic64_t dbg_comp_full;            /* Chunk completions dropped due to full COMP */
-    atomic64_t dbg_recycle_token;        /* Tokens recycled successfully */
+    /* Debug counters (struct rattan_queue_dbg), see RATTAN_DBG_INC */
+    struct rattan_queue_dbg __percpu *dbg;
     unsigned long dbg_last_dump_jiffies; /* Last periodic stats dump time */
 };
 

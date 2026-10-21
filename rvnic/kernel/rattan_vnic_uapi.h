@@ -23,6 +23,7 @@
 #define RATTAN_MIN_CHUNK_SIZE 256           /* Minimum chunk size */
 #define RATTAN_MAX_CHUNK_SIZE 65536         /* Maximum chunk size (64KB) */
 #define RATTAN_MAX_UMEM_SIZE (128ULL << 30) /* Maximum UMEM size (128 GiB) */
+#define RATTAN_MAX_CHUNKS (1U << 22)        /* Maximum chunks per UMEM */
 #define RATTAN_HEADER_SIZE 0               /* Bytes eagerly copied to chunk */
 
 /*
@@ -210,14 +211,21 @@ struct rattan_release_req {
 /*
  * Token clone request/response
  *
- * Clone an SKB to get a new token. This allows forwarding a packet
- * to multiple destinations.
+ * Copy the SKB behind a token into a new token, e.g. to forward one packet to
+ * several destinations.
  *
- * Each token has strict 1:1 mapping with an SKB.
- * Userspace manages UMEM chunks independently from tokens.
+ * A token is bound to exactly one UMEM chunk, so the clone needs one too:
+ * userspace supplies a free chunk (chunk_addr) from its own pool, exactly as it
+ * would on FILL, and queue_id names the queue of this device whose COMP ring
+ * gets the chunk back when the clone is released or transmitted.
+ *
+ * Fails with -EBUSY if chunk_addr is still bound to a live token.
  */
 struct rattan_clone_req {
-    __u64 token; /* Token to clone */
+    __u64 token;      /* Token to clone */
+    __u64 chunk_addr; /* Free chunk to bind the new token to */
+    __u32 queue_id;   /* Queue whose COMP ring owns chunk_addr */
+    __u32 _pad;
 };
 
 struct rattan_clone_resp {

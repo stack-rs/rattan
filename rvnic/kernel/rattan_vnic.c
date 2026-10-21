@@ -16,18 +16,22 @@
 #include <linux/atomic.h>
 #include <linux/etherdevice.h>
 #include <linux/fs.h>
-#include <linux/hashtable.h>
 #include <linux/hrtimer.h>
 #include <linux/idr.h>
 #include <linux/init.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
+#include <linux/kernel_stat.h>
 #include <linux/ktime.h>
 #include <linux/miscdevice.h>
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/netdevice.h>
+#include <linux/percpu.h>
 #include <linux/poll.h>
+#include <linux/ratelimit.h>
+#include <linux/sched/clock.h>
 #include <linux/slab.h>
 #include <linux/smp.h>
 #include <linux/uaccess.h>
@@ -73,6 +77,25 @@ static void rattan_unpin_pages(struct page **pages, unsigned long nr) {
 #endif
 
 /*
+ * Kernel version compatibility for per-cpu device stats
+ * - The core allocates dev->tstats for NETDEV_PCPU_STAT_TSTATS since 6.7;
+ *   before that the driver does it in ndo_init/ndo_uninit.
+ * - Per-cpu drop counters (dev->core_stats) since 5.18; before that the
+ *   atomic dev->{rx,tx}_dropped.
+ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
+#define RATTAN_CORE_TSTATS
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0)
+#define rattan_tx_dropped_inc(dev) dev_core_stats_tx_dropped_inc(dev)
+#define rattan_rx_dropped_inc(dev) dev_core_stats_rx_dropped_inc(dev)
+#else
+#define rattan_tx_dropped_inc(dev) atomic_long_inc(&(dev)->tx_dropped)
+#define rattan_rx_dropped_inc(dev) atomic_long_inc(&(dev)->rx_dropped)
+#endif
+
+/*
  * Kernel version compatibility for hrtimer_init / hrtimer_setup
  * hrtimer_setup was introduced since 6.13 and hrtimer_init was removed from 6.15
  * 6.14 is a version that these two functions coexist
@@ -101,23 +124,221 @@ MODULE_PARM_DESC(num_queues, "Number of TX/RX queues per rattan device (default:
 static unsigned int debug_stats_interval_ms = 0;
 module_param(debug_stats_interval_ms, uint, 0644);
 MODULE_PARM_DESC(debug_stats_interval_ms,
-                 "Periodic per-queue debug stats dump interval in ms (0 = disabled)");
+                 "Periodic per-queue debug stats dump interval in ms (0 = disabled). "
+                 "The counters only count while this is nonzero.");
+
+/*
+ * Per-cpu debug counters (struct rattan_queue_dbg). A plain branch on a
+ * read-mostly global when the dump is off; no locked op or shared line when on.
+ */
+#define RATTAN_DBG_ADD(queue, field, n)                                                            \
+    do {                                                                                           \
+        if (unlikely(READ_ONCE(debug_stats_interval_ms)))                                          \
+            this_cpu_add((queue)->dbg->field, (n));                                                \
+    } while (0)
+#define RATTAN_DBG_INC(queue, field) RATTAN_DBG_ADD(queue, field, 1)
+
+/* ================== Debug: ndo_start_xmit latency bisection ==================
+ *
+ * Splits the xmit path into stages and warns, with a per-stage breakdown, when
+ * the total exceeds slow_tx_ns. Set slow_tx_ns=0 to disable: each checkpoint
+ * then costs one branch and nothing else.
+ *
+ * Remove this block (and its call sites) once the slow-TX question is settled.
+ */
+static unsigned int slow_tx_ns = 0;
+module_param(slow_tx_ns, uint, 0644);
+MODULE_PARM_DESC(slow_tx_ns, "Warn when ndo_start_xmit exceeds this many ns (0 = disabled)");
+
+enum {
+    XT_START,   /* entry to ndo_start_xmit */
+    XT_RESOLVE, /* queue + rings + umem resolved */
+    XT_ALLOC,   /* unused since the slab entry went away; kept for log compatibility */
+    XT_CHUNK,   /* chunk obtained: COMP/FILL pop + DROP-ring token release */
+    XT_ENTRY,   /* header copied to UMEM */
+    XT_ORPHAN,  /* skb_orphan + nf_reset_ct, i.e. the socket destructor */
+    XT_HASH,    /* bound to the chunk's pending slot, i.e. the token insert */
+    XT_PUSH,    /* descriptor published to the RX ring */
+    XT_NOTIFY,  /* rattan_rx_notify returned, i.e. the userspace wake-up */
+    XT_NR
+};
+
+static const char *const xt_names[XT_NR] = {
+    "start", "resolve", "alloc", "chunk", "entry", "orphan", "hash", "push", "notify",
+};
+
+/* Which branch rattan_rx_notify() took */
+#define RATTAN_NOTIFY_NONE 0 /* not reached (packet dropped) */
+#define RATTAN_NOTIFY_ARM 1  /* first of a batch: hrtimer armed */
+#define RATTAN_NOTIFY_MID 2  /* mid-batch: nothing done */
+#define RATTAN_NOTIFY_WAKE 3 /* batch full: wake_up performed */
+
+/*
+ * local_clock() is only comparable within one CPU, which is fine: ndo_start_xmit
+ * runs with BH (hence preemption) disabled, so every sample below is taken on
+ * the same CPU. For a GSO skb the per-stage fields describe the LAST segment,
+ * while nsegs counts all of them.
+ */
+struct rattan_xmit_trace {
+    u64 t[XT_NR];
+    unsigned long irqs_start;
+    u32 nsegs;
+    u8 notify_path;
+    bool recycled; /* a DROP-ring token was released during this call */
+};
+
+#define XT(tr, idx)                                                                                \
+    do {                                                                                           \
+        if (tr)                                                                                    \
+            (tr)->t[idx] = local_clock();                                                          \
+    } while (0)
+
+/* 200 lines/s is enough to see a distribution without flooding the log */
+static DEFINE_RATELIMIT_STATE(slow_tx_rs, HZ, 200);
+
+/*
+ * Format " name=delta" for every recorded stage in t[1..last], each delta taken
+ * against the nearest earlier recorded stage. t[0] is the start timestamp.
+ */
+static void rattan_format_stages(const u64 *t, int last, const char *const *names, char *buf,
+                                 size_t size) {
+    size_t n = 0;
+    int i, j;
+
+    buf[0] = '\0';
+    for (i = 1; i <= last; i++) {
+        if (!t[i])
+            continue;
+        for (j = i - 1; j >= 0; j--) {
+            if (t[j]) {
+                n += scnprintf(buf + n, size - n, " %s=%llu", names[i], t[i] - t[j]);
+                break;
+            }
+        }
+    }
+}
+
+static void rattan_report_slow_tx(struct rattan_xmit_trace *tr, struct rattan_queue *queue,
+                                  const char *path) {
+    unsigned long irqs;
+    char buf[192];
+    u64 total;
+    int i, last = XT_START;
+
+    if (!tr || !tr->t[XT_START])
+        return;
+
+    irqs = kstat_this_cpu->irqs_sum;
+
+    for (i = XT_START + 1; i < XT_NR; i++)
+        if (tr->t[i])
+            last = i;
+
+    /* An early drop records no stages; still report the total. */
+    total = (last == XT_START ? local_clock() : tr->t[last]) - tr->t[XT_START];
+    if (total < slow_tx_ns)
+        return;
+
+    rattan_format_stages(tr->t, last, xt_names, buf, sizeof(buf));
+
+    if (!__ratelimit(&slow_tx_rs))
+        return;
+
+    pr_warn("slow tx[%s] rattan%d:q%u %llu ns cpu=%d segs=%u notify=%u "
+            "recycled=%d hardirqs=%lu |%s\n",
+            path, queue ? queue->ctx->dev_id : -1, queue ? queue->qid : 0, total,
+            smp_processor_id(), tr->nsegs, tr->notify_path, tr->recycled,
+            irqs - tr->irqs_start, buf);
+}
+/* ============== End debug: ndo_start_xmit latency bisection ============== */
+
+/* ================== Debug: NAPI per-packet latency bisection ==================
+ *
+ * Same idea as the xmit trace, for one iteration of the rattan_napi_poll loop.
+ * Stage names are distinct from the xmit ones so the two can be aggregated from
+ * one log. Set slow_rx_ns=1 to sample every packet (subject to the ratelimit).
+ */
+static unsigned int slow_rx_ns = 0;
+module_param(slow_rx_ns, uint, 0644);
+MODULE_PARM_DESC(slow_rx_ns, "Warn when one NAPI packet exceeds this many ns (0 = disabled)");
+
+enum {
+    NT_START,   /* top of the loop iteration */
+    NT_PEEK,    /* COMP space check + TX descriptor peeked */
+    NT_LOOKUP,  /* token's pending slot claimed */
+    NT_UNLINK,  /* descriptor consumed, slot emptied */
+    NT_PREP,    /* header copy-back + eth_type_trans */
+    NT_STACK,   /* netif_receive_skb returned */
+    NT_RELEASE, /* chunk(s) completed, rings reference dropped */
+    NT_NR
+};
+
+static const char *const nt_names[NT_NR] = {
+    "nstart", "peek", "lookup", "unlink", "prep", "stack", "release",
+};
+
+struct rattan_napi_trace {
+    u64 t[NT_NR];
+    unsigned long irqs_start;
+};
+
+#define NT(tr, idx) XT(tr, idx)
+
+static DEFINE_RATELIMIT_STATE(slow_rx_rs, HZ, 200);
+
+static void rattan_napi_trace_begin(struct rattan_napi_trace *tr) {
+    memset(tr, 0, sizeof(*tr));
+    tr->irqs_start = kstat_this_cpu->irqs_sum;
+    tr->t[NT_START] = local_clock();
+}
+
+static void rattan_report_slow_rx(struct rattan_napi_trace *tr, struct rattan_queue *queue,
+                                  const char *path) {
+    char buf[192];
+    u64 total;
+    int i, last = NT_START;
+
+    if (!tr || !tr->t[NT_START])
+        return;
+
+    for (i = NT_START + 1; i < NT_NR; i++)
+        if (tr->t[i])
+            last = i;
+    if (last == NT_START)
+        return;
+
+    total = tr->t[last] - tr->t[NT_START];
+    if (total < slow_rx_ns)
+        return;
+
+    if (!__ratelimit(&slow_rx_rs))
+        return;
+
+    rattan_format_stages(tr->t, last, nt_names, buf, sizeof(buf));
+    pr_warn("slow rx[%s] rattan%d:q%u %llu ns cpu=%d hardirqs=%lu |%s\n", path,
+            queue->ctx->dev_id, queue->qid, total, smp_processor_id(),
+            kstat_this_cpu->irqs_sum - tr->irqs_start, buf);
+}
+/* ============== End debug: NAPI per-packet latency bisection ============== */
 
 /* Device management - use IDA for unique device IDs */
 static DEFINE_IDA(rattan_ida);
 
-/* Next token value - simple monotonic counter for unique token generation */
-static atomic64_t next_token = ATOMIC64_INIT(1);
+/* Every live UMEM, so GC can find the pending slots. Protected by rattan_umems_lock. */
+static LIST_HEAD(rattan_umems);
+static DEFINE_MUTEX(rattan_umems_lock);
 
-/* Token lookup table with per-bucket locks */
-static struct skb_bucket token_table[SKB_HASH_SIZE];
-static atomic_t pending_token_count = ATOMIC_INIT(0);
-
-/* Slab cache for skb_entry allocations */
-static struct kmem_cache *skb_entry_cache;
+/*
+ * Live token count, for the debug dump only. Per-cpu so that the xmit CPU
+ * (insert) and the NAPI CPU (release) do not bounce a shared counter.
+ */
+static DEFINE_PER_CPU(long, rattan_pending_tokens);
 
 /* Periodic GC workqueue */
 static struct delayed_work gc_work;
+
+/* Deferred rattan_rings cleanup; drained on module exit */
+static struct workqueue_struct *rattan_cleanup_wq;
 static bool gc_work_initialized;
 
 static const struct file_operations rattan_vnic_fops;
@@ -129,15 +350,16 @@ static netdev_tx_t rattan_vnic_start_xmit(struct sk_buff *skb, struct net_device
 static bool fill_ring_pop(struct rattan_fill_ring *fill, u64 *addr);
 static bool rx_ring_has_space(struct rattan_rx_ring *rx);
 static int rx_ring_push(struct rattan_rx_ring *rx, struct rattan_desc *desc);
-static bool comp_ring_push(struct rattan_comp_ring *comp, u64 addr);
-static bool comp_ring_has_space(struct rattan_comp_ring *comp);
+static u32 comp_ring_push_many(struct rattan_comp_ring *comp, const u64 *addrs, u32 n);
+static u32 comp_ring_free(struct rattan_comp_ring *comp);
 static bool comp_ring_pop(struct rattan_comp_ring *comp, u64 *addr);
-static bool release_token(u64 token);
-static bool rattan_recycle_drop_token(struct rattan_drop_ring *drop);
-static bool try_get_free_addr(struct rattan_queue *queue, struct rattan_rings *rings, u64 *addr);
+static bool release_token(struct rattan_umem *umem, u64 token);
+static bool rattan_recycle_drop_token(struct rattan_umem *umem, struct rattan_drop_ring *drop);
+static bool try_get_free_addr(struct rattan_queue *queue, struct rattan_rings *rings,
+                              struct rattan_umem *umem, u64 *addr,
+                              struct rattan_xmit_trace *tr);
 static bool tx_ring_peek(struct rattan_tx_ring *tx, struct rattan_desc *desc);
 static void tx_ring_advance(struct rattan_tx_ring *tx);
-static void rattan_add_skb_entry(struct skb_entry *entry);
 static int rattan_napi_poll(struct napi_struct *napi, int budget);
 static enum hrtimer_restart rattan_rx_timer_cb(struct hrtimer *timer);
 static struct rattan_queue *rattan_get_queue(struct rattan_vnic_ctx *ctx, u32 qid);
@@ -145,20 +367,43 @@ static struct rattan_queue *rattan_get_xmit_queue(struct rattan_vnic_ctx *ctx, s
 static struct rattan_rings *rattan_get_rings(struct rattan_queue *queue);
 static void rattan_put_rings(struct rattan_rings *rings);
 static bool rattan_complete_chunk(struct rattan_queue *queue, struct rattan_rings *rings, u64 addr);
-static void rattan_release_entry(struct skb_entry *entry, struct rattan_queue *queue);
 static void rattan_debug_dump_queue_stats(struct rattan_queue *queue);
+static void rattan_umem_drain(struct rattan_umem *umem);
+static u64 rattan_slot_insert(struct rattan_umem *umem, u32 idx, struct sk_buff *skb,
+                              struct rattan_rings *rings, u16 qid);
 
-/* Helper to get bucket for a token */
-static inline struct skb_bucket *token_to_bucket(u64 token) {
-    return &token_table[hash_64(token, SKB_HASH_BITS)];
+/*
+ * Is addr (a UMEM offset from userspace: FILL, TX descriptors, CLONE) the
+ * start of a chunk? umem->len is a multiple of chunk_size, so an aligned
+ * addr below len names a whole chunk. Never test "addr + chunk_size <= len":
+ * a u64 addr near 2^64 wraps that sum around to pass.
+ */
+static inline bool rattan_chunk_valid(struct rattan_umem *umem, u64 addr) {
+    return (addr & (u64)(umem->chunk_size - 1)) == 0 && addr < umem->len;
 }
 
 /* ========== Net Device Operations ========== */
 
+#ifndef RATTAN_CORE_TSTATS
+static int rattan_vnic_ndo_init(struct net_device *dev) {
+    dev->tstats = netdev_alloc_pcpu_stats(struct pcpu_sw_netstats);
+    return dev->tstats ? 0 : -ENOMEM;
+}
+
+static void rattan_vnic_ndo_uninit(struct net_device *dev) {
+    free_percpu(dev->tstats);
+}
+#endif
+
 static const struct net_device_ops rattan_netdev_ops = {
+#ifndef RATTAN_CORE_TSTATS
+    .ndo_init = rattan_vnic_ndo_init,
+    .ndo_uninit = rattan_vnic_ndo_uninit,
+#endif
     .ndo_open = rattan_vnic_open,
     .ndo_stop = rattan_vnic_stop,
     .ndo_start_xmit = rattan_vnic_start_xmit,
+    .ndo_get_stats64 = dev_get_tstats64,
 };
 
 static int rattan_vnic_open(struct net_device *dev) {
@@ -194,9 +439,9 @@ static enum hrtimer_restart rattan_rx_timer_cb(struct hrtimer *timer) {
     /* Wake up if there are pending packets */
     if (atomic_xchg(&queue->rx_pending, 0) > 0) {
         if (waitqueue_active(&queue->wait))
-            wake_up_interruptible_sync_poll(&queue->wait, EPOLLIN | EPOLLRDNORM);
+            wake_up_interruptible_poll(&queue->wait, EPOLLIN | EPOLLRDNORM);
         if (waitqueue_active(&ctx->wait))
-            wake_up_interruptible_sync_poll(&ctx->wait, EPOLLIN | EPOLLRDNORM);
+            wake_up_interruptible_poll(&ctx->wait, EPOLLIN | EPOLLRDNORM);
     }
 
     return HRTIMER_NORESTART;
@@ -209,21 +454,26 @@ static enum hrtimer_restart rattan_rx_timer_cb(struct hrtimer *timer) {
  * - If batch threshold reached, wake immediately
  * - Otherwise, arm timer to wake after timeout (if not already armed)
  */
-static void rattan_rx_notify(struct rattan_queue *queue) {
+static void rattan_rx_notify(struct rattan_queue *queue, struct rattan_xmit_trace *tr) {
     struct rattan_vnic_ctx *ctx = queue->ctx;
     int pending;
 
-    atomic64_inc(&queue->dbg_rx_notify);
+    RATTAN_DBG_INC(queue, rx_notify);
     pending = atomic_inc_return(&queue->rx_pending);
+
+    if (tr)
+        tr->notify_path = pending >= RATTAN_RX_BATCH_SIZE ? RATTAN_NOTIFY_WAKE
+                          : pending == 1                 ? RATTAN_NOTIFY_ARM
+                                                         : RATTAN_NOTIFY_MID;
 
     if (pending >= RATTAN_RX_BATCH_SIZE) {
         /* Batch full - wake immediately */
         atomic_set(&queue->rx_pending, 0);
         hrtimer_try_to_cancel(&queue->rx_timer);
         if (waitqueue_active(&queue->wait))
-            wake_up_interruptible_sync_poll(&queue->wait, EPOLLIN | EPOLLRDNORM);
+            wake_up_interruptible_poll(&queue->wait, EPOLLIN | EPOLLRDNORM);
         if (waitqueue_active(&ctx->wait))
-            wake_up_interruptible_sync_poll(&ctx->wait, EPOLLIN | EPOLLRDNORM);
+            wake_up_interruptible_poll(&ctx->wait, EPOLLIN | EPOLLRDNORM);
     } else if (pending == 1) {
         /* First packet in new batch - arm timer */
         hrtimer_start(&queue->rx_timer, ns_to_ktime(RATTAN_RX_TIMEOUT_NS), HRTIMER_MODE_REL_SOFT);
@@ -238,86 +488,95 @@ static void rattan_rx_notify(struct rattan_queue *queue) {
  *   0: success
  */
 static int rattan_xmit_one(struct sk_buff *skb, struct net_device *dev, struct rattan_queue *queue,
-                           struct rattan_rings *rings, struct rattan_umem *umem) {
-    struct skb_entry *entry;
+                           struct rattan_rings *rings, struct rattan_umem *umem,
+                           struct rattan_xmit_trace *tr) {
     struct rattan_desc desc;
     u64 chunk_addr;
+    u64 token;
     void *chunk_ptr;
     u32 copy_len;
+    u32 pkt_len;
 
     /* Check RX ring has space */
     if (!rx_ring_has_space(rings->rx)) {
-        atomic64_inc(&queue->dbg_xmit_rx_full);
+        RATTAN_DBG_INC(queue, xmit_rx_full);
         pr_warn_ratelimited("rattan%d:q%u xmit blocked: RX ring full\n", queue->ctx->dev_id,
                             queue->qid);
         return -ENOSPC;
     }
 
-    /* Pre-allocate SKB tracking entry */
-    entry = kmem_cache_alloc(skb_entry_cache, GFP_ATOMIC);
-    if (!entry) {
-        atomic64_inc(&queue->dbg_xmit_nomem);
-        pr_warn_ratelimited("rattan%d:q%u xmit blocked: skb_entry alloc failed\n",
-                            queue->ctx->dev_id, queue->qid);
-        return -ENOMEM;
-    }
-
     /* Get chunk from COMP or FILL ring */
-    if (!try_get_free_addr(queue, rings, &chunk_addr)) {
-        atomic64_inc(&queue->dbg_xmit_fill_empty);
+    if (!try_get_free_addr(queue, rings, umem, &chunk_addr, tr)) {
+        RATTAN_DBG_INC(queue, xmit_fill_empty);
         pr_warn_ratelimited("rattan%d:q%u xmit blocked: no chunk available\n", queue->ctx->dev_id,
                             queue->qid);
-        kmem_cache_free(skb_entry_cache, entry);
         return -ENOBUFS;
     }
+    XT(tr, XT_CHUNK);
 
     /* Validate chunk address */
-    if (chunk_addr % umem->chunk_size != 0 || chunk_addr + umem->chunk_size > umem->len) {
-        atomic64_inc(&queue->dbg_xmit_invalid_addr);
+    if (!rattan_chunk_valid(umem, chunk_addr)) {
+        RATTAN_DBG_INC(queue, xmit_invalid_addr);
         pr_warn_ratelimited("rattan%d:q%u invalid chunk addr 0x%llx\n", queue->ctx->dev_id,
                             queue->qid, chunk_addr);
-        kmem_cache_free(skb_entry_cache, entry);
         return -EINVAL;
     }
 
-    /* Copy header to UMEM chunk */
-    copy_len = min_t(u32, skb->len, RATTAN_HEADER_SIZE);
-    chunk_ptr = (u8 *)umem->mapped + chunk_addr + umem->headroom;
-    skb_copy_bits(skb, 0, chunk_ptr, copy_len);
+    /*
+     * Copy header to UMEM chunk. RATTAN_HEADER_SIZE is 0 by design; the
+     * guard lets the compiler drop the (out-of-line) copy entirely.
+     */
+    copy_len = 0;
+    if (RATTAN_HEADER_SIZE) {
+        copy_len = min_t(u32, skb->len, RATTAN_HEADER_SIZE);
+        chunk_ptr = (u8 *)umem->mapped + chunk_addr + umem->headroom;
+        skb_copy_bits(skb, 0, chunk_ptr, copy_len);
+    }
+    XT(tr, XT_ENTRY);
 
-    /* Generate unique token and setup entry */
-    entry->token = atomic64_inc_return(&next_token);
-    entry->skb = skb;
-    entry->timestamp = ktime_get();
-    entry->chunk_addr = chunk_addr;
-    entry->has_chunk = true;
-    entry->qid = queue->qid;
-    entry->rings = rings;
-    refcount_inc(&rings->refcount);
-
-    /* Add to token table */
-    rattan_add_skb_entry(entry);
-
-    /* Build descriptor for userspace */
-    desc.addr = chunk_addr;
-    desc.len = copy_len;
-    desc.options = skb->len & 0xffff;
-    desc.token = entry->token;
-    desc.timestamp = ktime_to_ns(entry->timestamp);
-
-    rx_ring_push(rings->rx, &desc);
-    atomic64_inc(&queue->dbg_xmit_ok);
-
-    dev->stats.tx_packets++;
-    dev->stats.tx_bytes += skb->len;
-
-    /* Orphan the skb, or it will still occupy the TSQ credit
+    /*
+     * Finish with the SKB *before* it becomes reachable through a token.
+     *
+     * Once the slot is LIVE, whoever presents the token (normally NAPI on
+     * another CPU, after userspace hands it back via the TX ring) may pass
+     * the SKB to netif_receive_skb(), after which the stack owns it and may
+     * free it. Any access to skb after the insert races with that and can be
+     * a use-after-free.
+     *
+     * Orphan the skb, or it will still occupy the TSQ credit
      * on the sender side.
      *
      * Copied from https://elixir.bootlin.com/linux/v6.12.74/source/drivers/net/tun.c#L1121-L1126
      */
+    pkt_len = skb->len;
     skb_orphan(skb);
     nf_reset_ct(skb);
+    XT(tr, XT_ORPHAN);
+
+    /* Bind the SKB to the chunk; the slot owns this rings reference */
+    refcount_inc(&rings->refcount);
+    token = rattan_slot_insert(umem, chunk_addr >> umem->chunk_shift, skb, rings, queue->qid);
+    if (!token) {
+        rattan_put_rings(rings);
+        RATTAN_DBG_INC(queue, xmit_invalid_addr);
+        pr_warn_ratelimited("rattan%d:q%u chunk 0x%llx is still bound to a live token\n",
+                            queue->ctx->dev_id, queue->qid, chunk_addr);
+        return -EBUSY;
+    }
+    XT(tr, XT_HASH);
+
+    /* Build descriptor for userspace */
+    desc.addr = chunk_addr;
+    desc.len = copy_len;
+    desc.options = pkt_len & 0xffff;
+    desc.token = token;
+    desc.timestamp = ktime_get_ns();
+
+    dev_sw_netstats_tx_add(dev, 1, pkt_len);
+
+    rx_ring_push(rings->rx, &desc);
+    RATTAN_DBG_INC(queue, xmit_ok);
+    XT(tr, XT_PUSH);
 
     return 0;
 }
@@ -325,14 +584,20 @@ static int rattan_xmit_one(struct sk_buff *skb, struct net_device *dev, struct r
 static netdev_tx_t rattan_vnic_start_xmit(struct sk_buff *skb, struct net_device *dev) {
     struct rattan_vnic_ctx *ctx = netdev_priv(dev);
     struct rattan_queue *queue = NULL;
-    struct rattan_rings *rings = NULL;
+    struct rattan_rings *rings;
     struct rattan_umem *umem;
     struct sk_buff *segs, *next;
+    struct rattan_xmit_trace trace;
+    struct rattan_xmit_trace *tr = NULL;
     int ret;
     bool wake = false;
 
-    u64 start_timestamp = ktime_to_ns(ktime_get());
-    u64 end_timestamp;
+    if (slow_tx_ns) {
+        memset(&trace, 0, sizeof(trace));
+        tr = &trace;
+        tr->irqs_start = kstat_this_cpu->irqs_sum;
+        tr->t[XT_START] = local_clock();
+    }
 
     rcu_read_lock();
 
@@ -349,10 +614,16 @@ static netdev_tx_t rattan_vnic_start_xmit(struct sk_buff *skb, struct net_device
     if (!queue)
         goto drop;
 
-    rings = rattan_get_rings(queue);
+    /*
+     * No reference on rings here: we are inside rcu_read_lock(), and
+     * fop_release unpublishes the rings and waits for RCU before dropping
+     * the queue's own reference. Each slot takes its own reference below.
+     */
+    rings = rcu_dereference(queue->rings);
     umem = rcu_dereference(ctx->umem);
     if (!rings || !umem)
         goto drop;
+    XT(tr, XT_RESOLVE);
 
     /*
      * Handle GSO packets: segment them into individual MTU-sized SKBs.
@@ -363,7 +634,7 @@ static netdev_tx_t rattan_vnic_start_xmit(struct sk_buff *skb, struct net_device
         segs = skb_gso_segment(skb, 0);
         if (IS_ERR_OR_NULL(segs)) {
             dev_kfree_skb_any(skb);
-            dev->stats.tx_dropped++;
+            rattan_tx_dropped_inc(dev);
             goto out;
         }
 
@@ -375,16 +646,18 @@ static netdev_tx_t rattan_vnic_start_xmit(struct sk_buff *skb, struct net_device
             next = segs->next;
             segs->next = NULL;
 
-            ret = rattan_xmit_one(segs, dev, queue, rings, umem);
+            ret = rattan_xmit_one(segs, dev, queue, rings, umem, tr);
+            if (tr)
+                tr->nsegs++;
             if (ret < 0) {
                 /* Drop this and remaining segments */
                 dev_kfree_skb_any(segs);
-                dev->stats.tx_dropped++;
+                rattan_tx_dropped_inc(dev);
                 while (next) {
                     segs = next;
                     next = segs->next;
                     dev_kfree_skb_any(segs);
-                    dev->stats.tx_dropped++;
+                    rattan_tx_dropped_inc(dev);
                 }
                 goto out;
             }
@@ -393,39 +666,33 @@ static netdev_tx_t rattan_vnic_start_xmit(struct sk_buff *skb, struct net_device
         }
     } else {
         /* Non-GSO packet: process directly */
-        ret = rattan_xmit_one(skb, dev, queue, rings, umem);
+        ret = rattan_xmit_one(skb, dev, queue, rings, umem, tr);
+        if (tr)
+            tr->nsegs = 1;
         if (ret < 0) {
             dev_kfree_skb_any(skb);
-            dev->stats.tx_dropped++;
+            rattan_tx_dropped_inc(dev);
             goto out;
         }
         wake = true;
     }
 
 out:
-    if (rings)
-        rattan_put_rings(rings);
     rcu_read_unlock();
-    if (wake)
-        rattan_rx_notify(queue);
-
-    end_timestamp = ktime_to_ns(ktime_get());
-    if (end_timestamp - start_timestamp > 100000) { // 0.1 ms
-        pr_warn_ratelimited("Slow tx on normal path: %lld ns", end_timestamp - start_timestamp);
+    if (wake) {
+        rattan_rx_notify(queue, tr);
+        XT(tr, XT_NOTIFY);
     }
+
+    rattan_report_slow_tx(tr, queue, "xmit");
     return NETDEV_TX_OK;
 
 drop:
-    if (rings)
-        rattan_put_rings(rings);
     rcu_read_unlock();
     dev_kfree_skb_any(skb);
-    dev->stats.tx_dropped++;
+    rattan_tx_dropped_inc(dev);
 
-    end_timestamp = ktime_to_ns(ktime_get());
-    if (end_timestamp - start_timestamp > 100000) { // 0.1 ms
-        pr_warn_ratelimited("Slow tx on drop path: %lld ns", end_timestamp - start_timestamp);
-    }
+    rattan_report_slow_tx(tr, queue, "drop");
     return NETDEV_TX_OK;
 }
 
@@ -436,6 +703,10 @@ static void rattan_vnic_setup(struct net_device *dev) {
     ether_setup(dev);
 
     dev->netdev_ops = &rattan_netdev_ops;
+#ifdef RATTAN_CORE_TSTATS
+    /* Per-cpu tx/rx packet and byte counters, allocated by the core */
+    dev->pcpu_stat_type = NETDEV_PCPU_STAT_TSTATS;
+#endif
 
     /* Virtual device flags */
     dev->flags &= ~IFF_MULTICAST;
@@ -477,6 +748,13 @@ static void rattan_put_umem(struct rattan_umem *umem) {
         return; /* Still in use by other devices */
 
     /* Last user - actually free the UMEM */
+    mutex_lock(&rattan_umems_lock);
+    list_del(&umem->node);
+    mutex_unlock(&rattan_umems_lock);
+
+    rattan_umem_drain(umem);
+    vfree(umem->pending);
+
     if (umem->mapped)
         vunmap(umem->mapped);
 
@@ -526,6 +804,8 @@ static void rattan_cleanup_rings(struct rattan_rings *rings) {
     if (!rings)
         return;
 
+    might_sleep();
+
     if (rings->mapped)
         vunmap(rings->mapped);
 
@@ -538,20 +818,32 @@ static void rattan_cleanup_rings(struct rattan_rings *rings) {
     kfree(rings);
 }
 
+static void rattan_cleanup_rings_work(struct work_struct *work) {
+    rattan_cleanup_rings(container_of(work, struct rattan_rings, cleanup_work));
+}
+
+/*
+ * Drop a reference on rings. Safe from any context: the last put only queues
+ * the cleanup, which sleeps, to process context.
+ */
 static void rattan_put_rings(struct rattan_rings *rings) {
     if (!rings)
         return;
 
     if (refcount_dec_and_test(&rings->refcount))
-        rattan_cleanup_rings(rings);
+        queue_work(rattan_cleanup_wq, &rings->cleanup_work);
 }
 
-static bool rattan_complete_chunk(struct rattan_queue *queue, struct rattan_rings *rings,
-                                  u64 addr) {
-    bool ok;
+/*
+ * Push n chunk addresses to rings' COMP ring under one lock and one producer
+ * update. Returns how many fit; the rest are dropped (warned and counted).
+ */
+static u32 rattan_complete_chunks(struct rattan_queue *queue, struct rattan_rings *rings,
+                                  const u64 *addrs, u32 n) {
+    u32 pushed;
 
-    if (!rings)
-        return false;
+    if (!rings || !n)
+        return 0;
     /*
      * Concurrency model:
      *
@@ -586,37 +878,126 @@ static bool rattan_complete_chunk(struct rattan_queue *queue, struct rattan_ring
      */
 
     spin_lock_bh(&rings->comp_lock);
-    ok = comp_ring_push(rings->comp, addr);
+    pushed = comp_ring_push_many(rings->comp, addrs, n);
     spin_unlock_bh(&rings->comp_lock);
 
     if (queue) {
-        if (ok)
-            atomic64_inc(&queue->dbg_comp_ok);
-        else
-            atomic64_inc(&queue->dbg_comp_full);
+        RATTAN_DBG_ADD(queue, comp_ok, pushed);
+        if (pushed < n)
+            RATTAN_DBG_ADD(queue, comp_full, n - pushed);
     }
 
-    if (!ok)
-        pr_warn_ratelimited("rattan%d:q%u completion ring full, dropping chunk 0x%llx\n",
-                            queue ? queue->ctx->dev_id : -1, queue ? queue->qid : 0, addr);
+    if (pushed < n)
+        pr_warn_ratelimited("rattan%d:q%u completion ring full, dropping %u chunks from 0x%llx\n",
+                            queue ? queue->ctx->dev_id : -1, queue ? queue->qid : 0, n - pushed,
+                            addrs[pushed]);
 
-    return ok;
+    return pushed;
 }
 
-static void rattan_release_entry(struct skb_entry *entry, struct rattan_queue *queue) {
-    if (!entry)
-        return;
+static bool rattan_complete_chunk(struct rattan_queue *queue, struct rattan_rings *rings,
+                                  u64 addr) {
+    return rattan_complete_chunks(queue, rings, &addr, 1) == 1;
+}
 
-    if (entry->has_chunk && entry->rings)
-        rattan_complete_chunk(queue, entry->rings, entry->chunk_addr);
+/*
+ * Per-NAPI-poll completion batching.
+ *
+ * Every forwarded packet returns its chunk to the COMP ring of the queue that
+ * supplied it (the owner, usually another device's queue on another CPU), and
+ * drops the owner reference its slot held. Doing that per packet bounces the
+ * owner's comp_lock/refcount line and COMP producer line between cores on
+ * every packet. Instead, NAPI collects addresses per destination rings here
+ * and pushes each group with one lock, one producer store and one
+ * refcount_sub.
+ *
+ * Kept small: this lives on the NAPI stack frame, underneath
+ * netif_receive_skb() and everything the stack does from there.
+ */
+#define RATTAN_COMP_GROUPS 2
+#define RATTAN_COMP_BATCH 32
 
-    if (entry->rings)
-        rattan_put_rings(entry->rings);
+struct rattan_comp_batch {
+    struct rattan_queue *queue; /* For statistics */
+    struct {
+        struct rattan_rings *rings;
+        u32 n;    /* Addresses in addrs[] */
+        u32 refs; /* Slot references on rings to drop at flush */
+        u64 addrs[RATTAN_COMP_BATCH];
+    } g[RATTAN_COMP_GROUPS];
+};
 
-    if (entry->skb)
-        dev_kfree_skb_any(entry->skb);
+static void rattan_comp_batch_init(struct rattan_comp_batch *b, struct rattan_queue *queue) {
+    int i;
 
-    kmem_cache_free(skb_entry_cache, entry);
+    b->queue = queue;
+    for (i = 0; i < RATTAN_COMP_GROUPS; i++) {
+        b->g[i].rings = NULL;
+        b->g[i].n = 0;
+        b->g[i].refs = 0;
+    }
+}
+
+static void rattan_comp_batch_flush_group(struct rattan_comp_batch *b, int i) {
+    struct rattan_rings *rings = b->g[i].rings;
+
+    rattan_complete_chunks(b->queue, rings, b->g[i].addrs, b->g[i].n);
+    if (b->g[i].refs && refcount_sub_and_test(b->g[i].refs, &rings->refcount))
+        queue_work(rattan_cleanup_wq, &rings->cleanup_work);
+
+    b->g[i].rings = NULL;
+    b->g[i].n = 0;
+    b->g[i].refs = 0;
+}
+
+static void rattan_comp_batch_flush(struct rattan_comp_batch *b) {
+    int i;
+
+    for (i = 0; i < RATTAN_COMP_GROUPS; i++)
+        if (b->g[i].rings)
+            rattan_comp_batch_flush_group(b, i);
+}
+
+/* Addresses queued for rings but not yet on its COMP ring */
+static u32 rattan_comp_batch_pending(struct rattan_comp_batch *b, struct rattan_rings *rings) {
+    int i;
+
+    for (i = 0; i < RATTAN_COMP_GROUPS; i++)
+        if (b->g[i].rings == rings)
+            return b->g[i].n;
+    return 0;
+}
+
+/*
+ * Queue addr for rings' COMP ring. With put_ref, the batch also takes over
+ * one reference on rings (the one a slot held) and drops it at flush; the
+ * caller must not touch rings after that unless it holds its own.
+ */
+static void rattan_comp_batch_add(struct rattan_comp_batch *b, struct rattan_rings *rings,
+                                  u64 addr, bool put_ref) {
+    int i, slot = -1;
+
+    for (i = 0; i < RATTAN_COMP_GROUPS; i++) {
+        if (b->g[i].rings == rings) {
+            slot = i;
+            break;
+        }
+        if (!b->g[i].rings && slot < 0)
+            slot = i;
+    }
+
+    if (slot < 0) {
+        /* Every group holds other rings: evict the last one */
+        slot = RATTAN_COMP_GROUPS - 1;
+        rattan_comp_batch_flush_group(b, slot);
+    } else if (b->g[slot].n == RATTAN_COMP_BATCH) {
+        rattan_comp_batch_flush_group(b, slot);
+    }
+
+    b->g[slot].rings = rings;
+    b->g[slot].addrs[b->g[slot].n++] = addr;
+    if (put_ref)
+        b->g[slot].refs++;
 }
 
 /* ========== Ring Helper Functions ========== */
@@ -670,7 +1051,9 @@ static bool fill_ring_pop(struct rattan_fill_ring *fill, u64 *addr) {
  * The recycle ring is protected by rings->recycle_lock.
  * Returns true on success, false if both rings empty
  */
-static bool try_get_free_addr(struct rattan_queue *queue, struct rattan_rings *rings, u64 *addr) {
+static bool try_get_free_addr(struct rattan_queue *queue, struct rattan_rings *rings,
+                              struct rattan_umem *umem, u64 *addr,
+                              struct rattan_xmit_trace *tr) {
     bool ok;
 
     // As long as we only pop in `rattan_xmit_one`, we do not need to lock
@@ -678,8 +1061,10 @@ static bool try_get_free_addr(struct rattan_queue *queue, struct rattan_rings *r
     ok = comp_ring_pop(rings->comp, addr);
     // spin_unlock_bh(&rings->comp_lock);
 
-    if (rattan_recycle_drop_token(rings->drop)) {
-        atomic64_inc(&queue->dbg_recycle_token);
+    if (rattan_recycle_drop_token(umem, rings->drop)) {
+        RATTAN_DBG_INC(queue, recycle_token);
+        if (tr)
+            tr->recycled = true;
     }
 
     if (ok)
@@ -726,37 +1111,37 @@ static int rx_ring_push(struct rattan_rx_ring *rx, struct rattan_desc *desc) {
 }
 
 /*
- * Check if COMP ring has space for at least one entry
+ * Free entries in the COMP ring
  * Used for backpressure - check before consuming from TX ring
  */
-static bool comp_ring_has_space(struct rattan_comp_ring *comp) {
+static u32 comp_ring_free(struct rattan_comp_ring *comp) {
     u32 cons, prod;
 
     prod = READ_ONCE(comp->ring.producer);
     cons = READ_ONCE(comp->ring.consumer);
 
-    return (prod - cons) < RATTAN_RING_SIZE;
+    return RATTAN_RING_SIZE - (prod - cons);
 }
 
 /*
- * Push chunk address to COMP ring (kernel is producer)
- * Returns true on success, false if ring full
+ * Push up to n chunk addresses to the COMP ring with a single producer
+ * update. Returns how many fit.
  */
-static bool comp_ring_push(struct rattan_comp_ring *comp, u64 addr) {
-    u32 cons, prod;
+static u32 comp_ring_push_many(struct rattan_comp_ring *comp, const u64 *addrs, u32 n) {
+    u32 cons, prod, i;
 
     prod = READ_ONCE(comp->ring.producer);
     // Make sure that we see the updated value
     cons = smp_load_acquire(&comp->ring.consumer);
 
-    if ((prod - cons) >= RATTAN_RING_SIZE)
-        return false; /* Ring full */
+    n = min_t(u32, n, RATTAN_RING_SIZE - (prod - cons));
+    for (i = 0; i < n; i++)
+        comp->addrs[(prod + i) & RATTAN_RING_MASK] = addrs[i];
 
-    comp->addrs[prod & RATTAN_RING_MASK] = addr;
+    if (n)
+        smp_store_release(&comp->ring.producer, prod + n);
 
-    smp_store_release(&comp->ring.producer, prod + 1);
-
-    return true;
+    return n;
 }
 
 /*
@@ -782,7 +1167,7 @@ static bool comp_ring_pop(struct rattan_comp_ring *comp, u64 *addr) {
 /*
  * Pop token from DROP ring, and release them.
  */
-static bool rattan_recycle_drop_token(struct rattan_drop_ring *drop) {
+static bool rattan_recycle_drop_token(struct rattan_umem *umem, struct rattan_drop_ring *drop) {
     u32 cons, prod;
     u64 token;
 
@@ -796,7 +1181,7 @@ static bool rattan_recycle_drop_token(struct rattan_drop_ring *drop) {
 
     smp_store_release(&drop->ring.consumer, cons + 1);
 
-    return release_token(token);
+    return release_token(umem, token);
 }
 
 /*
@@ -833,80 +1218,248 @@ static void tx_ring_advance(struct rattan_tx_ring *tx) {
 
 /* ========== Token/SKB Management ========== */
 
-/*
- * Find SKB entry by token in hash table
- * Caller must hold the bucket lock for this token
- */
-static struct skb_entry *rattan_find_skb_entry_locked(struct skb_bucket *bucket, u64 token) {
-    struct skb_entry *entry;
+static long rattan_pending_count(void) {
+    long sum = 0;
+    int cpu;
 
-    hlist_for_each_entry(entry, &bucket->head, node) {
-        if (entry->token == token)
-            return entry;
-    }
-    return NULL;
+    for_each_possible_cpu(cpu)
+        sum += per_cpu(rattan_pending_tokens, cpu);
+    return sum;
+}
+
+static inline u64 rattan_chunk_addr(struct rattan_umem *umem, u32 idx) {
+    return (u64)idx << umem->chunk_shift;
 }
 
 /*
- * Add SKB entry to token table
- * Handles locking and pending count increment
+ * The UMEM of a device, from an ioctl on its fd. ctx->umem only goes from NULL
+ * to a UMEM in ioctls and back to NULL in fop_release, which cannot run while
+ * an ioctl on the same file is in flight, so no RCU read section is needed.
  */
-static void rattan_add_skb_entry(struct skb_entry *entry) {
-    struct skb_bucket *bucket = token_to_bucket(entry->token);
-    unsigned long flags;
+static inline struct rattan_umem *rattan_ctx_umem(struct rattan_vnic_ctx *ctx) {
+    return rcu_dereference_check(ctx->umem, 1);
+}
 
-    spin_lock_irqsave(&bucket->lock, flags);
-    hlist_add_head(&entry->node, &bucket->head);
-    spin_unlock_irqrestore(&bucket->lock, flags);
-    atomic_inc(&pending_token_count);
+/*
+ * Bind skb to the (just obtained) chunk idx: FREE(g) -> BUSY(g) -> LIVE(g+1).
+ * The slot takes over the caller's reference on rings.
+ *
+ * Returns the new token, or 0 if the slot is not free, i.e. userspace handed
+ * out a chunk that is still bound to a live token.
+ */
+static u64 rattan_slot_insert(struct rattan_umem *umem, u32 idx, struct sk_buff *skb,
+                              struct rattan_rings *rings, u16 qid) {
+    struct rattan_pending *p;
+    u64 old;
+    u32 gen;
+
+    /* Callers validate the chunk first; this guards the array regardless */
+    if (WARN_ON_ONCE(idx >= umem->nr_chunks))
+        return 0;
+
+    p = &umem->pending[idx];
+    old = READ_ONCE(p->state);
+    if ((old & RATTAN_SLOT_TAG_MASK) != RATTAN_SLOT_FREE ||
+        cmpxchg(&p->state, old, old | RATTAN_SLOT_BUSY) != old)
+        return 0;
+
+    gen = RATTAN_SLOT_GEN(old) + 1;
+    if (unlikely(!gen))
+        gen = 1;
+
+    p->skb = skb;
+    p->rings = rings;
+    p->stamp = (u32)jiffies;
+    p->qid = qid;
+
+    /* Publish the fields together with LIVE */
+    smp_store_release(&p->state, RATTAN_SLOT_STATE(gen, RATTAN_SLOT_LIVE));
+    this_cpu_inc(rattan_pending_tokens);
+
+    return RATTAN_TOKEN(idx, gen);
+}
+
+/*
+ * Claim the slot of a live token: LIVE(gen) -> BUSY(gen). The one cmpxchg
+ * checks liveness and generation together, so a stale, replayed or
+ * concurrently claimed token misses. Returns NULL on a miss.
+ *
+ * The caller must end the claim with rattan_slot_take() or
+ * rattan_slot_unclaim() without sleeping; process-context callers disable BH
+ * so that NAPI on the same CPU never finds the slot BUSY for long.
+ */
+static struct rattan_pending *rattan_slot_claim(struct rattan_umem *umem, u64 token) {
+    u32 idx = RATTAN_TOKEN_IDX(token);
+    u32 gen = RATTAN_TOKEN_GEN(token);
+    u64 live = RATTAN_SLOT_STATE(gen, RATTAN_SLOT_LIVE);
+    struct rattan_pending *p;
+
+    if (unlikely(idx >= umem->nr_chunks))
+        return NULL;
+
+    p = &umem->pending[idx];
+    if (cmpxchg(&p->state, live, RATTAN_SLOT_STATE(gen, RATTAN_SLOT_BUSY)) != live)
+        return NULL;
+
+    return p;
+}
+
+/* BUSY(gen) -> LIVE(gen): hand a claimed slot back unchanged */
+static inline void rattan_slot_unclaim(struct rattan_pending *p, u64 token) {
+    smp_store_release(&p->state, RATTAN_SLOT_STATE(RATTAN_TOKEN_GEN(token), RATTAN_SLOT_LIVE));
+}
+
+/*
+ * BUSY(gen) -> FREE(gen): empty a claimed slot. The caller inherits the skb
+ * and the rings reference, and still owes the chunk a completion.
+ */
+static struct sk_buff *rattan_slot_take(struct rattan_pending *p, u64 token,
+                                        struct rattan_rings **rings) {
+    struct sk_buff *skb = p->skb;
+
+    *rings = p->rings;
+    p->skb = NULL;
+    p->rings = NULL;
+
+    /* The reads above must complete before the slot can be reused */
+    smp_store_release(&p->state, RATTAN_SLOT_STATE(RATTAN_TOKEN_GEN(token), RATTAN_SLOT_FREE));
+    this_cpu_dec(rattan_pending_tokens);
+
+    return skb;
+}
+
+/* Claim and empty a token's slot in one go. Returns NULL on a miss. */
+static struct sk_buff *rattan_token_take(struct rattan_umem *umem, u64 token,
+                                         struct rattan_rings **rings) {
+    struct rattan_pending *p = rattan_slot_claim(umem, token);
+
+    return p ? rattan_slot_take(p, token, rings) : NULL;
+}
+
+/*
+ * Finish releasing a taken token: return its chunk to the owning COMP ring and
+ * free the SKB.
+ */
+static void rattan_token_drop(struct rattan_umem *umem, u64 token, struct sk_buff *skb,
+                              struct rattan_rings *rings) {
+    /* The queue may have been released here, if the fd has been closed,
+     * since the pointer to the queue is used for statistics and debugging only,
+     * we pass NULL to avoid possible use-after-free.
+     */
+    rattan_complete_chunk(NULL, rings, rattan_chunk_addr(umem, RATTAN_TOKEN_IDX(token)));
+    rattan_put_rings(rings);
+    dev_kfree_skb_any(skb);
+}
+
+/*
+ * Release token - free the SKB associated with a token and return its chunk
+ * to the owning COMP ring. Softirq context (the DROP ring); process context
+ * uses rattan_release_token_process().
+ */
+static bool release_token(struct rattan_umem *umem, u64 token) {
+    struct rattan_rings *rings;
+    struct sk_buff *skb;
+
+    skb = rattan_token_take(umem, token, &rings);
+    if (!skb)
+        return false;
+
+    rattan_token_drop(umem, token, skb, rings);
+    return true;
+}
+
+/*
+ * release_token() for process context. BH is disabled only while the slot is
+ * claimed, so NAPI on this CPU never finds it BUSY for longer than that.
+ */
+static bool rattan_release_token_process(struct rattan_umem *umem, u64 token) {
+    struct rattan_rings *rings;
+    struct sk_buff *skb;
+
+    local_bh_disable();
+    skb = rattan_token_take(umem, token, &rings);
+    local_bh_enable();
+    if (!skb)
+        return false;
+
+    rattan_token_drop(umem, token, skb, rings);
+    return true;
+}
+
+/*
+ * Free whatever is still pending on a UMEM that has no users left. Nothing
+ * can race with this: every device that used the UMEM has unpublished it and
+ * waited for RCU, and it is off rattan_umems so GC cannot see it. The chunks
+ * are not completed, since the UMEM itself is going away.
+ */
+static void rattan_umem_drain(struct rattan_umem *umem) {
+    u32 idx, leaked = 0;
+
+    for (idx = 0; idx < umem->nr_chunks; idx++) {
+        struct rattan_pending *p = &umem->pending[idx];
+
+        if ((p->state & RATTAN_SLOT_TAG_MASK) != RATTAN_SLOT_LIVE)
+            continue;
+
+        rattan_put_rings(p->rings);
+        dev_kfree_skb_any(p->skb);
+        this_cpu_dec(rattan_pending_tokens);
+        leaked++;
+    }
+
+    if (leaked)
+        pr_info("released %u pending SKBs with their UMEM\n", leaked);
 }
 
 /*
  * Read payload from tracked SKB
- * Note: ctx is unused now since tokens are global, but kept for API consistency
+ * The token resolves through this device's UMEM, so it must have been minted
+ * on a device sharing it.
  */
 static int rattan_read_payload(struct rattan_vnic_ctx *ctx,
                                struct rattan_payload_req __user *argp) {
     struct rattan_payload_req req;
     struct rattan_payload_resp resp;
-    struct skb_bucket *bucket;
-    struct skb_entry *entry;
+    struct rattan_umem *umem;
+    struct rattan_pending *p;
     struct sk_buff *skb;
-    unsigned long flags;
     void *kbuf;
     u32 copy_len;
     int err;
 
-    (void)ctx; /* Unused - tokens are global */
-
     if (copy_from_user(&req, argp, sizeof(req)))
         return -EFAULT;
 
-    bucket = token_to_bucket(req.token);
-    spin_lock_irqsave(&bucket->lock, flags);
-    entry = rattan_find_skb_entry_locked(bucket, req.token);
-    if (!entry) {
-        spin_unlock_irqrestore(&bucket->lock, flags);
+    umem = rattan_ctx_umem(ctx);
+    if (!umem)
+        return -ENOENT;
+
+    local_bh_disable();
+    p = rattan_slot_claim(umem, req.token);
+    if (!p) {
+        local_bh_enable();
         return -ENOENT;
     }
 
-    skb = entry->skb;
+    skb = p->skb;
     resp.total_len = skb->len;
 
     /* Calculate how much to copy */
     if (req.offset >= skb->len) {
+        rattan_slot_unclaim(p, req.token);
+        local_bh_enable();
         copy_len = 0;
         resp.len = 0;
-        spin_unlock_irqrestore(&bucket->lock, flags);
         goto write_resp;
     }
 
     copy_len = min_t(u32, req.len, skb->len - req.offset);
     resp.len = copy_len;
 
-    /* Take reference and release lock */
+    /* Take reference and give the slot back */
     skb_get(skb);
-    spin_unlock_irqrestore(&bucket->lock, flags);
+    rattan_slot_unclaim(p, req.token);
+    local_bh_enable();
 
     /* Allocate kernel buffer for copy */
     kbuf = kmalloc(copy_len, GFP_KERNEL);
@@ -941,115 +1494,104 @@ write_resp:
 }
 
 /*
- * Release token - free the SKB associated with a token
- */
-static inline bool release_token(u64 token) {
-    struct skb_bucket *bucket;
-    struct skb_entry *entry;
-    unsigned long flags;
-
-    bucket = token_to_bucket(token);
-    spin_lock_irqsave(&bucket->lock, flags);
-    entry = rattan_find_skb_entry_locked(bucket, token);
-    if (!entry) {
-        spin_unlock_irqrestore(&bucket->lock, flags);
-        return false;
-    }
-
-    /* Remove from hash table */
-    hlist_del(&entry->node);
-    spin_unlock_irqrestore(&bucket->lock, flags);
-    atomic_dec(&pending_token_count);
-
-    /* The queue may have been released here, if the fd has been closed,
-     * since the pointer to the queue is used for statistics and debugging only,
-     * we pass NULL to avoid possible use-after-free.
-     */
-    rattan_release_entry(entry, NULL);
-
-    return true;
-}
-
-/*
  * Release token, ioctl handler
  */
 static int rattan_release_token(struct rattan_vnic_ctx *ctx,
                                 struct rattan_release_req __user *argp) {
     struct rattan_release_req req;
-
-    (void)ctx; /* Unused - tokens are global */
+    struct rattan_umem *umem;
+    bool ok;
 
     if (copy_from_user(&req, argp, sizeof(req)))
         return -EFAULT;
 
-    if (!release_token(req.token))
+    umem = rattan_ctx_umem(ctx);
+    if (!umem)
         return -ENOENT;
 
-    return 0;
+    ok = rattan_release_token_process(umem, req.token);
+
+    return ok ? 0 : -ENOENT;
 }
 
 /*
- * Clone a token - create a new token with a cloned SKB
+ * Clone a token - bind a copy of its SKB to a chunk supplied by userspace
  */
 static int rattan_clone_token(struct rattan_vnic_ctx *ctx, struct rattan_clone_req __user *argp) {
     struct rattan_clone_req req;
     struct rattan_clone_resp resp;
-    struct skb_bucket *bucket;
-    struct skb_entry *entry, *new_entry;
-    struct sk_buff *new_skb;
-    unsigned long flags;
-
-    (void)ctx; /* Unused - tokens are global */
+    struct rattan_umem *umem;
+    struct rattan_queue *queue;
+    struct rattan_rings *rings, *old_rings;
+    struct rattan_pending *p;
+    struct sk_buff *new_skb, *old_skb;
+    u64 new_token;
+    int err;
 
     if (copy_from_user(&req, argp, sizeof(req)))
         return -EFAULT;
 
-    /* Allocate new entry first (outside lock) */
-    new_entry = kmem_cache_alloc(skb_entry_cache, GFP_KERNEL);
-    if (!new_entry)
-        return -ENOMEM;
+    umem = rattan_ctx_umem(ctx);
+    queue = rattan_get_queue(ctx, req.queue_id);
+    if (!umem || !queue)
+        return -EINVAL;
 
-    bucket = token_to_bucket(req.token);
-    spin_lock_irqsave(&bucket->lock, flags);
-    entry = rattan_find_skb_entry_locked(bucket, req.token);
-    if (!entry) {
-        spin_unlock_irqrestore(&bucket->lock, flags);
-        kmem_cache_free(skb_entry_cache, new_entry);
-        return -ENOENT;
+    if (!rattan_chunk_valid(umem, req.chunk_addr))
+        return -EINVAL;
+
+    /* The new slot owns this reference */
+    rcu_read_lock();
+    rings = rattan_get_rings(queue);
+    rcu_read_unlock();
+    if (!rings)
+        return -EINVAL;
+
+    local_bh_disable();
+    p = rattan_slot_claim(umem, req.token);
+    if (!p) {
+        err = -ENOENT;
+        goto out_unlock;
     }
 
     /* Copy the SKB (not clone - we need independent data for modifications) */
-    new_skb = skb_copy(entry->skb, GFP_ATOMIC);
+    new_skb = skb_copy(p->skb, GFP_ATOMIC);
+    rattan_slot_unclaim(p, req.token);
     if (!new_skb) {
-        spin_unlock_irqrestore(&bucket->lock, flags);
-        kmem_cache_free(skb_entry_cache, new_entry);
-        return -ENOMEM;
+        err = -ENOMEM;
+        goto out_unlock;
     }
 
-    /* Setup new entry - cloned tokens do not own the original RX chunk
-       Notice that the source bucket lock is held during this operation */
-    new_entry->token = atomic64_inc_return(&next_token);
-    new_entry->skb = new_skb;
-    new_entry->timestamp = entry->timestamp;
-    new_entry->chunk_addr = 0;
-    new_entry->has_chunk = false;
-    new_entry->qid = entry->qid;
-    new_entry->rings = NULL;
-
-    spin_unlock_irqrestore(&bucket->lock, flags);
-
-    /* Copy to userspace first - if this fails, no cleanup needed */
-    resp.new_token = new_entry->token;
-    if (copy_to_user(argp, &resp, sizeof(resp))) {
+    new_token = rattan_slot_insert(umem, req.chunk_addr >> umem->chunk_shift, new_skb, rings,
+                                   queue->qid);
+    if (!new_token) {
         kfree_skb(new_skb);
-        kmem_cache_free(skb_entry_cache, new_entry);
+        err = -EBUSY;
+        goto out_unlock;
+    }
+    local_bh_enable();
+
+    resp.new_token = new_token;
+    if (copy_to_user(argp, &resp, sizeof(resp))) {
+        /*
+         * Userspace never learns the token, so undo the insert. The chunk
+         * stays with userspace, which still owns it as far as it knows.
+         */
+        local_bh_disable();
+        old_skb = rattan_token_take(umem, new_token, &old_rings);
+        local_bh_enable();
+        if (old_skb) {
+            rattan_put_rings(old_rings);
+            kfree_skb(old_skb);
+        }
         return -EFAULT;
     }
 
-    /* Add to hash table */
-    rattan_add_skb_entry(new_entry);
-
     return 0;
+
+out_unlock:
+    local_bh_enable();
+    rattan_put_rings(rings);
+    return err;
 }
 
 static int rattan_device_id(struct rattan_vnic_ctx *ctx, void __user *argp) {
@@ -1067,13 +1609,17 @@ static int rattan_napi_poll(struct napi_struct *napi, int budget) {
     struct rattan_umem *umem;
     struct net_device *dev = ctx->netdev;
     struct rattan_desc desc;
-    struct skb_bucket *bucket;
-    struct skb_entry *entry;
-    unsigned long flags;
+    struct rattan_pending *p;
+    struct rattan_rings *owner;
+    struct sk_buff *skb;
+    u64 chunk_addr;
     int processed = 0;
     int pkt_len;
+    struct rattan_comp_batch comp;
+    struct rattan_napi_trace trace;
+    struct rattan_napi_trace *tr = NULL;
 
-    atomic64_inc(&queue->dbg_napi_polls);
+    RATTAN_DBG_INC(queue, napi_polls);
     rattan_debug_dump_queue_stats(queue);
 
     rcu_read_lock();
@@ -1090,10 +1636,20 @@ static int rattan_napi_poll(struct napi_struct *napi, int budget) {
         goto complete;
     }
 
+    rattan_comp_batch_init(&comp, queue);
+
     while (processed < budget) {
-        /* Backpressure: queue-local COMP ring must have space */
-        if (!comp_ring_has_space(rings->comp)) {
-            atomic64_inc(&queue->dbg_napi_comp_full);
+        if (slow_rx_ns) {
+            tr = &trace;
+            rattan_napi_trace_begin(tr);
+        }
+
+        /*
+         * Backpressure: queue-local COMP ring must have space, counting what
+         * this poll has batched for it but not pushed yet.
+         */
+        if (comp_ring_free(rings->comp) <= rattan_comp_batch_pending(&comp, rings)) {
+            RATTAN_DBG_INC(queue, napi_comp_full);
             pr_warn_ratelimited("rattan%d:q%u NAPI blocked: COMP ring full\n", ctx->dev_id,
                                 queue->qid);
             break;
@@ -1101,78 +1657,99 @@ static int rattan_napi_poll(struct napi_struct *napi, int budget) {
 
         /* Peek at next TX descriptor */
         if (!tx_ring_peek(rings->tx, &desc)) {
-            atomic64_inc(&queue->dbg_napi_tx_empty);
+            RATTAN_DBG_INC(queue, napi_tx_empty);
             break; /* TX ring empty */
         }
+        NT(tr, NT_PEEK);
 
-        /* Look up token */
-        bucket = token_to_bucket(desc.token);
-        spin_lock_irqsave(&bucket->lock, flags);
-        entry = rattan_find_skb_entry_locked(bucket, desc.token);
-        if (!entry) {
-            spin_unlock_irqrestore(&bucket->lock, flags);
+        /* Claim the token's pending slot */
+        p = rattan_slot_claim(umem, desc.token);
+        if (!p) {
             /* Token not found - consume descriptor, return TX chunk */
             tx_ring_advance(rings->tx);
-            atomic64_inc(&queue->dbg_napi_token_miss);
-            rattan_complete_chunk(queue, rings, desc.addr);
+            RATTAN_DBG_INC(queue, napi_token_miss);
+            rattan_comp_batch_add(&comp, rings, desc.addr, false);
             pr_warn_ratelimited("rattan%d:q%u NAPI token miss: 0x%llx\n", ctx->dev_id, queue->qid,
                                 desc.token);
             processed++;
+            NT(tr, NT_RELEASE);
+            rattan_report_slow_rx(tr, queue, "miss");
             continue;
         }
+        NT(tr, NT_LOOKUP);
 
-        /* Consume descriptor and remove from hash */
+        /* Consume descriptor and empty the slot */
         tx_ring_advance(rings->tx);
-        hlist_del(&entry->node);
-        spin_unlock_irqrestore(&bucket->lock, flags);
-        atomic_dec(&pending_token_count);
+        skb = rattan_slot_take(p, desc.token, &owner);
+        NT(tr, NT_UNLINK);
 
-        /* Copy modified header back to SKB */
-        if (desc.len > 0) {
-            if (desc.addr % umem->chunk_size == 0 && desc.addr + umem->chunk_size <= umem->len &&
+        /*
+         * Copy modified header back to SKB. Compiled out while
+         * RATTAN_HEADER_SIZE is 0, and not correct as it stands. Before
+         * raising it:
+         *   - skb_ensure_writable(skb, copy_len) first: TCP transmits clones,
+         *     so writing in place corrupts the sender's retransmit copy (and
+         *     with sendfile, page-cache pages);
+         *   - settle a checksum contract (userspace patches incrementally,
+         *     RFC 1624, or the kernel fixes them up here);
+         *   - the header size is part of the ABI: it is overwritten in place
+         *     at offset 0.
+         */
+        if (RATTAN_HEADER_SIZE && desc.len > 0) {
+            if (rattan_chunk_valid(umem, desc.addr) &&
                 umem->headroom + desc.len <= umem->chunk_size) {
                 void *header_ptr = (u8 *)umem->mapped + desc.addr + umem->headroom;
-                u32 copy_len = min3(desc.len, entry->skb->len, (u32)RATTAN_HEADER_SIZE);
-                skb_store_bits(entry->skb, 0, header_ptr, copy_len);
+                u32 copy_len = min3(desc.len, skb->len, (u32)RATTAN_HEADER_SIZE);
+                skb_store_bits(skb, 0, header_ptr, copy_len);
             }
         }
 
         /* Record length and prepare SKB for injection */
-        pkt_len = entry->skb->len;
-        entry->skb->dev = dev;
-        skb_record_rx_queue(entry->skb, queue->qid);
-        entry->skb->protocol = eth_type_trans(entry->skb, dev);
+        pkt_len = skb->len;
+        skb->dev = dev;
+        skb_record_rx_queue(skb, queue->qid);
+        skb->protocol = eth_type_trans(skb, dev);
+        NT(tr, NT_PREP);
 
         /*
          * Use netif_receive_skb() instead of netif_rx() since we're
          * already in NAPI/softirq context on the target CPU.
          */
-        if (netif_receive_skb(entry->skb) == NET_RX_SUCCESS) {
-            atomic64_inc(&queue->dbg_napi_rx_ok);
-            dev->stats.rx_packets++;
-            dev->stats.rx_bytes += pkt_len;
+        if (netif_receive_skb(skb) == NET_RX_SUCCESS) {
+            RATTAN_DBG_INC(queue, napi_rx_ok);
+            dev_sw_netstats_rx_add(dev, pkt_len);
         } else {
-            atomic64_inc(&queue->dbg_napi_rx_drop);
-            dev->stats.rx_dropped++;
+            RATTAN_DBG_INC(queue, napi_rx_drop);
+            rattan_rx_dropped_inc(dev);
         }
+        NT(tr, NT_STACK);
 
-        entry->skb = NULL;
-        if (!entry->has_chunk || desc.addr != entry->chunk_addr)
-            rattan_complete_chunk(queue, rings, desc.addr);
-        rattan_release_entry(entry, queue);
+        /*
+         * The token names the original chunk; desc.addr is whichever chunk
+         * userspace sent back, which may differ. Both go home.
+         */
+        chunk_addr = rattan_chunk_addr(umem, RATTAN_TOKEN_IDX(desc.token));
+        if (desc.addr != chunk_addr)
+            rattan_comp_batch_add(&comp, rings, desc.addr, false);
+        /* Hands the slot's owner reference to the batch */
+        rattan_comp_batch_add(&comp, owner, chunk_addr, true);
         processed++;
+        NT(tr, NT_RELEASE);
+        rattan_report_slow_rx(tr, queue, "ok");
     }
 
+    /* Before rcu_read_unlock(): groups for rings hold no reference */
+    rattan_comp_batch_flush(&comp);
     rcu_read_unlock();
 
     if (processed < budget) {
     complete:
         /* All work done - exit polling mode */
-        atomic64_inc(&queue->dbg_napi_complete);
+        RATTAN_DBG_INC(queue, napi_complete);
         napi_complete_done(napi, processed);
         atomic_set(&queue->napi_scheduled, 0);
     } else {
-        atomic64_inc(&queue->dbg_napi_budget_stop);
+        RATTAN_DBG_INC(queue, napi_budget_stop);
     }
 
     return processed;
@@ -1202,7 +1779,7 @@ static int rattan_kick_rx(struct rattan_queue *queue) {
     if (!queue || !queue->ctx->started)
         return -EINVAL;
 
-    atomic64_inc(&queue->dbg_kick_rx);
+    RATTAN_DBG_INC(queue, kick_rx);
     rattan_debug_dump_queue_stats(queue);
 
     current_cpu = get_cpu();
@@ -1234,7 +1811,7 @@ static int rattan_kick_rx(struct rattan_queue *queue) {
          * custom steering is introduced.
          */
         if (atomic_cmpxchg(&queue->napi_scheduled, 0, 1) == 0) {
-            atomic64_inc(&queue->dbg_kick_rx_remote);
+            RATTAN_DBG_INC(queue, kick_rx_remote);
             smp_call_function_single(target_cpu, rattan_schedule_napi_ipi, queue, 0);
         }
     }
@@ -1243,53 +1820,39 @@ static int rattan_kick_rx(struct rattan_queue *queue) {
 }
 
 /*
- * Internal GC helper - collects old tokens from the hash table
+ * Internal GC helper - releases tokens older than timeout_ms on every UMEM
  *
- * Iterates through all buckets, locking each one individually.
- * This allows concurrent operations on other buckets during GC.
+ * A linear scan of each UMEM's pending slots. Each release is an ordinary
+ * claim, so a token that is concurrently transmitted or released is simply
+ * skipped (or makes the other side miss), never freed twice.
  *
  * Returns number of tokens collected.
  */
-static u32 rattan_do_gc(u32 timeout_ms, u32 max_collect) {
-    unsigned long flags;
-    ktime_t now, cutoff;
+static u32 rattan_do_gc(u32 timeout_ms) {
+    u32 timeout = msecs_to_jiffies(timeout_ms);
+    struct rattan_umem *umem;
     u32 collected = 0;
-    int bkt;
+    u32 idx;
 
-    now = ktime_get();
-    cutoff = ktime_sub_ms(now, timeout_ms);
+    mutex_lock(&rattan_umems_lock);
+    list_for_each_entry(umem, &rattan_umems, node) {
+        for (idx = 0; idx < umem->nr_chunks; idx++) {
+            struct rattan_pending *p = &umem->pending[idx];
+            u64 state = READ_ONCE(p->state);
 
-    for (bkt = 0; bkt < SKB_HASH_SIZE; bkt++) {
-        struct skb_bucket *bucket = &token_table[bkt];
+            if ((state & RATTAN_SLOT_TAG_MASK) != RATTAN_SLOT_LIVE)
+                continue;
+            if ((u32)jiffies - READ_ONCE(p->stamp) < timeout)
+                continue;
 
-        for (;;) {
-            struct skb_entry *entry = NULL;
+            if (rattan_release_token_process(umem, RATTAN_TOKEN(idx, RATTAN_SLOT_GEN(state))))
+                collected++;
 
-            spin_lock_irqsave(&bucket->lock, flags);
-            hlist_for_each_entry(entry, &bucket->head, node) {
-                if (ktime_before(entry->timestamp, cutoff)) {
-                    hlist_del(&entry->node);
-                    atomic_dec(&pending_token_count);
-                    break;
-                }
-            }
-            spin_unlock_irqrestore(&bucket->lock, flags);
-
-            if (!entry)
-                break;
-
-            /* The queue may have been released here, if the fd has been closed,
-             * since the pointer to the queue is used for statistics and debugging only,
-             * we pass NULL to avoid possible use-after-free.
-             */
-            rattan_release_entry(entry, NULL);
-            collected++;
-
-            /* Respect max_collect limit (0 = unlimited) */
-            if (max_collect && collected >= max_collect)
-                return collected;
+            if ((idx & 4095) == 0)
+                cond_resched();
         }
     }
+    mutex_unlock(&rattan_umems_lock);
 
     return collected;
 }
@@ -1302,13 +1865,12 @@ static u32 rattan_do_gc(u32 timeout_ms, u32 max_collect) {
  */
 static void rattan_gc_work_fn(struct work_struct *work) {
     u32 collected;
-    u32 remaining;
 
-    collected = rattan_do_gc(RATTAN_TOKEN_TIMEOUT_MS, 0);
-    remaining = atomic_read(&pending_token_count);
+    collected = rattan_do_gc(RATTAN_TOKEN_TIMEOUT_MS);
 
     if (collected > 0)
-        pr_info("periodic GC: collected %u orphaned tokens, %u remaining\n", collected, remaining);
+        pr_info("periodic GC: collected %u orphaned tokens, %ld remaining\n", collected,
+                rattan_pending_count());
 
     /* Reschedule for next interval */
     schedule_delayed_work(&gc_work, msecs_to_jiffies(RATTAN_GC_INTERVAL_MS));
@@ -1362,6 +1924,13 @@ static int rattan_reg_umem(struct rattan_vnic_ctx *ctx, struct rattan_umem_reg _
         return -EINVAL;
     }
 
+    /* One pending slot per chunk, so the chunk count bounds its memory */
+    if (params.len / params.chunk_size > RATTAN_MAX_CHUNKS) {
+        pr_warn("UMEM has %llu chunks, max %u\n", params.len / params.chunk_size,
+                RATTAN_MAX_CHUNKS);
+        return -EINVAL;
+    }
+
     /* Userspace address must be page-aligned for correct vmap mapping */
     if (params.addr & (PAGE_SIZE - 1)) {
         pr_warn("UMEM addr 0x%llx not page-aligned\n", params.addr);
@@ -1374,28 +1943,32 @@ static int rattan_reg_umem(struct rattan_vnic_ctx *ctx, struct rattan_umem_reg _
 
     umem->len = params.len;
     umem->chunk_size = params.chunk_size;
+    umem->chunk_shift = ilog2(params.chunk_size);
     umem->headroom = params.headroom;
     umem->nr_chunks = params.len / params.chunk_size;
+    INIT_LIST_HEAD(&umem->node);
+
+    umem->pending = vzalloc(array_size(umem->nr_chunks, sizeof(*umem->pending)));
+    if (!umem->pending) {
+        ret = -ENOMEM;
+        goto err_free;
+    }
 
     nr_pages = (params.len + PAGE_SIZE - 1) / PAGE_SIZE;
     umem->pages = kvmalloc_array(nr_pages, sizeof(struct page *), GFP_KERNEL);
     if (!umem->pages) {
-        kfree(umem);
-        return -ENOMEM;
+        ret = -ENOMEM;
+        goto err_free;
     }
 
     ret = rattan_pin_pages(params.addr, nr_pages, FOLL_WRITE, umem->pages);
-    if (ret < 0) {
-        kvfree(umem->pages);
-        kfree(umem);
-        return ret;
-    }
+    if (ret < 0)
+        goto err_free;
 
     if (ret != nr_pages) {
         rattan_unpin_pages(umem->pages, ret);
-        kvfree(umem->pages);
-        kfree(umem);
-        return -ENOMEM;
+        ret = -ENOMEM;
+        goto err_free;
     }
 
     umem->nr_pages = nr_pages;
@@ -1403,19 +1976,28 @@ static int rattan_reg_umem(struct rattan_vnic_ctx *ctx, struct rattan_umem_reg _
     umem->mapped = vmap(umem->pages, nr_pages, VM_MAP, PAGE_KERNEL);
     if (!umem->mapped) {
         rattan_unpin_pages(umem->pages, nr_pages);
-        kvfree(umem->pages);
-        kfree(umem);
-        return -ENOMEM;
+        ret = -ENOMEM;
+        goto err_free;
     }
 
     /* Initialize refcount to 1 (this device owns it) */
     refcount_set(&umem->refcount, 1);
+
+    mutex_lock(&rattan_umems_lock);
+    list_add(&umem->node, &rattan_umems);
+    mutex_unlock(&rattan_umems_lock);
 
     rcu_assign_pointer(ctx->umem, umem);
     pr_info("rattan%d: UMEM registered: %u chunks of %u bytes (headroom=%u)\n", ctx->dev_id,
             umem->nr_chunks, umem->chunk_size, umem->headroom);
 
     return 0;
+
+err_free:
+    kvfree(umem->pages);
+    vfree(umem->pending);
+    kfree(umem);
+    return ret;
 }
 
 /*
@@ -1509,6 +2091,7 @@ static int rattan_reg_rings_queue(struct rattan_vnic_ctx *ctx, u32 qid, u64 addr
 
     refcount_set(&rings->refcount, 1);
     spin_lock_init(&rings->comp_lock);
+    INIT_WORK(&rings->cleanup_work, rattan_cleanup_rings_work);
     rings->len = len;
 
     nr_pages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -1578,7 +2161,25 @@ static int rattan_reg_rings(struct rattan_vnic_ctx *ctx, struct rattan_rings_reg
     return rattan_reg_rings_queue(ctx, 0, params.addr, params.len);
 }
 
+/* Sum a queue's per-cpu debug counters. Racy snapshot, fine for a dump. */
+static void rattan_queue_dbg_sum(struct rattan_queue *queue, struct rattan_queue_dbg *sum) {
+    const size_t n = sizeof(*sum) / sizeof(u64);
+    u64 *dst = (u64 *)sum;
+    int cpu;
+    size_t i;
+
+    BUILD_BUG_ON(sizeof(*sum) % sizeof(u64));
+    memset(sum, 0, sizeof(*sum));
+    for_each_possible_cpu(cpu) {
+        const u64 *src = (const u64 *)per_cpu_ptr(queue->dbg, cpu);
+
+        for (i = 0; i < n; i++)
+            dst[i] += READ_ONCE(src[i]);
+    }
+}
+
 static void rattan_debug_dump_queue_stats(struct rattan_queue *queue) {
+    struct rattan_queue_dbg d;
     unsigned long interval;
 
     if (!debug_stats_interval_ms || !queue)
@@ -1593,22 +2194,18 @@ static void rattan_debug_dump_queue_stats(struct rattan_queue *queue) {
 
     queue->dbg_last_dump_jiffies = jiffies;
 
-    pr_info("rattan%d:q%u stats: xmit_ok=%lld rx_full=%lld fill_empty=%lld nomem=%lld "
-            "invalid_addr=%lld notify=%lld kick_rx=%lld kick_rx_remote=%lld napi_polls=%lld "
-            "napi_complete=%lld napi_budget_stop=%lld napi_tx_empty=%lld napi_comp_full=%lld "
-            "napi_token_miss=%lld rx_ok=%lld rx_drop=%lld comp_ok=%lld comp_full=%lld "
-            "recycled_token=%lld pending_tokens=%d\n",
-            queue->ctx->dev_id, queue->qid, atomic64_read(&queue->dbg_xmit_ok),
-            atomic64_read(&queue->dbg_xmit_rx_full), atomic64_read(&queue->dbg_xmit_fill_empty),
-            atomic64_read(&queue->dbg_xmit_nomem), atomic64_read(&queue->dbg_xmit_invalid_addr),
-            atomic64_read(&queue->dbg_rx_notify), atomic64_read(&queue->dbg_kick_rx),
-            atomic64_read(&queue->dbg_kick_rx_remote), atomic64_read(&queue->dbg_napi_polls),
-            atomic64_read(&queue->dbg_napi_complete), atomic64_read(&queue->dbg_napi_budget_stop),
-            atomic64_read(&queue->dbg_napi_tx_empty), atomic64_read(&queue->dbg_napi_comp_full),
-            atomic64_read(&queue->dbg_napi_token_miss), atomic64_read(&queue->dbg_napi_rx_ok),
-            atomic64_read(&queue->dbg_napi_rx_drop), atomic64_read(&queue->dbg_comp_ok),
-            atomic64_read(&queue->dbg_comp_full), atomic64_read(&queue->dbg_recycle_token),
-            atomic_read(&pending_token_count));
+    rattan_queue_dbg_sum(queue, &d);
+
+    pr_info("rattan%d:q%u stats: xmit_ok=%llu rx_full=%llu fill_empty=%llu nomem=%llu "
+            "invalid_addr=%llu notify=%llu kick_rx=%llu kick_rx_remote=%llu napi_polls=%llu "
+            "napi_complete=%llu napi_budget_stop=%llu napi_tx_empty=%llu napi_comp_full=%llu "
+            "napi_token_miss=%llu rx_ok=%llu rx_drop=%llu comp_ok=%llu comp_full=%llu "
+            "recycled_token=%llu pending_tokens=%ld\n",
+            queue->ctx->dev_id, queue->qid, d.xmit_ok, d.xmit_rx_full,
+            d.xmit_fill_empty, d.xmit_nomem, d.xmit_invalid_addr, d.rx_notify, d.kick_rx,
+            d.kick_rx_remote, d.napi_polls, d.napi_complete, d.napi_budget_stop, d.napi_tx_empty,
+            d.napi_comp_full, d.napi_token_miss, d.napi_rx_ok, d.napi_rx_drop, d.comp_ok,
+            d.comp_full, d.recycle_token, rattan_pending_count());
 
     pr_info("rattan%d:q%u ring: R%u T%u C%u F%u D%u", queue->ctx->dev_id, queue->qid,
             ring_count(&queue->rings->rx->ring), ring_count(&queue->rings->tx->ring),
@@ -1782,25 +2379,11 @@ static int rattan_vnic_fop_open(struct inode *inode, struct file *file) {
 
         queue->napi_cpu = -1;
         atomic_set(&queue->napi_scheduled, 0);
-        atomic64_set(&queue->dbg_xmit_ok, 0);
-        atomic64_set(&queue->dbg_xmit_rx_full, 0);
-        atomic64_set(&queue->dbg_xmit_fill_empty, 0);
-        atomic64_set(&queue->dbg_xmit_nomem, 0);
-        atomic64_set(&queue->dbg_xmit_invalid_addr, 0);
-        atomic64_set(&queue->dbg_rx_notify, 0);
-        atomic64_set(&queue->dbg_kick_rx, 0);
-        atomic64_set(&queue->dbg_kick_rx_remote, 0);
-        atomic64_set(&queue->dbg_napi_polls, 0);
-        atomic64_set(&queue->dbg_napi_complete, 0);
-        atomic64_set(&queue->dbg_napi_budget_stop, 0);
-        atomic64_set(&queue->dbg_napi_tx_empty, 0);
-        atomic64_set(&queue->dbg_napi_comp_full, 0);
-        atomic64_set(&queue->dbg_napi_token_miss, 0);
-        atomic64_set(&queue->dbg_napi_rx_ok, 0);
-        atomic64_set(&queue->dbg_napi_rx_drop, 0);
-        atomic64_set(&queue->dbg_comp_ok, 0);
-        atomic64_set(&queue->dbg_comp_full, 0);
-        atomic64_set(&queue->dbg_recycle_token, 0);
+        queue->dbg = alloc_percpu(struct rattan_queue_dbg);
+        if (!queue->dbg) {
+            err = -ENOMEM;
+            goto err_register;
+        }
         queue->dbg_last_dump_jiffies = jiffies;
         rattan_netif_napi_add(netdev, &queue->napi, rattan_napi_poll);
     }
@@ -1826,8 +2409,10 @@ static int rattan_vnic_fop_open(struct inode *inode, struct file *file) {
     return 0;
 
 err_register:
-    while (qid--)
+    while (qid--) {
         netif_napi_del(&ctx->queues[qid].napi);
+        free_percpu(ctx->queues[qid].dbg);
+    }
     kfree(ctx->queues);
 err_alloc_queues:
     free_netdev(netdev);
@@ -1881,8 +2466,8 @@ static int rattan_vnic_fop_release(struct inode *inode, struct file *file) {
 
         /*
          * Note: We don't clean up pending SKBs here. They can still be
-         * forwarded by other devices sharing the same UMEM. Any orphaned
-         * SKBs will be cleaned up when the module unloads.
+         * forwarded by other devices sharing the same UMEM, and are released
+         * together with the UMEM once its last user is gone.
          */
 
         for (qid = 0; qid < ctx->num_queues; qid++)
@@ -1892,6 +2477,8 @@ static int rattan_vnic_fop_release(struct inode *inode, struct file *file) {
         rattan_put_umem(old_umem);
 
         unregister_netdev(ctx->netdev);
+        for (qid = 0; qid < ctx->num_queues; qid++)
+            free_percpu(ctx->queues[qid].dbg);
         kfree(ctx->queues);
         free_netdev(ctx->netdev);
         ida_free(&rattan_ida, dev_id);
@@ -1962,26 +2549,15 @@ static struct miscdevice rattan_vnic_misc = {
 
 static int __init rattan_vnic_init(void) {
     int err;
-    int i;
 
-    /* Initialize per-bucket spinlocks for SKB hash table */
-    for (i = 0; i < SKB_HASH_SIZE; i++) {
-        INIT_HLIST_HEAD(&token_table[i].head);
-        spin_lock_init(&token_table[i].lock);
-    }
-
-    /* Create slab cache for SKB tracking entries */
-    skb_entry_cache = kmem_cache_create("rattan_skb_entry", sizeof(struct skb_entry), 0,
-                                        SLAB_HWCACHE_ALIGN, NULL);
-    if (!skb_entry_cache) {
-        pr_err("failed to create skb entry cache\n");
+    rattan_cleanup_wq = alloc_workqueue("rattan_vnic_cleanup", 0, 0);
+    if (!rattan_cleanup_wq)
         return -ENOMEM;
-    }
 
     err = misc_register(&rattan_vnic_misc);
     if (err) {
         pr_err("failed to register misc device: %d\n", err);
-        kmem_cache_destroy(skb_entry_cache);
+        destroy_workqueue(rattan_cleanup_wq);
         return err;
     }
 
@@ -1996,10 +2572,6 @@ static int __init rattan_vnic_init(void) {
 }
 
 static void __exit rattan_vnic_exit(void) {
-    unsigned long flags;
-    int bkt;
-    int leaked = 0;
-
     /* Cancel periodic GC work before cleaning up */
     if (gc_work_initialized) {
         cancel_delayed_work_sync(&gc_work);
@@ -2009,38 +2581,14 @@ static void __exit rattan_vnic_exit(void) {
     misc_deregister(&rattan_vnic_misc);
 
     /*
-     * Clean up any remaining SKB entries in the hash table.
-     * This can happen if devices were closed while packets were pending.
-     * Iterate through each bucket with its own lock.
+     * Every fd is closed by now (the module is pinned while one is open), so
+     * every UMEM has been freed and its pending SKBs with it.
      */
-    for (bkt = 0; bkt < SKB_HASH_SIZE; bkt++) {
-        struct skb_bucket *bucket = &token_table[bkt];
+    WARN_ON(!list_empty(&rattan_umems));
 
-        for (;;) {
-            struct skb_entry *entry = NULL;
+    /* Drains any rings cleanup still queued by the last puts */
+    destroy_workqueue(rattan_cleanup_wq);
 
-            spin_lock_irqsave(&bucket->lock, flags);
-            if (!hlist_empty(&bucket->head)) {
-                entry = hlist_entry(bucket->head.first, struct skb_entry, node);
-                hlist_del(&entry->node);
-            }
-            spin_unlock_irqrestore(&bucket->lock, flags);
-
-            if (!entry)
-                break;
-            /* The queue should have been released here, as the fd has been closed,
-             * since the pointer to the queue is used for statistics and debugging only,
-             * we pass NULL to avoid possible use-after-free.
-             */
-            rattan_release_entry(entry, NULL);
-            leaked++;
-        }
-    }
-
-    if (leaked > 0)
-        pr_info("cleaned up %d leaked SKB entries\n", leaked);
-
-    kmem_cache_destroy(skb_entry_cache);
     pr_info("unloaded\n");
 }
 
