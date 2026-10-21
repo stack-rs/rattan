@@ -124,6 +124,11 @@ impl Umem {
         if num_chunks == 0 {
             return Err(crate::Error::InvalidParam("num_chunks must be > 0"));
         }
+        if num_chunks > crate::sys::RATTAN_MAX_CHUNKS {
+            return Err(crate::Error::InvalidParam(
+                "num_chunks exceeds RATTAN_MAX_CHUNKS",
+            ));
+        }
 
         let len_u64 = (chunk_size as u64)
             .checked_mul(num_chunks as u64)
