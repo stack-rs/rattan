@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr};
+#[cfg(feature = "drop-stat")]
+use std::ops::AddAssign;
 use std::sync::Arc;
 
 use rand::distr::Alphanumeric;
@@ -37,6 +39,20 @@ pub static UMEM: OnceCell<Arc<Umem>> = OnceCell::const_new();
 struct RvnicPacketRecycler {
     drop_rings: HashMap<QueueID, (DropRing, Vec<u64>)>,
     rx: mpsc::UnboundedReceiver<(QueueID, u64)>,
+    #[cfg(feature = "drop-stat")]
+    drop_stat: HashMap<QueueID, u32>,
+}
+
+#[cfg(feature = "drop-stat")]
+impl Drop for RvnicPacketRecycler {
+    fn drop(&mut self) {
+        let mut drop_total = 0;
+        for (queue_id, drop_stat) in self.drop_stat.iter() {
+            eprintln!("[rvnic] Recycled {} tokens on {}", drop_stat, queue_id);
+            drop_total += drop_stat;
+        }
+        eprintln!("[rvnic] Recycled {} tokens in total", drop_total);
+    }
 }
 
 // If token is Some,  try to batch the tokens until there are BATCH_SIZE tokens
@@ -118,7 +134,11 @@ impl RvnicPacketRecycler {
             };
 
             let (queue_id, token) = match recv_with_timeout(&mut self.rx, timeout).await {
-                Ok(Some((queue_id, token))) => (Some(queue_id), Some(token)),
+                Ok(Some((queue_id, token))) => {
+                    #[cfg(feature = "drop-stat")]
+                    self.drop_stat.entry(queue_id).or_default().add_assign(1);
+                    (Some(queue_id), Some(token))
+                }
                 Ok(None) => {
                     // The other side of the channel has been closed.
                     break;
@@ -477,6 +497,8 @@ fn build_rvnic_pair(queue_nums: u32) -> rvnic::Result<RvnicBuildArtifact> {
                 .into_iter()
                 .map(|(id, ring)| (id, (ring, Vec::with_capacity(BATCH_SIZE)))),
         ),
+        #[cfg(feature = "drop-stat")]
+        drop_stat: HashMap::new(),
     };
 
     let (left, right): (Vec<_>, Vec<_>) = rx_tx_rings

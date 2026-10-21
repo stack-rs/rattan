@@ -34,6 +34,7 @@ test-log = { workspace = true }
 
 [features]
 default = []
+drop-stat = []
 serde = ["dep:serde"]
 xdp = ["dep:camellia-net"]
 rvnic = ["dep:rvnic"]
