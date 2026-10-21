@@ -138,6 +138,7 @@ shadow-rs = "1.7.0"
 default = ["first-packet"]
 drift-stat = ["rattan-core/drift-stat"]
 drift-log = ["rattan-core/drift-log"]
+drop-stat = ["rattan-env/drop-stat"]
 first-packet = ["rattan-core/first-packet"]
 first-payload = ["rattan-core/first-payload"]
 http = ["rattan-core/http"]
