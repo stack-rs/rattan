@@ -197,46 +197,6 @@ pub struct RvnicDriver {
     // forwarder: std::thread::JoinHandle<()>,
 }
 
-impl RvnicDriver {
-    // Busy polling to recv packets, not used for now
-    // TODO(lethe) : Determine which is better, this or using a
-    #[allow(unused)]
-    fn sending_thread(
-        mut receiver: mpsc::Receiver<RvnicPacket>,
-        mut tx_ring: TxRing,
-        meta: DriverMetaData,
-    ) {
-        let mut packets = Vec::with_capacity(BATCH_SIZE);
-        'end: loop {
-            let target = (tx_ring.available() as usize).min(BATCH_SIZE);
-            let start = Instant::now();
-            while packets.len() < target
-                && start.elapsed() < Duration::from_micros(SEND_BATCH_MAX_TIME_US)
-            {
-                match receiver.try_recv() {
-                    Ok(packet) => packets.push(packet),
-                    Err(mpsc::error::TryRecvError::Disconnected) => {
-                        break 'end;
-                    }
-                    _ => {
-                        std::thread::yield_now();
-                        continue;
-                    }
-                }
-            }
-            if packets.is_empty() {
-                continue;
-            }
-            let mut send_packets = Vec::with_capacity(BATCH_SIZE);
-            std::mem::swap(&mut packets, &mut send_packets);
-            let _ = Self::send(&mut tx_ring, send_packets, &meta);
-        }
-        let _ = Self::send(&mut tx_ring, packets, &meta);
-
-        tracing::warn!("Rvnic send thread for {} exited!", meta.device_fd);
-    }
-}
-
 /// Two things are done here:
 ///     1. Mark the `sent` as true, which would be checked during the `drop()` of the `RvnicPacket`,
 ///        so that the packet would be ignored in the recycling token procedure.
@@ -293,7 +253,6 @@ impl RvnicDriver {
         Ok(sent)
     }
 
-    // Have not decided how to send!
     async fn buffered_send(
         mut receiver: mpsc::Receiver<RvnicPacket>,
         mut tx_ring: TxRing,
