@@ -13,6 +13,7 @@ pub const RATTAN_DEFAULT_CHUNK_SIZE: u32 = 256;
 pub const RATTAN_MIN_CHUNK_SIZE: u32 = 256;
 pub const RATTAN_MAX_CHUNK_SIZE: u32 = 65536;
 pub const RATTAN_MAX_UMEM_SIZE: u64 = 128 << 30; // 128 GiB
+pub const RATTAN_MAX_CHUNKS: u32 = 1 << 22;
 pub const RATTAN_HEADER_SIZE: u32 = 0;
 
 // UMEM registration parameters
@@ -163,6 +164,9 @@ pub struct RattanReleaseReq {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RattanCloneReq {
     pub token: u64,
+    pub chunk_addr: u64,
+    pub queue_id: u32,
+    pub _pad: u32,
 }
 
 #[repr(C)]
@@ -356,16 +360,35 @@ pub unsafe fn ioctl_kick_rx_q(fd: RawFd, queue_id: u32) -> io::Result<i32> {
     Ok(ret)
 }
 
+#[repr(C)]
+pub union RattanCloneIoctl {
+    pub req: RattanCloneReq,
+    pub resp: RattanCloneResp,
+}
+
 /// # Safety
 /// `fd` must be valid, `token` must be valid.
 #[inline]
-pub unsafe fn ioctl_clone(fd: RawFd, token: u64) -> io::Result<u64> {
-    let mut buf: u64 = token;
-    let ret = unsafe { libc::ioctl(fd, IOCTL_CLONE, &mut buf as *mut u64) };
+pub unsafe fn ioctl_clone(
+    fd: RawFd,
+    token: u64,
+    chunk_addr: u64,
+    queue_id: u32,
+) -> io::Result<u64> {
+    let mut buf = RattanCloneIoctl {
+        req: RattanCloneReq {
+            token,
+            chunk_addr,
+            queue_id,
+            _pad: 0,
+        },
+    };
+    let ret = unsafe { libc::ioctl(fd, IOCTL_CLONE, &mut buf as *mut RattanCloneIoctl) };
     if ret < 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(buf)
+    // SAFETY: the kernel wrote the response on success
+    Ok(unsafe { buf.resp.new_token })
 }
 
 /// # Safety

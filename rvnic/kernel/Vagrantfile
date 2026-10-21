@@ -16,6 +16,18 @@
 #   vagrant destroy         - Remove the VM
 #   vagrant rsync-auto      - Auto-sync on file changes (if using rsync)
 #
+# Crash capture:
+#   The guest kernel console goes to the serial port, which is written to
+#   SERIAL_LOG on the host (default .vagrant/serial.log next to this file,
+#   override with RVNIC_SERIAL_LOG, but not under /tmp, see below). An oops
+#   panics and reboots the guest after 5 s instead of wedging it, so the BUG
+#   text, RIP and call trace are always left in that file:
+#     tail -f rvnic/kernel/.vagrant/serial.log
+#   The serial port is part of the domain definition: an existing VM needs
+#   `vagrant destroy && vagrant up` to pick it up. The guest side can be
+#   (re)applied alone with `vagrant provision --provision-with debug-console`
+#   followed by `vagrant reload`.
+#
 # Inside VM:
 #   cd /rattan              - Access the full rattan project
 #   cd /rattan/rvnic/kernel - Kernel module directory
@@ -25,6 +37,17 @@
 #   dmesg | tail            - Check kernel messages
 #
 
+SERIAL_LOG = ENV.fetch("RVNIC_SERIAL_LOG", File.join(__dir__, ".vagrant", "serial.log"))
+
+# libvirt opens the serial file as root with O_CREAT. Pre-create it here, as
+# the invoking user, so it stays readable without sudo. Keep it out of sticky
+# dirs such as /tmp: with fs.protected_regular=2 root may not O_CREAT-open an
+# existing file there that someone else owns, and the domain fails to start.
+unless File.exist?(SERIAL_LOG)
+  require "fileutils"
+  FileUtils.mkdir_p(File.dirname(SERIAL_LOG))
+  File.open(SERIAL_LOG, "a", 0o644) {}
+end
 
 Vagrant.configure("2") do |config|
   # Base box
@@ -54,6 +77,9 @@ Vagrant.configure("2") do |config|
     lv.nested = true
 
     lv.cpu_mode = "host-passthrough"
+
+    # Kernel console -> host file (see "Crash capture" above)
+    lv.serial :type => "file", :source => { :path => SERIAL_LOG }
     # lv.machine_virtual_size = 128 # 128GB 
 
   end
@@ -104,8 +130,19 @@ Vagrant.configure("2") do |config|
     DEBIAN_FRONTEND=noninteractive apt-get install -y iperf3
     
     # 3. Update to the newest kernel
-    apt-get install linux-image-amd64 linux-headers-amd64
-    
+    apt-get install -y linux-image-amd64 linux-headers-amd64
+
   SHELL
-  
+
+  # Kernel console on ttyS0, and panic + reboot on oops (see "Crash capture")
+  config.vm.provision "debug-console", type: "shell", inline: <<-SHELL
+    set -e
+    if ! grep -q 'console=ttyS0' /etc/default/grub; then
+      sed -i 's/^GRUB_CMDLINE_LINUX="\\(.*\\)"/GRUB_CMDLINE_LINUX="\\1 console=tty0 console=ttyS0,115200n8"/' /etc/default/grub
+      update-grub
+    fi
+    printf 'kernel.panic_on_oops = 1\\nkernel.panic = 5\\n' > /etc/sysctl.d/90-rattan-crash.conf
+    sysctl -q -p /etc/sysctl.d/90-rattan-crash.conf
+  SHELL
+
 end

@@ -31,6 +31,7 @@ use rvnic::{
     TxRing,
     UmemBuilder,
 };
+use std::collections::VecDeque;
 use std::os::unix::io::AsRawFd;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -102,7 +103,7 @@ impl Drop for NetnsGuard {
     }
 }
 
-/// Direct transfer from COMP to FILL ring (single batch, zero-copy recycling)
+// Direct transfer from COMP to FILL ring (single batch, zero-copy recycling)
 // #[inline]
 // fn recycle_chunks(comp: &mut CompRing, fill: &mut FillRing, buf: &mut [u64]) -> usize {
 //     let n = comp.consume(buf);
@@ -237,6 +238,49 @@ fn set_cpu_affinity(cpu: u32) -> std::io::Result<()> {
 
 /// Forward packets from one RX ring to another TX ring (single batch)
 #[inline]
+/// Transmit `n` UDP datagrams out of `iface` (still in the root netns) and
+/// keep their descriptors, so their tokens stay live until the devices close.
+fn hold_tokens(iface: &str, rx: &mut RxRing, n: usize) -> std::io::Result<Vec<RattanDesc>> {
+    let mut held = Vec::with_capacity(n);
+    if n == 0 {
+        return Ok(held);
+    }
+    let ip = |args: &[&str]| Command::new("ip").args(args).status().map(|_| ());
+    ip(&["addr", "add", "10.99.0.1/24", "dev", iface])?;
+    ip(&["link", "set", iface, "up"])?;
+    ip(&[
+        "neigh",
+        "replace",
+        "10.99.0.2",
+        "lladdr",
+        "02:00:00:00:00:02",
+        "dev",
+        iface,
+        "nud",
+        "permanent",
+    ])?;
+
+    let sock = std::net::UdpSocket::bind("10.99.0.1:0")?;
+    let mut descs = [RattanDesc::default(); BATCH_SIZE];
+    let mut sent = 0;
+    while held.len() < n {
+        while sent < n && sent < held.len() + BATCH_SIZE {
+            sock.send_to(b"hold", "10.99.0.2:9")?;
+            sent += 1;
+        }
+        let got = rx.consume(&mut descs);
+        held.extend_from_slice(&descs[..got]);
+        if got == 0 && sent >= n {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    ip(&["addr", "flush", "dev", iface])?;
+    ip(&["link", "set", iface, "down"])?;
+    println!("   Holding {} live tokens for the whole test", held.len());
+    Ok(held)
+}
+
 fn forward_batch(rx: &mut RxRing, tx: &mut TxRing, descs: &mut [RattanDesc]) -> usize {
     let received = rx.consume(descs);
     if received > 0 {
@@ -364,6 +408,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("   rattan1 NAPI: use caller's CPU");
     }
 
+    // Optional: delay the client->server direction by DELAY_MS, so tokens stay
+    // in flight for that long, as they do behind an emulated link.
+    let delay = Duration::from_millis(
+        std::env::var("DELAY_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0),
+    );
+
+    // Optional: park HOLD_TOKENS live tokens for the whole test, to model the
+    // packets an emulated link keeps in flight (its bandwidth-delay product).
+    let hold: usize = std::env::var("HOLD_TOKENS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let _held = hold_tokens(device_name_0.as_str(), &mut rx0, hold)?;
+
     // Step 3: Move interfaces to namespaces and configure
     println!("\n3. Configuring network namespaces...");
 
@@ -378,6 +439,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     configure_interface_in_netns("ns_server", device_name_1.as_str(), "10.0.0.1/24")?;
     println!("   ns_server: {} = 10.0.0.1/24", device_name_1);
+
+    if !delay.is_zero() {
+        // Let TCP autotuning grow the window to cover the added delay
+        for ns in ["ns_client", "ns_server"] {
+            for key in ["net.ipv4.tcp_rmem", "net.ipv4.tcp_wmem"] {
+                let _ = Command::new("ip")
+                    .args(["netns", "exec", ns, "sysctl", "-qw"])
+                    .arg(format!("{}=4096 131072 268435456", key))
+                    .status();
+            }
+        }
+        println!("   client->server delay: {:?}", delay);
+    }
 
     // Step 4: Start forwarding loop
     println!("\n4. Starting forwarding loop...");
@@ -429,10 +503,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let mut events = [libc::epoll_event { events: 0, u64: 0 }; 2];
+        let mut delay_line: VecDeque<(Instant, RattanDesc)> = VecDeque::new();
 
         while running_clone.load(Ordering::Relaxed) {
-            // Wait for events on either device (10ms timeout)
-            let nfds = unsafe { libc::epoll_wait(epfd, events.as_mut_ptr(), 2, 10) };
+            // Wait for events on either device (10ms timeout, 1ms with a delay line)
+            let timeout = if delay.is_zero() { 10 } else { 1 };
+            let nfds = unsafe { libc::epoll_wait(epfd, events.as_mut_ptr(), 2, timeout) };
 
             if nfds < 0 {
                 let err = std::io::Error::last_os_error();
@@ -444,10 +520,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Process events - drain RX rings completely
-            for i in 0..nfds as usize {
-                let dev_idx = events[i].u64;
+            for event in events.iter().take(nfds as usize) {
+                let dev_idx = event.u64;
 
-                if dev_idx == 0 {
+                if dev_idx == 0 && !delay.is_zero() {
+                    // dev0 has RX data: queue it on the delay line
+                    loop {
+                        let got = rx0.consume(&mut descs);
+                        let now = Instant::now();
+                        delay_line.extend(descs[..got].iter().map(|d| (now, *d)));
+                        if got < BATCH_SIZE {
+                            break;
+                        }
+                    }
+                } else if dev_idx == 0 {
                     // dev0 has RX data: forward rx0 → tx1
                     // Drain all available packets (not just one batch)
                     loop {
@@ -473,6 +559,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             break; // Ring drained
                         }
                     }
+                }
+            }
+
+            // Release everything that has spent `delay` on the delay line
+            if !delay_line.is_empty() {
+                let now = Instant::now();
+                let mut n = 0;
+                while let Some(&(t, d)) = delay_line.front() {
+                    if now.duration_since(t) < delay || n == BATCH_SIZE {
+                        break;
+                    }
+                    descs[n] = d;
+                    n += 1;
+                    delay_line.pop_front();
+                }
+                if n > 0 {
+                    let fwd = tx1.produce(&descs[..n]);
+                    // TX full: put the rest back in order
+                    for d in descs[fwd..n].iter().rev() {
+                        delay_line.push_front((now - delay, *d));
+                    }
+                    packets_forwarded_clone.fetch_add(fwd as u64, Ordering::Relaxed);
+                    let _ = dev1.kick_rx_queue(0);
                 }
             }
 

@@ -476,20 +476,28 @@ impl RvnicDevice {
 
     /// Clone a token to get a new token with a cloned SKB
     ///
+    /// Every token is bound to one UMEM chunk, so the clone needs its own:
+    /// pass a free chunk from the same pool you refill FILL from. It comes back
+    /// on the COMP ring of `queue_id` on this device once the clone is released
+    /// or transmitted, like any chunk the kernel took from that queue's FILL.
+    ///
     /// # Arguments
     /// * `token` - The token to clone
+    /// * `chunk_addr` - Free chunk (UMEM offset) to bind the new token to
+    /// * `queue_id` - Queue of this device that owns `chunk_addr`
     ///
     /// # Returns
     /// The new token for the cloned SKB
     ///
     /// # Errors
     /// Returns an error if:
-    /// - Token is not found (already released or invalid)
-    /// - Memory allocation fails
-    /// - The ioctl fails
-    pub fn clone_token(&self, token: u64) -> Result<u64> {
+    /// - Token is not found (already released or invalid): `ENOENT`
+    /// - `chunk_addr` or `queue_id` is invalid: `EINVAL`
+    /// - `chunk_addr` is still bound to a live token: `EBUSY`
+    /// - Memory allocation fails: `ENOMEM`
+    pub fn clone_token(&self, token: u64, chunk_addr: u64, queue_id: u32) -> Result<u64> {
         // SAFETY: fd is valid
-        let new_token = unsafe { crate::sys::ioctl_clone(self.fd(), token)? };
+        let new_token = unsafe { crate::sys::ioctl_clone(self.fd(), token, chunk_addr, queue_id)? };
         Ok(new_token)
     }
 
