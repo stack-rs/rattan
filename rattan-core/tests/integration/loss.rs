@@ -5,11 +5,12 @@ use std::collections::HashMap;
 #[cfg(feature = "serde")]
 use rattan_core::{cells::loss::LossCellConfig, control::RattanOp};
 use rattan_core::{
-    cells::StdPacket,
     config::{CellBuildConfig, LossCellBuildConfig, RattanConfig},
-    env::{StdNetEnvConfig, StdNetEnvMode},
-    metal::io::af_packet::AfPacketDriver,
     radix::RattanRadix,
+};
+use rattan_env::{
+    env::standard::{AfPacketDriver, StdNetEnv, StdNetEnvConfig, StdPacket},
+    RattanEnv, StdNetEnvMode,
 };
 use regex::Regex;
 use tracing::{info, instrument, span, Level};
@@ -18,7 +19,7 @@ use tracing::{info, instrument, span, Level};
 #[test_log::test]
 #[serial_test::parallel]
 fn test_loss() {
-    let mut config = RattanConfig::<StdPacket> {
+    let mut config = RattanConfig::<StdPacket, StdNetEnvConfig> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
@@ -41,7 +42,7 @@ fn test_loss() {
         ("right".to_string(), "down_loss".to_string()),
         ("down_loss".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver, StdNetEnv>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
@@ -52,7 +53,7 @@ fn test_loss() {
     {
         let _span = span!(Level::INFO, "ping_no_loss").entered();
         info!("try to ping with no loss");
-        let right_ip = radix.right_ip(1).to_string();
+        let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1).to_string();
         let left_handle = radix
             .left_spawn(None, move || {
                 let handle = std::process::Command::new("ping")
@@ -88,7 +89,7 @@ fn test_loss() {
             ))
             .unwrap();
 
-        let right_ip = radix.right_ip(1).to_string();
+        let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1).to_string();
         let left_handle = radix
             .left_spawn(None, move || {
                 let handle = std::process::Command::new("ping")

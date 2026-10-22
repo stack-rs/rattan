@@ -9,6 +9,7 @@ use std::{
 };
 
 use once_cell::sync::OnceCell;
+use rattan_env::InterfaceDriver;
 use tokio::{
     runtime::{Handle, Runtime},
     sync::{broadcast, mpsc},
@@ -21,7 +22,6 @@ use crate::{
     cells::{Cell, Egress, Ingress, Packet},
     control::{RattanController, RattanNotify, RattanOp, RattanOpEndpoint, RattanOpResult},
     error::{Error, RattanCoreError},
-    metal::io::common::InterfaceDriver,
 };
 
 #[cfg(feature = "packet-dump")]
@@ -156,6 +156,10 @@ where
 
     pub fn op_block_exec(&self, op: RattanOp) -> Result<RattanOpResult, Error> {
         self.runtime.block_on(self.op_endpoint.exec(op))
+    }
+
+    pub fn get_runtime_handle(&self) -> &Handle {
+        self.runtime.handle()
     }
 
     pub fn build_cell<V, F>(

@@ -14,7 +14,7 @@ use bitfield::{BitRange, BitRangeMut};
 #[cfg(feature = "drift-log")]
 use once_cell::sync::OnceCell;
 use parking_lot::RwLock;
-use rattan_env::veth::VethCell;
+use rattan_env::{InterfaceDriver, InterfaceReceiver, InterfaceSender};
 use rattan_log::{
     log_entry::general_packet::GeneralPacketType, log_entry::PktAction, FlowDesc, PlainBytes,
     RattanLogOp, RawLogEntry, LOGGING_TX,
@@ -27,7 +27,6 @@ use tracing::{debug, error, instrument, warn};
 use crate::{
     cells::{Cell, ControlInterface, Egress, Ingress, Packet},
     error::Error,
-    metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender},
     radix::{PacketLogMode, BASE_TS, PKT_LOG_MODE},
 };
 
@@ -547,7 +546,6 @@ where
     D::Sender: Send + Sync,
     D::Receiver: Send,
 {
-    _cell: Arc<VethCell>,
     ingress: Arc<VirtualEthernetIngress<D>>,
     egress: VirtualEthernetEgress<D>,
     control_interface: Arc<VirtualEthernetControlInterface>,
@@ -560,15 +558,13 @@ where
     D::Sender: Send + Sync,
     D::Receiver: Send,
 {
-    #[instrument(skip_all, name="VirtualEthernet", fields(name = cell.name))]
-    pub fn new(cell: Arc<VethCell>, id: VirtualEthernetId) -> Result<Self, Error> {
+    #[instrument(skip_all, name = "VirtualEthernet")]
+    pub fn new(driver: Vec<D>, id: VirtualEthernetId) -> Result<Self, Error> {
         debug!("New VirtualEthernet");
-        let driver = D::bind_cell(cell.clone())?;
         let dev_senders = driver.iter().map(|d| d.sender()).collect();
         let log_tx = LOGGING_TX.get().cloned();
         let base_ts = BASE_TS.0;
         Ok(Self {
-            _cell: cell,
             ingress: Arc::new(VirtualEthernetIngress::new(
                 dev_senders,
                 id,
@@ -609,4 +605,10 @@ where
     fn control_interface(&self) -> Arc<Self::ControlInterfaceType> {
         self.control_interface.clone()
     }
+}
+
+pub struct InterfaceBuildArtifact<D: InterfaceDriver> {
+    pub ns_id: u8,
+    pub veth_id: u8,
+    pub drivers: Vec<D>,
 }

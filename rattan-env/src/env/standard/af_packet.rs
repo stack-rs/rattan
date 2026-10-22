@@ -8,13 +8,15 @@ use nix::{
     errno::Errno,
     sys::socket::{AddressFamily, SockFlag, SockType},
 };
-use rattan_env::veth::VethCell;
+use rattan_log::FlowDesc;
+use tokio::{
+    runtime::Handle,
+    time::{Duration, Instant},
+};
 use tracing::{debug, error, trace, warn};
 
-use super::common::PacketType;
-use crate::cells::{Packet, StdPacket};
-use crate::metal::error::MetalError;
-use crate::metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender};
+use crate::common::*;
+use crate::env::standard::VethLikeDriver;
 
 pub struct AfPacketSender {
     raw_fd: Mutex<i32>,
@@ -162,12 +164,8 @@ pub struct AfPacketDriver {
     _cell: Arc<VethCell>,
 }
 
-impl InterfaceDriver for AfPacketDriver {
-    type Packet = StdPacket;
-    type Sender = AfPacketSender;
-    type Receiver = AfPacketReceiver;
-
-    fn bind_cell(cell: Arc<VethCell>) -> Result<Vec<Self>, MetalError> {
+impl VethLikeDriver for AfPacketDriver {
+    fn bind_cell(cell: Arc<VethCell>, _runtime: &Handle) -> Result<Vec<Self>, MetalError> {
         debug!(?cell, "bind cell to AF_PACKET driver");
         let mut times = 3;
         let mut raw_fd;
@@ -242,6 +240,12 @@ impl InterfaceDriver for AfPacketDriver {
             _cell: cell,
         }])
     }
+}
+
+impl InterfaceDriver for AfPacketDriver {
+    type Packet = StdPacket;
+    type Sender = AfPacketSender;
+    type Receiver = AfPacketReceiver;
 
     fn raw_fd(&self) -> i32 {
         self.raw_fd
@@ -274,4 +278,199 @@ unsafe fn sockaddr_ll_from_raw(
     }
 
     Some(ptr::read_unaligned(addr as *const _))
+}
+
+#[derive(Clone, Debug)]
+pub struct StdPacket {
+    pub buf: Vec<u8>,
+    timestamp: Instant,
+    flow_id: u32,
+}
+
+impl Packet for StdPacket {
+    type PacketGenerator = ();
+
+    fn empty(maximum: usize, _generator: &Self::PacketGenerator) -> Self {
+        Self {
+            buf: Vec::with_capacity(maximum),
+            timestamp: Instant::now(),
+            flow_id: 0,
+        }
+    }
+
+    fn from_raw_buffer(buf: &[u8]) -> Self {
+        Self {
+            buf: buf.to_vec(),
+            timestamp: Instant::now(),
+            flow_id: 0,
+        }
+    }
+
+    fn length(&self) -> usize {
+        self.buf.len()
+    }
+
+    fn l2_length(&self) -> usize {
+        self.buf.len()
+    }
+
+    fn l3_length(&self) -> usize {
+        // 14 is the length of the Ethernet header
+        self.buf.len() - 14
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        self.buf.as_slice()
+    }
+
+    fn as_raw_buffer(&mut self) -> &mut [u8] {
+        self.buf.as_mut_slice()
+    }
+
+    fn get_timestamp(&self) -> Instant {
+        self.timestamp
+    }
+
+    fn set_timestamp(&mut self, timestamp: Instant) {
+        self.timestamp = timestamp;
+    }
+
+    fn delay_by(&mut self, delay: Duration) {
+        self.timestamp += delay;
+    }
+
+    fn delay_until(&mut self, timestamp: Instant) {
+        self.timestamp = timestamp;
+    }
+
+    fn desc(&self) -> String {
+        let mut desc = String::new();
+        if let Ok(ether_hdr) = etherparse::Ethernet2HeaderSlice::from_slice(self.buf.as_slice()) {
+            desc.push_str("[Ether] ");
+            match ether_hdr.ether_type() {
+                etherparse::EtherType::ARP => desc.push_str("[ARP]"),
+                etherparse::EtherType::IPV4 => {
+                    desc.push_str("[IPv4]");
+                    match etherparse::Ipv4HeaderSlice::from_slice(
+                        self.buf
+                            .as_slice()
+                            .get(ether_hdr.slice().len()..)
+                            .unwrap_or(&[]),
+                    ) {
+                        Ok(ip_hdr) => {
+                            desc.push_str(&format!(
+                                " src: {} dst: {} id: {} offset: {} chksum: {} ",
+                                ip_hdr.source_addr(),
+                                ip_hdr.destination_addr(),
+                                ip_hdr.identification(),
+                                ip_hdr.fragments_offset(),
+                                ip_hdr.header_checksum()
+                            ));
+                            match ip_hdr.protocol() {
+                                etherparse::IpNumber::UDP => {
+                                    desc.push_str("[UDP]");
+                                    if let Ok(udp_hdr) = etherparse::UdpHeaderSlice::from_slice(
+                                        self.buf
+                                            .as_slice()
+                                            .get(ether_hdr.slice().len() + ip_hdr.slice().len()..)
+                                            .unwrap_or(&[]),
+                                    ) {
+                                        desc.push_str(&format!(
+                                            " sport: {} dport: {} chksum: {}",
+                                            udp_hdr.source_port(),
+                                            udp_hdr.destination_port(),
+                                            udp_hdr.checksum()
+                                        ));
+                                    }
+                                }
+                                etherparse::IpNumber::TCP => {
+                                    desc.push_str("[TCP]");
+                                    if let Ok(tcp_hdr) = etherparse::TcpHeaderSlice::from_slice(
+                                        self.buf
+                                            .as_slice()
+                                            .get(ether_hdr.slice().len() + ip_hdr.slice().len()..)
+                                            .unwrap_or(&[]),
+                                    ) {
+                                        desc.push_str(&format!(
+                                            " sport: {} dport: {} chksum: {} seq: {} ack: {} flags: {}",
+                                            tcp_hdr.source_port(),
+                                            tcp_hdr.destination_port(),
+                                            tcp_hdr.checksum(),
+                                            tcp_hdr.sequence_number(),
+                                            tcp_hdr.acknowledgment_number(),
+                                            tcp_hdr.slice().get(13).unwrap()
+                                        ));
+                                    }
+                                }
+                                etherparse::IpNumber::ICMP => desc.push_str("[ICMP]"),
+                                etherparse::IpNumber::IPV6_ICMP => desc.push_str("[IPV6_ICMP]"),
+                                _ => desc.push_str("[Unknown]"),
+                            }
+                        }
+                        Err(e) => {
+                            desc.push_str(&format!("Error parsing: {e}"));
+                        }
+                    }
+                }
+
+                etherparse::EtherType::IPV6 => desc.push_str("[IPv6]"),
+                _ => desc.push_str("[Unknown]"),
+            }
+        } else {
+            desc.push_str("[Unknown]");
+        }
+        desc
+    }
+
+    fn flow_desc(&self) -> Option<FlowDesc> {
+        if let Ok(ether_hdr) = etherparse::Ethernet2HeaderSlice::from_slice(self.buf.as_slice()) {
+            match ether_hdr.ether_type() {
+                etherparse::EtherType::IPV4 => {
+                    match etherparse::Ipv4HeaderSlice::from_slice(
+                        self.buf
+                            .as_slice()
+                            .get(ether_hdr.slice().len()..)
+                            .unwrap_or(&[]),
+                    ) {
+                        Ok(ip_hdr) => match ip_hdr.protocol() {
+                            etherparse::IpNumber::TCP => {
+                                if let Ok(tcp_hdr) = etherparse::TcpHeaderSlice::from_slice(
+                                    self.buf
+                                        .as_slice()
+                                        .get(ether_hdr.slice().len() + ip_hdr.slice().len()..)
+                                        .unwrap_or(&[]),
+                                ) {
+                                    // Record all the options, only if SYN bit
+                                    // is set (SYN/ SYN_ACK) packet.
+                                    let options = tcp_hdr.syn().then(|| tcp_hdr.options().to_vec());
+                                    Some(FlowDesc::TCP(
+                                        ip_hdr.source_addr(),
+                                        ip_hdr.destination_addr(),
+                                        tcp_hdr.source_port(),
+                                        tcp_hdr.destination_port(),
+                                        options,
+                                    ))
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        },
+                        Err(_) => None,
+                    }
+                }
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    fn set_flow_id(&mut self, flow_id: u32) {
+        self.flow_id = flow_id;
+    }
+
+    fn get_flow_id(&self) -> u32 {
+        self.flow_id
+    }
 }
