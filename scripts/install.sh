@@ -191,11 +191,12 @@ download_rattan() {
 
 # --- Install steps ---
 install_binary() {
-  sudo install -m 755 "$1" /usr/local/bin/rattan
-  sudo setcap 'cap_dac_override,cap_dac_read_search,cap_sys_ptrace,cap_net_admin,cap_sys_admin,cap_net_raw+ep' /usr/local/bin/rattan
+    local binary_name=$(basename $1)
+    sudo install -m 755 "$1" /usr/local/bin/${binary_name}
+    sudo setcap 'cap_dac_override,cap_dac_read_search,cap_sys_ptrace,cap_net_admin,cap_sys_admin,cap_net_raw+ep' /usr/local/bin/${binary_name}
 }
 
-# Config systemd-networkd to not change MAC address of veth interfaces
+# Config systemd-networkd to not change MAC address of veth and rvnic interfaces
 # Ref: https://github.com/stack-rs/rattan/issues/42
 config_networkd() {
   if [ -d "/lib/systemd/network" ]; then
@@ -211,16 +212,41 @@ Driver=veth
 MACAddressPolicy=none
 EOF
 "
-    sudo systemctl daemon-reload
-    sudo systemctl restart systemd-networkd.service
-  fi
+        sudo sh -c "cat <<EOF >/lib/systemd/network/80-rattan-rv.link
+[Match]
+OriginalName=rattan*
+
+[Link]
+MACAddressPolicy=none
+EOF
+"
+        sudo systemctl daemon-reload
+        sudo systemctl restart systemd-networkd.service
+    fi
+}
+
+config_nm() {
+    sudo mkdir -p /etc/NetworkManager/conf.d
+    sudo sh -c "cat <<EOF >/etc/NetworkManager/conf.d/80-rattan-unmanaged.conf
+# Do not manage interfaces created and owned by rattan.
+# These interfaces manage their own lifecycle (addresses, up/down state).
+[keyfile]
+unmanaged-devices=interface-name:ns*-v*-*;interface-name:rattan*
+EOF
+"
+    sudo systemctl reload NetworkManager.service
 }
 
 install_rattan() {
-  local _binary_path="$1"
-  install_binary "$_binary_path"
-  config_networkd
-  echo "$APP_NAME installed successfully to /usr/local/bin/$APP_NAME"
+  local binary_path=${1:-"rattan"}
+  install_binary "$binary_path"
+
+  if systemctl cat systemd-networkd.service >/dev/null 2>&1; then
+      config_networkd
+  fi
+  if systemctl cat NetworkManager.service >/dev/null 2>&1; then
+      config_nm
+  fi
 }
 
 # --- Entry point ---
@@ -239,8 +265,9 @@ Options:
     --help|-h    Print this help message
 
 Examples:
-    $myname                         # Download and install latest release
-    $myname target/release/rattan   # Install a locally-built binary
+    $myname                            # Download and install latest release
+    $myname target/release/rattan      # Install a locally-built binary
+    $myname target/release/rattan-rv   # Install a locally-built binary using rattan vnic
 
 EOL
   exit 1
