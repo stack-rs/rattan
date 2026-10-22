@@ -119,6 +119,14 @@ impl Packet for RvnicPacket {
     fn delay_until(&mut self, timestamp: Instant) {
         self.timestamp = timestamp;
     }
+    #[inline(always)]
+    fn debug_log(&self, args: std::fmt::Arguments) {
+        let token = self.desc.token;
+        if token & 0x7FFF == 0 {
+            let msg = format!("{args}");
+            tracing::debug!(target: "rvnic", "Pkt{:x}: {}", token, msg);
+        }
+    }
 }
 
 pub struct RvnicSender {
@@ -208,6 +216,8 @@ fn packet_send_prepare(packet: impl Into<RvnicPacket>) -> (RattanDesc, (QueueID,
     let token = packet.desc.token;
     let desc = packet.desc;
 
+    packet.debug_log(format_args!("sent out"));
+
     // Make the constant compare first, make it easier for the compiler's optimizier.
     // Warning: As no cells we currently have modifies the header, this function is never tested!
     if RATTAN_HEADER_SIZE != 0 {
@@ -236,7 +246,7 @@ impl RvnicDriver {
             packets.into_iter().map(packet_send_prepare).unzip();
 
         let sent = tx.produce(&packets);
-        tracing::debug!(target: "rvnic", "[{}]Send batch {}/{}", meta.device_fd, packets.len(), sent);
+        tracing::trace!(target: "rvnic", "[{}]Send batch {}/{}", meta.device_fd, packets.len(), sent);
         meta.kick_self();
         if sent < packets.len() {
             for to_report in loss_report.into_iter().skip(sent) {
@@ -405,10 +415,11 @@ impl InterfaceDriver for RvnicDriver {
                         sent: false,
                     });
                     for packet in result {
+                        packet.debug_log(format_args!("received by epoll"));
                         let _ = tx.blocking_send(packet);
                     }
                 }
-                tracing::debug!(target: "rvnic", "[{}]Recv batch {} @ {}", self_raw_fd, batch_count, loop_cnt);
+                tracing::trace!(target: "rvnic", "[{}]Recv batch {} @ {}", self_raw_fd, batch_count, loop_cnt);
             }
         }
 

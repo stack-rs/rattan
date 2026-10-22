@@ -102,6 +102,7 @@ where
                     "Skipped ingress round up as not started");
             }
         }
+        packet.debug_log(format_args!("DelayCellIngress::enqueue"));
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -167,6 +168,11 @@ where
                 }
             }
         };
+        let linger_packets = self.egress.len();
+        packet.debug_log(format_args!(
+            "DelayCellEgress::dequeue {} pkts linger in Delay Cell",
+            linger_packets
+        ));
 
         // Logical timestamps are considered non-decreasing.
         let timestamp = packet.get_timestamp();
@@ -194,6 +200,7 @@ where
         self.latest_egress_timestamp = send_time;
 
         packet.delay_until(send_time);
+        packet.debug_log(format_args!("DelayCellEgress exit"));
         Some(packet)
     }
 

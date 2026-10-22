@@ -147,6 +147,11 @@ where
     async fn send(mut receiver: tokio::sync::mpsc::Receiver<D::Packet>, sender: Arc<D::Sender>) {
         loop {
             if let Some(packet) = receiver.recv().await {
+                let linger_packets = receiver.len();
+                packet.debug_log(format_args!(
+                    "Veth ingress to driver, {} pkts linger in SEND channel",
+                    linger_packets
+                ));
                 let _ = sender.send(packet);
             }
         }
@@ -180,6 +185,7 @@ where
             if let (Some(&log_mode), Some(log_tx)) = (PKT_LOG_MODE.get(), self.log_tx.as_ref()) {
                 log_packet(log_tx, &packet, PktAction::Send, self.base_ts, log_mode);
             }
+            packet.debug_log(format_args!("Veth ingress enqueue"));
             v.send(packet);
             return Ok(());
         }
@@ -300,6 +306,7 @@ where
                     continue;
                 }
             };
+            packet.debug_log(format_args!("Veth egress from driver"));
 
             // Getting `Packet::flow_desc()` is not trivial (including inspection of the headers in the payload).
             // Avoid doing so when packet log is not enabled.
@@ -529,7 +536,13 @@ where
     D::Packet: Packet + Send + Sync,
 {
     async fn dequeue(&mut self) -> Option<D::Packet> {
-        return self.receiver.recv().await;
+        let packet = self.receiver.recv().await?;
+        let linger_packets = self.receiver.len();
+        packet.debug_log(format_args!(
+            "Veth egress dequeue, {} pkts linger in RECV channel",
+            linger_packets
+        ));
+        Some(packet)
     }
 }
 
