@@ -35,6 +35,22 @@ use pcap_file::pcapng::{
 #[cfg(feature = "packet-dump")]
 use std::{fs::File, io::Write, sync::Mutex};
 
+fn trigger_first_payload<P: Packet>(packet: &P) -> bool {
+    if cfg!(not(feature = "first-payload")) {
+        tracing::warn!("first-payload is disabled");
+        // Disable first payload for all the tests for now.
+        return true;
+    }
+    // A largest possible L3 TCP/IP packet without payload:
+    // IP header 20B + 40B option
+    // TCP header 20B + 40B option, which is 120B in total
+    let has_payload = packet.l3_length() >= 500;
+    if has_payload {
+        tracing::info!("Found first payload");
+    }
+    has_payload
+}
+
 pub static CALIBRATED_START_INSTANT: OnceCell<tokio::time::Instant> = OnceCell::new();
 pub static FIRST_PACKET_INSTANT: OnceCell<tokio::time::Instant> = OnceCell::new();
 
@@ -282,7 +298,7 @@ where
                                 if let Some(p) = packet {
                                     // Check if this is the first packet from VirtualEthernet and send FirstPacket notify
                                     if (rx_id.starts_with("left") || rx_id.starts_with("right")) &&
-                                       FIRST_PACKET_INSTANT.get().is_none() &&
+                                       FIRST_PACKET_INSTANT.get().is_none() && trigger_first_payload(&p) &&
                                        FIRST_PACKET_INSTANT.set(tokio::time::Instant::now()).is_ok() {
                                         if let Err(e) = notify_tx.exec(RattanOp::SendNotify(RattanNotify::FirstPacket)).await {
                                             warn!(rx_id, tx_id, "Failed to send FirstPacket notify: {e:?}");
