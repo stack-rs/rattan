@@ -45,9 +45,10 @@ human-bandwidth = { version = "0.1.4", features = ["binary-system", "serde"] }
 ipnet = { version = "2.11.0", features = ["serde"] }
 jiff = "0.2.15"
 libc = "0.2.141"
-netem-trace = { version = "0.4.4", features = [
+netem-trace = { version = "0.5.0", features = [
   "human",
   "mahimahi",
+  "pdo-model",
   "serde",
   "trace-ext",
 ] }
