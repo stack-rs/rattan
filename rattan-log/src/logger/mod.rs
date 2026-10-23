@@ -58,6 +58,8 @@ pub enum RattanLogOp {
     RawEntry(u32, RawLogEntry, Vec<u8>),
     /// Represents a flow consists of (flow_id, base_time_us, flow_desc).
     Flow(u32, u64, FlowDesc),
+    /// Log the trace start point, in us
+    TraceStart(u64),
     /// End of Log
     End,
 }

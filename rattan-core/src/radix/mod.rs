@@ -9,7 +9,7 @@ use backon::{BlockingRetryable, ExponentialBuilder};
 use once_cell::sync::{Lazy, OnceCell};
 use rattan_env::netns::NetNsGuard;
 use rattan_log::{file_logging_thread, RattanLogOp, LOGGING_TX};
-use tokio::runtime::Runtime;
+use tokio::{runtime::Runtime, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, span, warn, Level};
 // use nix::{
@@ -37,7 +37,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 
 pub static INSTANCE_ID: OnceCell<String> = OnceCell::new();
 
-pub static BASE_TS: Lazy<(i64, u64)> = Lazy::new(|| {
+pub static BASE_TS: Lazy<(i64, u64, tokio::time::Instant)> = Lazy::new(|| {
     // Internal use
     let machine_time = get_clock_ns();
     // Used as base timestamp in Packet Logs.
@@ -45,7 +45,7 @@ pub static BASE_TS: Lazy<(i64, u64)> = Lazy::new(|| {
         .duration_since(UNIX_EPOCH)
         .expect("Time went backwards")
         .as_micros();
-    (machine_time, unix_time as u64)
+    (machine_time, unix_time as u64, Instant::now())
 });
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum, PartialEq, Eq)]

@@ -182,6 +182,10 @@ fn writing(path: PathBuf, mut log_rx: UnboundedReceiver<RattanLogOp>) -> Result<
                 let (offset, size) = entry_writer.add_raw(&raw)?;
                 entry_writer.add_raw_log_entry(entry, offset, size, build_chunk_prologue)?;
             }
+            RattanLogOp::TraceStart(start_time) => {
+                let entry = FlowEntryVariant::from(start_time).build();
+                entry_writer.add_flow_entry(&entry)?;
+            }
             RattanLogOp::End => {
                 break;
             }
