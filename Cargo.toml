@@ -39,6 +39,7 @@ bitfield = "0.19.0"
 clap = { version = "4.2.4", features = ["derive"] }
 csv = "1.4.0"
 ctrlc = "3.5.2"
+etherparse = "0.19.0"
 figment = { version = "0.10", features = ["env", "json", "toml"] }
 futures = "0.3.32"
 human-bandwidth = { version = "0.1.4", features = ["binary-system", "serde"] }
@@ -67,6 +68,7 @@ pcap-file = { version = "2.0.0" }
 rand = "0.10.0"
 rtnetlink = "0.20.0"
 serde = { version = "1.0.160", features = ["derive"] }
+serde_json = "1.0.149"
 tempfile = "3"
 test-log = { version = "0.2.18", features = ["trace"] }
 thiserror = "2.0.0"
@@ -113,7 +115,7 @@ rand = { workspace = true }
 rattan-core = { path = "rattan-core", features = ["serde"], version = "0.1.1" }
 rattan-log = { path = "rattan-log", version = "0.1.1" }
 serde = { workspace = true }
-serde_json = "1.0.114"
+serde_json = { workspace = true, features = ["preserve_order"] }
 shadow-rs = { version = "1.7.0", default-features = false }
 tokio = { workspace = true }
 toml = "1.0.1"
@@ -126,6 +128,8 @@ shadow-rs = "1.7.0"
 
 [features]
 default = ["first-packet"]
+drift-stat = ["rattan-core/drift-stat"]
+drift-log = ["rattan-core/drift-log"]
 first-packet = ["rattan-core/first-packet"]
 http = ["rattan-core/http"]
 nat = ["dep:mnl", "dep:nftnl"]
