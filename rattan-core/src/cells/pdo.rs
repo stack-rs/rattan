@@ -1,9 +1,10 @@
 //! A cell that replays packet delivery opportunities (PDOs), like the link queue of mahimahi.
 //!
 //! There is no concept of bandwidth here. A heavy PDO trace says when some bytes can leave the
-//! cell. The packet at the head of the queue uses those bytes (counted by its L3 length, as
-//! mahimahi does), so a large packet may need several PDOs and one PDO may send several small
-//! packets. The bytes of a PDO that are not used when there is nothing to send are wasted.
+//! cell. The packet at the head of the queue uses those bytes, so a large packet may need several
+//! PDOs and one PDO may send several small packets. The size of a packet follows the `BwType` of
+//! the queue, which is the L3 length by default, as mahimahi does. The bytes of a PDO that are
+//! not used when there is nothing to send are wasted.
 
 use std::sync::Arc;
 
@@ -30,9 +31,9 @@ struct Transmitting<P: Packet> {
 }
 
 impl<P: Packet> Transmitting<P> {
-    fn new(packet: P) -> Self {
+    fn new(packet: P, extra_length: usize) -> Self {
         Self {
-            bytes_left: packet.l3_length() as u64,
+            bytes_left: (packet.l3_length() + extra_length) as u64,
             packet,
         }
     }
@@ -151,7 +152,8 @@ where
         while bytes > 0 {
             if self.transmitting.is_none() {
                 let packet = self.packet_queue.dequeue_at(time)?;
-                self.transmitting = Some(Transmitting::new(packet));
+                let extra_length = self.packet_queue.get_extra_length();
+                self.transmitting = Some(Transmitting::new(packet, extra_length));
             }
             let transmitting = self.transmitting.as_mut().unwrap();
             // A packet can not use a PDO before it arrives. This only happens with a zero-buffer
@@ -178,7 +180,8 @@ where
             // A zero-buffer queue returns the packet right away. It is sent if no other packet is
             // being sent, or dropped otherwise.
             if self.transmitting.is_none() {
-                self.transmitting = Some(Transmitting::new(packet));
+                let extra_length = self.packet_queue.get_extra_length();
+                self.transmitting = Some(Transmitting::new(packet, extra_length));
             }
         }
     }
@@ -564,6 +567,21 @@ mod tests {
             2,
         )?;
         assert_eq!(departures, vec![(0, 10), (2, 30)]);
+        Ok(())
+    }
+
+    #[test_log::test]
+    fn pdo_follows_queue_bw_type() -> Result<(), Error> {
+        let _span = span!(Level::INFO, "pdo_follows_queue_bw_type").entered();
+        // With `BwType::LinkLayer`, each 1462-byte packet counts as 1500 bytes, so it uses a
+        // whole PDO, and packet 1 waits for the PDO at 20ms.
+        let departures = replay(
+            static_trace(10, 1500),
+            DropTailQueue::new(DropTailQueueConfig::new(None, None, BwType::LinkLayer)).unwrap(),
+            &[(5, 1462), (5, 1462)],
+            2,
+        )?;
+        assert_eq!(departures, vec![(0, 10), (1, 20)]);
         Ok(())
     }
 

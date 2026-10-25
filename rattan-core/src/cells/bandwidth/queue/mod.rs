@@ -130,6 +130,12 @@ where
     pub fn is_queue_empty(&self) -> bool {
         self.queue.is_empty()
     }
+
+    /// Returns the extra length added to the L3 length of each packet, given by the `BwType`
+    /// of the inner queue.
+    pub fn get_extra_length(&self) -> usize {
+        self.queue.get_extra_length()
+    }
 }
 
 pub trait PacketQueue<P>: Send
