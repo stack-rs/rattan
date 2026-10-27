@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use criterion::{measurement::WallTime, BenchmarkGroup, BenchmarkId};
+use criterion::{BenchmarkGroup, BenchmarkId, measurement::WallTime};
 use netem_trace::model::{
     DelayPerPacketTraceConfig, LogNormalizedDelayPerPacketConfig, NormalizedDelayPerPacketConfig,
     StaticDelayPerPacketConfig,
@@ -8,14 +8,14 @@ use netem_trace::model::{
 use rand::random_range;
 use rattan_core::{
     cells::{
-        per_packet::delay::{DelayPerPacketCell, DelayPerPacketCellConfig},
         Cell as _, Egress as _, Ingress as _, Packet, StdPacket,
+        per_packet::delay::{DelayPerPacketCell, DelayPerPacketCellConfig},
     },
     config::DelayPerPacketCellBuildConfig,
 };
 use tokio::{runtime::Handle, time::Interval};
 
-use crate::{utils::clock, MTU};
+use crate::{MTU, utils::clock};
 
 fn init<P: Packet + Sync, D: DelayPerPacketTraceConfig + 'static>(
     delay: D,

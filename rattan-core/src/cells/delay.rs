@@ -1,12 +1,12 @@
 use std::{fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
-use netem_trace::{model::DelayTraceConfig, Delay, DelayTrace};
+use netem_trace::{Delay, DelayTrace, model::DelayTraceConfig};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::Instant};
 
-use super::{TimedConfig, LARGE_DURATION, TRACE_START_INSTANT};
+use super::{LARGE_DURATION, TRACE_START_INSTANT, TimedConfig};
 #[cfg(test)]
 use crate::cells::relative_time;
 use crate::cells::{AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, Packet};
@@ -472,7 +472,7 @@ mod tests {
     use netem_trace::model::{RepeatedDelayPatternConfig, StaticDelayConfig};
     use std::time::Duration;
     use tokio::time::Instant;
-    use tracing::{info, span, Level};
+    use tracing::{Level, info, span};
 
     use crate::cells::{StdPacket, TestPacket};
 

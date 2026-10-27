@@ -1,19 +1,19 @@
 use std::{sync::Arc, time::Duration};
 
 use bandwidth::Bandwidth;
-use criterion::{measurement::WallTime, BenchmarkGroup, BenchmarkId};
+use criterion::{BenchmarkGroup, BenchmarkId, measurement::WallTime};
 use human_bandwidth::binary_system::format_binary_bandwidth;
 use rand::random_range;
 use rattan_core::cells::{
-    bandwidth::{
-        queue::{InfiniteQueue, InfiniteQueueConfig},
-        BwCell, BwCellConfig, BwType,
-    },
     Cell as _, Egress as _, Ingress as _, Packet, StdPacket,
+    bandwidth::{
+        BwCell, BwCellConfig, BwType,
+        queue::{InfiniteQueue, InfiniteQueueConfig},
+    },
 };
 use tokio::{runtime::Handle, time::Interval};
 
-use crate::{utils::clock, MTU};
+use crate::{MTU, utils::clock};
 
 type Cell<P> = BwCell<P, InfiniteQueue<P>>;
 

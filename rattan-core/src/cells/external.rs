@@ -4,8 +4,8 @@ use std::{
     collections::HashMap,
     fmt::Display,
     sync::{
-        atomic::{AtomicU32, AtomicUsize},
         Arc, LazyLock,
+        atomic::{AtomicU32, AtomicUsize},
     },
 };
 
@@ -14,8 +14,8 @@ use bitfield::{BitRange, BitRangeMut};
 use parking_lot::RwLock;
 use rattan_env::veth::VethCell;
 use rattan_log::{
-    log_entry::general_packet::GeneralPacketType, log_entry::PktAction, FlowDesc, PlainBytes,
-    RattanLogOp, RawLogEntry, LOGGING_TX,
+    FlowDesc, LOGGING_TX, PlainBytes, RattanLogOp, RawLogEntry, log_entry::PktAction,
+    log_entry::general_packet::GeneralPacketType,
 };
 #[cfg(feature = "serde")]
 use serde::Deserialize;
@@ -26,7 +26,7 @@ use crate::{
     cells::{Cell, ControlInterface, Egress, Ingress, Packet},
     error::{Error, TokioRuntimeError},
     metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender},
-    radix::{PacketLogMode, BASE_TS, PKT_LOG_MODE},
+    radix::{BASE_TS, PKT_LOG_MODE, PacketLogMode},
 };
 
 #[derive(Debug, Clone, Copy)]

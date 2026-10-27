@@ -4,7 +4,7 @@ use libc::{__c_anonymous_ifr_ifru, c_char, c_uint, ifreq};
 use nix::{
     errno::Errno,
     ioctl_readwrite_bad,
-    sys::socket::{socket, AddressFamily, SockFlag, SockType},
+    sys::socket::{AddressFamily, SockFlag, SockType, socket},
 };
 
 use crate::error::VethError;
@@ -165,7 +165,7 @@ pub fn disable_checksum_offload(name: &str) -> Result<(), VethError> {
 mod tests {
     use std::process::Command;
 
-    use super::{disable_checksum_offload, get_feature_flag, OFF_FLAG_DEF_SIZE};
+    use super::{OFF_FLAG_DEF_SIZE, disable_checksum_offload, get_feature_flag};
 
     struct VethTest();
     impl VethTest {

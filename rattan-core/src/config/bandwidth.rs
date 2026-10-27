@@ -1,20 +1,19 @@
 use std::{io::BufRead, path::Path};
 
 use figment::{
-    providers::{Format, Json, Toml},
     Figment,
+    providers::{Format, Json, Toml},
 };
-use netem_trace::{model::BwTraceConfig, BwTrace};
+use netem_trace::{BwTrace, model::BwTraceConfig};
 use tracing::{debug, error};
 
 use crate::{
     cells::{
-        bandwidth::{
-            self,
-            queue::{self, PacketQueue},
-            BwCell, BwReplayCell, BwType,
-        },
         Packet,
+        bandwidth::{
+            self, BwCell, BwReplayCell, BwType,
+            queue::{self, PacketQueue},
+        },
     },
     core::CellFactory,
     error::Error,

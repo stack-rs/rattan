@@ -1,5 +1,5 @@
 use crate::{
-    cells::{token_bucket, Packet},
+    cells::{Packet, token_bucket},
     core::CellFactory,
 };
 

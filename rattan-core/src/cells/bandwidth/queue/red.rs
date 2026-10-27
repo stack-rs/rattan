@@ -218,7 +218,7 @@
 
 use std::collections::VecDeque;
 
-use rand::{rngs::StdRng, RngExt, SeedableRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::time::{Duration, Instant};
@@ -873,7 +873,11 @@ mod tests {
         assert!(
             drop_count >= lower_bound && drop_count <= upper_bound,
             "Drop count {} should be in range [{}, {}] (expected {} ± {} based on RED algorithm with p_b=0.25)",
-            drop_count, lower_bound, upper_bound, expected_drop_count, margin
+            drop_count,
+            lower_bound,
+            upper_bound,
+            expected_drop_count,
+            margin
         );
 
         // Keep original assertions as sanity checks

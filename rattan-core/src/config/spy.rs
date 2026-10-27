@@ -8,7 +8,7 @@ use dyn_clone::DynClone;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cells::{spy, Packet},
+    cells::{Packet, spy},
     core::CellFactory,
 };
 

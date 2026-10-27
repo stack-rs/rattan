@@ -8,7 +8,7 @@ use std::os::fd::AsRawFd;
 use std::process::Command;
 use std::sync::{Arc, Mutex, Weak};
 // use tempfile::TempDir;
-use tracing::{debug, error, info, instrument, span, Level};
+use tracing::{Level, debug, error, info, instrument, span};
 
 use crate::ioctl::disable_checksum_offload;
 
@@ -85,11 +85,18 @@ impl Drop for IpVethPair {
             .output();
 
         if let Err(e) = output {
-            error!("Failed to delete veth pair: {e} (you may need to delete it manually with 'sudo ip link del {}')", &self.left.lock().unwrap().name);
+            error!(
+                "Failed to delete veth pair: {e} (you may need to delete it manually with 'sudo ip link del {}')",
+                &self.left.lock().unwrap().name
+            );
         } else {
             let output = output.unwrap();
             if !output.status.success() {
-                error!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", String::from_utf8_lossy(&output.stderr), &self.left.lock().unwrap().name);
+                error!(
+                    "Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')",
+                    String::from_utf8_lossy(&output.stderr),
+                    &self.left.lock().unwrap().name
+                );
             }
         }
     }
@@ -476,7 +483,10 @@ impl Drop for VethPair {
                 })
         });
         if let Err(e) = build_thread.join().unwrap() {
-            error!("Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')", e, left_name);
+            error!(
+                "Failed to delete veth pair: {} (you may need to delete it manually with 'sudo ip link del {}')",
+                e, left_name
+            );
         };
     }
 }

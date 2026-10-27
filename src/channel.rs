@@ -5,11 +5,11 @@ use netem_trace::{Bandwidth, Delay};
 use paste::paste;
 use rattan_core::{
     cells::bandwidth::{
+        BwCellConfig,
         queue::{
             CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
             PieQueueConfig, RedQueueConfig,
         },
-        BwCellConfig,
     },
     config::{
         BwCellBuildConfig, BwReplayCellBuildConfig, BwReplayQueueConfig, CellBuildConfig,

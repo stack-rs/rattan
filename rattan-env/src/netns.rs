@@ -5,8 +5,8 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::thread::{self, JoinHandle};
 
-use nix::mount::{mount, umount2, MntFlags, MsFlags};
-use nix::sched::{setns, unshare, CloneFlags};
+use nix::mount::{MntFlags, MsFlags, mount, umount2};
+use nix::sched::{CloneFlags, setns, unshare};
 use nix::unistd::gettid;
 use tracing::{debug, error, info, trace};
 
@@ -366,7 +366,7 @@ mod tests {
 
     #[test_log::test]
     fn test_netns() {
-        use rand::{distr::Alphanumeric, RngExt};
+        use rand::{RngExt, distr::Alphanumeric};
         let namespace_name: String = rand::rng()
             .sample_iter(&Alphanumeric)
             .take(8)
@@ -413,7 +413,7 @@ mod tests {
 
     #[test_log::test]
     fn test_netns_drop() {
-        use rand::{distr::Alphanumeric, RngExt};
+        use rand::{RngExt, distr::Alphanumeric};
         let namespace_name: String = rand::rng()
             .sample_iter(&Alphanumeric)
             .take(8)

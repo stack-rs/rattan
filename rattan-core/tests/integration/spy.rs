@@ -9,7 +9,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::io::Cursor;
 use tempfile::NamedTempFile;
-use tracing::{info, instrument, span, Level};
+use tracing::{Level, info, instrument, span};
 
 #[instrument]
 #[test_log::test]

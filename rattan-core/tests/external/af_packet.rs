@@ -4,11 +4,11 @@ use libc::{c_void, size_t, sockaddr, sockaddr_ll, socklen_t};
 use nix::errno::Errno;
 use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout};
 use nix::sys::socket::{AddressFamily, SockType};
-use rattan_core::env::{get_std_env, StdNetEnvConfig};
+use rattan_core::env::{StdNetEnvConfig, get_std_env};
 use rattan_env::veth::{MacAddr, VethCell};
 use std::os::fd::{FromRawFd, OwnedFd};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{mem, ptr};
 use tracing::debug;
 

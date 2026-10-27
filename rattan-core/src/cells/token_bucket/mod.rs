@@ -10,11 +10,11 @@ use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 use tracing::debug;
 
-use super::bandwidth::queue::{DropTailQueue, DropTailQueueConfig};
 use super::TRACE_START_INSTANT;
+use super::bandwidth::queue::{DropTailQueue, DropTailQueueConfig};
 use super::{ControlInterface, Egress, Ingress};
 use crate::cells::bandwidth::queue::PacketQueue;
-use crate::cells::{AtomicCellState, Cell, CellState, Packet, LARGE_DURATION};
+use crate::cells::{AtomicCellState, Cell, CellState, LARGE_DURATION, Packet};
 use crate::error::Error;
 use crate::metal::timer::Timer;
 
@@ -523,7 +523,7 @@ where
 #[cfg(test)]
 mod tests {
     use tokio::time::Instant;
-    use tracing::{info, span, Level};
+    use tracing::{Level, info, span};
 
     use crate::cells::{StdPacket, TestPacket};
 
@@ -810,7 +810,9 @@ mod tests {
     fn test_token_bucket_cell_prate_low() -> Result<(), Error> {
         // test peak_rate when peak_rate is lower than rate
         let _span = span!(Level::INFO, "test_token_bucket_cell_prate_low").entered();
-        info!("Creating cell with 1024 B burst, 8192 bps rate, 128 B min_burst, 4096 bps peak_rate and a 1024 bytes limit queue.");
+        info!(
+            "Creating cell with 1024 B burst, 8192 bps rate, 128 B min_burst, 4096 bps peak_rate and a 1024 bytes limit queue."
+        );
         let config = TokenBucketCellConfig::new(
             1024,
             Bandwidth::from_bps(8192),
@@ -847,7 +849,9 @@ mod tests {
     fn test_token_bucket_cell_prate_high() -> Result<(), Error> {
         // test peak_rate when peak_rate is higher than rate
         let _span = span!(Level::INFO, "test_token_bucket_cell_prate_high").entered();
-        info!("Creating cell with 512 B burst, 4096 bps rate, 256 B min_burst, 8192 bps peak_rate and a 1024 bytes limit queue.");
+        info!(
+            "Creating cell with 512 B burst, 4096 bps rate, 256 B min_burst, 8192 bps peak_rate and a 1024 bytes limit queue."
+        );
         let config = TokenBucketCellConfig::new(
             1024,
             Bandwidth::from_bps(4096),

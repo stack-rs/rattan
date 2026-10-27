@@ -6,8 +6,8 @@ use std::{sync::mpsc, time::Instant};
 
 use itertools::Itertools;
 use netem_trace::{
-    model::{BwTraceConfig, RepeatedBwPatternConfig, StaticBwConfig},
     Bandwidth, BwTrace,
+    model::{BwTraceConfig, RepeatedBwPatternConfig, StaticBwConfig},
 };
 #[cfg(feature = "serde")]
 use rattan_core::{
@@ -18,11 +18,11 @@ use rattan_core::{
 };
 use rattan_core::{
     cells::{
-        bandwidth::{
-            queue::{DropTailQueue, DropTailQueueConfig, InfiniteQueueConfig, PacketQueue},
-            BwCellConfig, BwReplayCell, BwReplayCellConfig, BwType,
-        },
         ControlInterface, StdPacket,
+        bandwidth::{
+            BwCellConfig, BwReplayCell, BwReplayCellConfig, BwType,
+            queue::{DropTailQueue, DropTailQueueConfig, InfiniteQueueConfig, PacketQueue},
+        },
     },
     config::{BwCellBuildConfig, CellBuildConfig, RattanConfig},
     env::{StdNetEnvConfig, StdNetEnvMode},
@@ -32,7 +32,7 @@ use rattan_core::{
 use regex::Regex;
 #[cfg(feature = "serde")]
 use tokio_util::sync::CancellationToken;
-use tracing::{info, instrument, span, warn, Level};
+use tracing::{Level, info, instrument, span, warn};
 
 #[instrument]
 #[test_log::test]

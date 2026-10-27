@@ -11,11 +11,11 @@ use memmap2::Mmap;
 
 use crate::{
     log_entry::{
-        entry::flow_entry::FlowEntryVariant, general_packet::GeneralPacketType, LogEntry, PktAction,
+        LogEntry, PktAction, entry::flow_entry::FlowEntryVariant, general_packet::GeneralPacketType,
     },
     logger::{
         mmap::mmap_file,
-        pcap::{add_eth, add_ip, get_mock_mac, PacketWriter},
+        pcap::{PacketWriter, add_eth, add_ip, get_mock_mac},
     },
 };
 
@@ -36,7 +36,9 @@ impl ParseContext {
         let mut base_ts = None;
 
         if input.len() > u16::MAX as usize {
-            tracing::error!("No more than 65535 flows are supported in current version. It will not be recorded from the 65,536th stream forward.");
+            tracing::error!(
+                "No more than 65535 flows are supported in current version. It will not be recorded from the 65,536th stream forward."
+            );
         }
 
         for (index, entry) in input.into_iter().enumerate().take(u16::MAX as usize) {

@@ -420,10 +420,12 @@ mod test {
         file.read_to_end(&mut file_content).unwrap();
 
         // Check file content
-        assert!(!file_content
-            .iter()
-            .enumerate()
-            .any(|(i, &b)| ((i * 7) % 256) as u8 != b));
+        assert!(
+            !file_content
+                .iter()
+                .enumerate()
+                .any(|(i, &b)| ((i * 7) % 256) as u8 != b)
+        );
     }
 
     #[test_log::test]

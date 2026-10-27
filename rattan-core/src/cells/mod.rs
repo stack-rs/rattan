@@ -1,8 +1,8 @@
 use std::{
     fmt::Debug,
     sync::{
-        atomic::{AtomicU8, Ordering},
         Arc,
+        atomic::{AtomicU8, Ordering},
     },
 };
 

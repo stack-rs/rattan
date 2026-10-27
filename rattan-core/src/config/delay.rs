@@ -1,14 +1,14 @@
 use figment::{
-    providers::{Format, Json, Toml},
     Figment,
+    providers::{Format, Json, Toml},
 };
 
-use netem_trace::{model::DelayTraceConfig, DelayTrace};
+use netem_trace::{DelayTrace, model::DelayTraceConfig};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cells::{delay, Packet},
+    cells::{Packet, delay},
     core::CellFactory,
     error::Error,
     utils::replace_env_var_in_string,

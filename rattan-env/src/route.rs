@@ -14,7 +14,7 @@ use rtnetlink::packet_route::{
     route::RouteScope,
 };
 use rtnetlink::{LinkMessageBuilder, LinkUnspec, RouteMessageBuilder};
-use tracing::{debug, error, span, warn, Level};
+use tracing::{Level, debug, error, span, warn};
 
 fn execute_rtnetlink_with_new_thread<F>(netns: Arc<NetNs>, f: F) -> Result<(), Error>
 where

@@ -6,13 +6,13 @@ use std::time::Duration;
 
 use netem_trace::Bandwidth;
 use rattan_core::cells::{
+    StdPacket,
     bandwidth::{
-        queue::{InfiniteQueue, InfiniteQueueConfig},
         BwCellConfig,
+        queue::{InfiniteQueue, InfiniteQueueConfig},
     },
     delay::DelayCellConfig,
     loss::LossCellConfig,
-    StdPacket,
 };
 use rattan_core::config::{
     BwCellBuildConfig, CellBuildConfig, DelayCellBuildConfig, LossCellBuildConfig, RattanConfig,
@@ -22,7 +22,7 @@ use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
 use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
 use regex::Regex;
-use tracing::{error, info, instrument, span, warn, Level};
+use tracing::{Level, error, info, instrument, span, warn};
 
 #[instrument]
 #[test_log::test]

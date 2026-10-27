@@ -202,11 +202,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::cells::{shadow::ShadowCell, StdPacket};
+    use crate::cells::{StdPacket, shadow::ShadowCell};
     use etherparse::{PacketBuilder, SlicedPacket, TransportSlice};
     use ipnet::IpNet;
-    use rand::{rng, RngExt};
-    use tracing::{span, Level};
+    use rand::{RngExt, rng};
+    use tracing::{Level, span};
 
     use super::*;
 
@@ -259,11 +259,13 @@ mod tests {
         let ingresses: Vec<Arc<dyn Ingress<_>>> =
             vec![shadow0.sender().clone(), shadow1.sender().clone()];
 
-        assert!(RouterCell::<_, SimpleRoutingTable>::new(
-            ingresses.clone(),
-            vec![RoutingEntry::new(ips[0], Some(2))]
-        )
-        .is_err());
+        assert!(
+            RouterCell::<_, SimpleRoutingTable>::new(
+                ingresses.clone(),
+                vec![RoutingEntry::new(ips[0], Some(2))]
+            )
+            .is_err()
+        );
 
         let mut egresses = [shadow0.into_receiver(), shadow1.into_receiver()];
         egresses[0].reset();
@@ -360,12 +362,14 @@ mod tests {
         ingress.enqueue(packet)?; // should drop
 
         // test set_config
-        assert!(control
-            .set_config(vec![
-                RoutingEntry::new(ips[0], Some(0)),
-                RoutingEntry::new(ips[1], Some(2)),
-            ])
-            .is_err());
+        assert!(
+            control
+                .set_config(vec![
+                    RoutingEntry::new(ips[0], Some(0)),
+                    RoutingEntry::new(ips[1], Some(2)),
+                ])
+                .is_err()
+        );
         control
             .set_config(vec![
                 RoutingEntry::new(ips[0], Some(1)),

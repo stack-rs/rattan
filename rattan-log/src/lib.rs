@@ -8,7 +8,7 @@ mod logger;
 
 pub use log_entry::entry::{flow_entry::TCPFlow, raw::RawLogEntry, tcp_ip_compact::TCPLogEntry};
 pub use logger::{
-    reader::convert_log_to_pcapng, writer::file_logging_thread, FlowDesc, RattanLogOp, LOGGING_TX,
+    FlowDesc, LOGGING_TX, RattanLogOp, reader::convert_log_to_pcapng, writer::file_logging_thread,
 };
 
 pub trait PlainBytes: Plain + Sized {

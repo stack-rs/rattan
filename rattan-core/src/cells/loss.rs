@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::sync::{atomic::AtomicU64, Arc};
+use std::sync::{Arc, atomic::AtomicU64};
 
 use async_trait::async_trait;
 use netem_trace::model::LossTraceConfig;
@@ -14,7 +14,7 @@ use tracing::{debug, info};
 use super::TRACE_START_INSTANT;
 use super::{ControlInterface, Egress, Ingress};
 use crate::cells::timed_config::TimedConfig;
-use crate::cells::{AtomicCellState, Cell, CellState, Packet, LARGE_DURATION};
+use crate::cells::{AtomicCellState, Cell, CellState, LARGE_DURATION, Packet};
 use crate::error::Error;
 use crate::utils::sync::AtomicRawCell;
 
@@ -587,9 +587,9 @@ mod tests {
     use insta::assert_json_snapshot;
     use itertools::iproduct;
     use netem_trace::model::{RepeatedLossPatternConfig, StaticLossConfig};
-    use rand::{rngs::StdRng, SeedableRng};
+    use rand::{SeedableRng, rngs::StdRng};
     use std::time::Duration;
-    use tracing::{span, Level};
+    use tracing::{Level, span};
 
     use rstest::rstest;
 

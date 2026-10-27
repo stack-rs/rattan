@@ -48,10 +48,10 @@ mod test {
     use binread::BinRead;
     use std::io::Cursor;
 
-    use crate::log_entry::entry::{
-        tcp_ip_compact::TCPProtocolEntry, Protocol, ProtocolEntryVariant, ProtocolHeader,
-    };
     use crate::PlainBytes;
+    use crate::log_entry::entry::{
+        Protocol, ProtocolEntryVariant, ProtocolHeader, tcp_ip_compact::TCPProtocolEntry,
+    };
 
     #[test]
     pub fn parse_compact_entry() {

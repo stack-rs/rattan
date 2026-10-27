@@ -17,7 +17,7 @@ use etherparse::{Ethernet2Header, Ipv4Header};
 use once_cell::sync::Lazy;
 use rattan_env::veth::VethCell;
 use tokio::sync::Mutex;
-use tokio::time::{sleep, Instant};
+use tokio::time::{Instant, sleep};
 use tracing::debug;
 
 static UMEM: Lazy<Arc<std::sync::Mutex<UMem>>> = Lazy::new(|| {

@@ -3,8 +3,8 @@ use std::{
     fmt::Debug,
     io::ErrorKind,
     sync::{
-        atomic::{AtomicU8, Ordering},
         Arc,
+        atomic::{AtomicU8, Ordering},
     },
 };
 
@@ -15,7 +15,7 @@ use tokio::{
     task,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, span, trace, warn, Instrument, Level};
+use tracing::{Instrument, Level, debug, info, span, trace, warn};
 
 use crate::{
     cells::{Cell, Egress, Ingress, Packet},
@@ -26,11 +26,11 @@ use crate::{
 
 #[cfg(feature = "packet-dump")]
 use pcap_file::pcapng::{
+    PcapNgWriter,
     blocks::{
         enhanced_packet::EnhancedPacketBlock,
         interface_description::{InterfaceDescriptionBlock, InterfaceDescriptionOption},
     },
-    PcapNgWriter,
 };
 #[cfg(feature = "packet-dump")]
 use std::{fs::File, io::Write, sync::Mutex};

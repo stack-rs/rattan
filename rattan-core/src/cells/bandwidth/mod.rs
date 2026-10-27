@@ -10,8 +10,8 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 
 use super::{
-    AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, Packet, TimedConfig,
-    LARGE_DURATION, TRACE_START_INSTANT,
+    AtomicCellState, Cell, CellState, ControlInterface, Egress, Ingress, LARGE_DURATION, Packet,
+    TRACE_START_INSTANT, TimedConfig,
 };
 use crate::cells::bandwidth::queue::AQM;
 #[cfg(test)]
@@ -956,7 +956,7 @@ mod tests {
 
     use netem_trace::model::{RepeatedBwPatternConfig, StaticBwConfig};
     use rstest::rstest;
-    use tracing::{span, Level};
+    use tracing::{Level, span};
 
     use super::*;
     use crate::cells::bandwidth::queue::{

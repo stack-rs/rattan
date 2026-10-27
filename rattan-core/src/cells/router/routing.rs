@@ -141,9 +141,11 @@ mod tests {
         router
             .add(RoutingEntry::new("10.0.0.0/12".parse()?, Some(1)))
             .unwrap();
-        assert!(router
-            .add(RoutingEntry::new("10.0.0.0/12".parse()?, Some(1)))
-            .is_err()); // duplicate routing entry
+        assert!(
+            router
+                .add(RoutingEntry::new("10.0.0.0/12".parse()?, Some(1)))
+                .is_err()
+        ); // duplicate routing entry
 
         // test get_plain_table
         let mut answer = vec![
@@ -197,12 +199,14 @@ mod tests {
         );
 
         // test reset
-        assert!(router
-            .reset(vec![
-                RoutingEntry::new("10.0.0.123/8".parse()?, Some(0)),
-                RoutingEntry::new("10.0.0.0/8".parse()?, Some(0)),
-            ])
-            .is_err()); // duplicate routing entry
+        assert!(
+            router
+                .reset(vec![
+                    RoutingEntry::new("10.0.0.123/8".parse()?, Some(0)),
+                    RoutingEntry::new("10.0.0.0/8".parse()?, Some(0)),
+                ])
+                .is_err()
+        ); // duplicate routing entry
         assert_eq!(
             router.match_ip(IpAddr::V4(Ipv4Addr::new(10, 255, 0, 0))),
             None

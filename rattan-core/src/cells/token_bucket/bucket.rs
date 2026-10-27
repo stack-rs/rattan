@@ -228,16 +228,20 @@ mod test {
 
         token_bucket.update(time);
         assert_eq!(token_bucket.next_available(ByteSize::kb(6)), time);
-        assert!(token_bucket
-            .reserve(ByteSize::kb(6))
-            .is_some_and(|t| t.send_time == Duration::from_millis(48)));
+        assert!(
+            token_bucket
+                .reserve(ByteSize::kb(6))
+                .is_some_and(|t| t.send_time == Duration::from_millis(48))
+        );
         // Here, at time `time`, the Token bucket is filled with token of 6kB.
 
         token_bucket.change_config(ByteSize::kb(20), Bandwidth::from_kbps(500), time);
         assert_eq!(token_bucket.next_available(ByteSize::kb(6)), time);
-        assert!(token_bucket
-            .reserve(ByteSize::kb(6))
-            .is_some_and(|t| dbg!(t.send_time) == Duration::from_millis(96)));
+        assert!(
+            token_bucket
+                .reserve(ByteSize::kb(6))
+                .is_some_and(|t| dbg!(t.send_time) == Duration::from_millis(96))
+        );
         assert_eq!(
             token_bucket.next_available(ByteSize::kb(16)),
             time + Duration::from_millis(160)

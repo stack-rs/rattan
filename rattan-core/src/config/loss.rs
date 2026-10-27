@@ -1,14 +1,14 @@
 use figment::{
-    providers::{Format, Json, Toml},
     Figment,
+    providers::{Format, Json, Toml},
 };
-use netem_trace::{model::LossTraceConfig, LossTrace};
-use rand::{rngs::StdRng, SeedableRng};
+use netem_trace::{LossTrace, model::LossTraceConfig};
+use rand::{SeedableRng, rngs::StdRng};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cells::{loss, Packet},
+    cells::{Packet, loss},
     core::CellFactory,
     error::Error,
     utils::replace_env_var_in_string,

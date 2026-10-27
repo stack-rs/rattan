@@ -5,7 +5,7 @@ use plain::Plain;
 
 use crate::log_entry::{
     entry::chunk_header::ChunkPrologue,
-    entry::flow_entry::{read_flow_entry, TCPFlowEntry},
+    entry::flow_entry::{TCPFlowEntry, read_flow_entry},
     entry::{raw::RawLogEntry, tcp_ip_compact::TCPLogEntry},
     general_packet::read_general_packet,
 };

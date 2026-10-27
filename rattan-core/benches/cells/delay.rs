@@ -1,15 +1,15 @@
 use std::time::Duration;
 
-use criterion::{measurement::WallTime, BenchmarkGroup, BenchmarkId};
+use criterion::{BenchmarkGroup, BenchmarkId, measurement::WallTime};
 use netem_trace::Delay;
 use rand::random_range;
 use rattan_core::cells::{
-    delay::{DelayCell, DelayCellConfig},
     Cell as _, Egress as _, Ingress as _, Packet, StdPacket,
+    delay::{DelayCell, DelayCellConfig},
 };
 use tokio::{runtime::Handle, time::Interval};
 
-use crate::{utils::clock, MTU};
+use crate::{MTU, utils::clock};
 
 fn init<P: Packet + Sync>(delay: Delay, handle: &Handle) -> DelayCell<P> {
     let config = DelayCellConfig::new(delay);

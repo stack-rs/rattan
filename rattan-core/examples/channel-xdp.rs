@@ -1,6 +1,6 @@
 use bandwidth::Bandwidth;
 use rattan_core::{
-    cells::bandwidth::{queue::InfiniteQueueConfig, BwCellConfig},
+    cells::bandwidth::{BwCellConfig, queue::InfiniteQueueConfig},
     config::{
         BwCellBuildConfig, CellBuildConfig, DelayCellBuildConfig, LossCellBuildConfig, RattanConfig,
     },

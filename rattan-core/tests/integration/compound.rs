@@ -3,15 +3,10 @@
 use std::{collections::HashMap, thread::sleep, time::Duration};
 
 use netem_trace::Bandwidth;
-#[cfg(feature = "serde")]
-use rattan_core::{
-    cells::{bandwidth::queue::InfiniteQueue, delay::DelayCellConfig, loss::LossCellConfig},
-    control::RattanOp,
-};
 use rattan_core::{
     cells::{
-        bandwidth::{queue::InfiniteQueueConfig, BwCellConfig},
         StdPacket,
+        bandwidth::{BwCellConfig, queue::InfiniteQueueConfig},
     },
     config::{
         BwCellBuildConfig, CellBuildConfig, DelayCellBuildConfig, LossCellBuildConfig, RattanConfig,
@@ -20,8 +15,13 @@ use rattan_core::{
     metal::io::af_packet::AfPacketDriver,
     radix::RattanRadix,
 };
+#[cfg(feature = "serde")]
+use rattan_core::{
+    cells::{bandwidth::queue::InfiniteQueue, delay::DelayCellConfig, loss::LossCellConfig},
+    control::RattanOp,
+};
 use regex::Regex;
-use tracing::{info, instrument, span, warn, Level};
+use tracing::{Level, info, instrument, span, warn};
 
 #[instrument]
 #[test_log::test]

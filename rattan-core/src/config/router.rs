@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::{
     cells::{
-        router::{self, SimpleRoutingTable},
         Ingress, Packet,
+        router::{self, SimpleRoutingTable},
     },
     core::CellFactory,
 };

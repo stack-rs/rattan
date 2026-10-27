@@ -3,14 +3,14 @@ use std::{
     fs::File,
     path::PathBuf,
     process::{ExitCode, Stdio, Termination},
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use figment::{
-    providers::{Env, Format, Serialized, Toml},
     Figment,
+    providers::{Env, Format, Serialized, Toml},
 };
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
@@ -30,7 +30,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
     build::{CARGO_FEATURES, CLAP_LONG_VERSION},
-    visualize_trace::{write_visualize_trace, OutputMode},
+    visualize_trace::{OutputMode, write_visualize_trace},
 };
 
 mod channel;
@@ -549,7 +549,9 @@ fn main() -> ExitCode {
             StdNetEnvMode::Isolated => {
                 #[cfg(feature = "nat")]
                 if opts.no_nat {
-                    warn!("--no-nat is only for compatible mode and thus ignored in current isolated mode.");
+                    warn!(
+                        "--no-nat is only for compatible mode and thus ignored in current isolated mode."
+                    );
                 }
 
                 let ip_list = radix.left_ip_list();

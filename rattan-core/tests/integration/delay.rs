@@ -2,8 +2,6 @@
 /// RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' cargo test delay --all-features -- --nocapture
 use std::{collections::HashMap, time::Duration};
 
-#[cfg(feature = "serde")]
-use rattan_core::{cells::delay::DelayCellConfig, control::RattanOp};
 use rattan_core::{
     cells::StdPacket,
     config::{CellBuildConfig, DelayCellBuildConfig, RattanConfig},
@@ -11,8 +9,10 @@ use rattan_core::{
     metal::io::af_packet::AfPacketDriver,
     radix::RattanRadix,
 };
+#[cfg(feature = "serde")]
+use rattan_core::{cells::delay::DelayCellConfig, control::RattanOp};
 use regex::Regex;
-use tracing::{info, instrument, span, Level};
+use tracing::{Level, info, instrument, span};
 
 #[instrument]
 #[test_log::test]

@@ -2,7 +2,7 @@
 use std::fmt;
 use std::time::Duration;
 
-use serde::{de, ser, Deserializer, Serializer};
+use serde::{Deserializer, Serializer, de, ser};
 
 pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
 where

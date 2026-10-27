@@ -1,5 +1,5 @@
 use crate::{
-    cells::{shadow, Packet},
+    cells::{Packet, shadow},
     core::CellFactory,
 };
 

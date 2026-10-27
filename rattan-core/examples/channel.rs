@@ -1,8 +1,8 @@
 use bandwidth::Bandwidth;
 use rattan_core::{
     cells::{
-        bandwidth::{queue::InfiniteQueueConfig, BwCellConfig},
         StdPacket,
+        bandwidth::{BwCellConfig, queue::InfiniteQueueConfig},
     },
     config::{
         BwCellBuildConfig, CellBuildConfig, DelayCellBuildConfig, LossCellBuildConfig, RattanConfig,

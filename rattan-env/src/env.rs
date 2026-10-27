@@ -7,7 +7,7 @@ use crate::{
 use futures::TryStreamExt;
 use once_cell::sync::OnceCell;
 use rand::distr::Alphanumeric;
-use rand::{rng, RngExt};
+use rand::{RngExt, rng};
 use rtnetlink::packet_route::{address::AddressAttribute, link::LinkAttribute, route::RouteScope};
 use std::{collections::BTreeMap, sync::Arc};
 use std::{

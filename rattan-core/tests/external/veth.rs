@@ -135,7 +135,9 @@ impl Drop for VethCellPair {
         });
 
         if let Err(e) = res {
-            eprintln!("failed to delete veth pair: {e:?} (you may need to delete it manually with 'sudo ip link del {if_name}')");
+            eprintln!(
+                "failed to delete veth pair: {e:?} (you may need to delete it manually with 'sudo ip link del {if_name}')"
+            );
         }
     }
 }

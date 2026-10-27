@@ -3,13 +3,13 @@ use std::fmt::Debug;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::time::Instant;
 
 // All queue implementations can use this import
 use super::BwType;
-use crate::cells::{Packet, LARGE_DURATION};
+use crate::cells::{LARGE_DURATION, Packet};
 
 mod codel;
 mod drophead;

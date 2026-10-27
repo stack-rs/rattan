@@ -8,8 +8,8 @@ use std::{
 use human_bandwidth::format_bandwidth;
 use human_time::human_time;
 use netem_trace::{
-    series::{expand_bw_trace, expand_delay_trace, expand_loss_trace},
     Bandwidth, LossPattern,
+    series::{expand_bw_trace, expand_delay_trace, expand_loss_trace},
 };
 use rattan_core::{
     cells::Packet,
@@ -17,7 +17,7 @@ use rattan_core::{
     error::{Result, VisualizeTraceError as Error},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{to_value, to_writer, to_writer_pretty, Map, Value};
+use serde_json::{Map, Value, to_value, to_writer, to_writer_pretty};
 
 // Define output format of the trace logical timestamp in the .csv file here
 fn express_time(time: Duration) -> String {

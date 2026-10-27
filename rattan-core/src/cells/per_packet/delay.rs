@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use netem_trace::{model::DelayPerPacketTraceConfig, DelayPerPacketTrace};
+use netem_trace::{DelayPerPacketTrace, model::DelayPerPacketTraceConfig};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::Instant};
@@ -264,9 +264,9 @@ impl<Config: DelayPerPacketTraceConfig + 'static> From<Config> for DelayPerPacke
 
 #[cfg(test)]
 mod tests {
-    use netem_trace::{model::StaticDelayPerPacketConfig, Delay};
+    use netem_trace::{Delay, model::StaticDelayPerPacketConfig};
     use tokio::time::{Duration, Instant};
-    use tracing::{info, span, Level};
+    use tracing::{Level, info, span};
 
     use crate::cells::StdPacket;
 

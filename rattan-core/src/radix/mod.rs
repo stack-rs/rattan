@@ -1,6 +1,6 @@
 use std::{
     net::IpAddr,
-    sync::{mpsc, Arc},
+    sync::{Arc, mpsc},
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -8,10 +8,10 @@ use std::{
 use backon::{BlockingRetryable, ExponentialBuilder};
 use once_cell::sync::{Lazy, OnceCell};
 use rattan_env::netns::NetNsGuard;
-use rattan_log::{file_logging_thread, RattanLogOp, LOGGING_TX};
+use rattan_log::{LOGGING_TX, RattanLogOp, file_logging_thread};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, span, warn, Level};
+use tracing::{Level, debug, error, info, span, warn};
 // use nix::{
 //     sched::{sched_setaffinity, CpuSet},
 //     unistd::Pid,
@@ -19,13 +19,13 @@ use tracing::{debug, error, info, span, warn, Level};
 
 use crate::{
     cells::{
-        external::{get_clock_ns, VirtualEthernet, VirtualEthernetId},
         Cell, Packet,
+        external::{VirtualEthernet, VirtualEthernetId, get_clock_ns},
     },
     config::{CellBuildConfig, RattanConfig},
     control::{RattanOp, RattanOpEndpoint, RattanOpResult},
     core::{CellFactory, RattanCore},
-    env::{get_std_env, StdNetEnv, StdNetEnvMode},
+    env::{StdNetEnv, StdNetEnvMode, get_std_env},
     error::Error,
     metal::io::common::InterfaceDriver,
 };

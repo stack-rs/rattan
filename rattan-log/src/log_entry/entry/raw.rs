@@ -4,8 +4,8 @@ use plain::Plain;
 use crate::{
     blob::RelativePointer,
     log_entry::{
-        general_packet::{GeneralPacketType, GeneralPktEntry},
         LogEntryHeader,
+        general_packet::{GeneralPacketType, GeneralPktEntry},
     },
 };
 

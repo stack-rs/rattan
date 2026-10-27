@@ -6,8 +6,6 @@ use std::collections::HashMap;
 use bandwidth::Bandwidth;
 #[cfg(feature = "serde")]
 use bytesize::ByteSize;
-#[cfg(feature = "serde")]
-use rattan_core::{cells::token_bucket::TokenBucketCellConfig, control::RattanOp};
 use rattan_core::{
     cells::StdPacket,
     config::{CellBuildConfig, RattanConfig, TokenBucketCellBuildConfig},
@@ -15,8 +13,10 @@ use rattan_core::{
     metal::io::af_packet::AfPacketDriver,
     radix::RattanRadix,
 };
+#[cfg(feature = "serde")]
+use rattan_core::{cells::token_bucket::TokenBucketCellConfig, control::RattanOp};
 use regex::Regex;
-use tracing::{info, instrument, span, Level};
+use tracing::{Level, info, instrument, span};
 
 #[instrument]
 #[test_log::test]

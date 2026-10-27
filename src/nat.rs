@@ -1,7 +1,7 @@
 use std::io;
 use std::{ffi::CString, net::IpAddr};
 
-use nftnl::{nft_expr, Batch, Chain, ChainType, FinalizedBatch, ProtoFamily, Rule, Table};
+use nftnl::{Batch, Chain, ChainType, FinalizedBatch, ProtoFamily, Rule, Table, nft_expr};
 use tracing::{debug, warn};
 
 /// Manages NAT rules using nftables.

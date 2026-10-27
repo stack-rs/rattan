@@ -136,8 +136,8 @@ mod tests {
 
     use super::*;
     use crate::cells::{StdPacket, TestPacket};
-    use rand::{rng, RngExt};
-    use tracing::{span, Level};
+    use rand::{RngExt, rng};
+    use tracing::{Level, span};
 
     #[test_log::test]
     fn test_shadow_cell() -> Result<(), Error> {

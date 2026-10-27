@@ -1,15 +1,15 @@
 use crate::{
     cells::{
-        per_packet::delay::{DelayPerPacketCell, DelayPerPacketCellConfig},
         Packet,
+        per_packet::delay::{DelayPerPacketCell, DelayPerPacketCellConfig},
     },
     core::CellFactory,
     error::Error,
 };
 
 use figment::{
-    providers::{Format as _, Json, Toml},
     Figment,
+    providers::{Format as _, Json, Toml},
 };
 use netem_trace::model::DelayPerPacketTraceConfig;
 #[cfg(feature = "serde")]

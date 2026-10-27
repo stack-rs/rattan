@@ -2,7 +2,7 @@ use binread::BinRead;
 use plain::Plain;
 
 use super::{Protocol, ProtocolHeader};
-use crate::log_entry::{general_packet::GeneralPktEntry, LogEntryHeader};
+use crate::log_entry::{LogEntryHeader, general_packet::GeneralPktEntry};
 
 // The detailed spec of this log entry:
 //

@@ -6,15 +6,15 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use pcap_file::{
+    DataLink,
     pcapng::{
+        PcapNgWriter,
         blocks::{
+            Block::{EnhancedPacket, InterfaceDescription},
             enhanced_packet::EnhancedPacketBlock,
             interface_description::{InterfaceDescriptionBlock, InterfaceDescriptionOption},
-            Block::{EnhancedPacket, InterfaceDescription},
         },
-        PcapNgWriter,
     },
-    DataLink,
 };
 
 use crate::{RawLogEntry, TCPFlow, TCPLogEntry};
