@@ -18,7 +18,7 @@ members = [".", "rattan-core", "rattan-env", "rattan-log"]
 
 [workspace.package]
 version = "0.1.1"
-edition = "2021"
+edition = "2024"
 rust-version = "1.86"
 homepage = "https://github.com/stack-rs/rattan"
 repository = "https://github.com/stack-rs/rattan"

@@ -14,12 +14,14 @@ pub fn replace_env_var_in_string(input: &str) -> Cow<'_, str> {
     })
 }
 
+#[cfg(test)]
 mod tests {
 
     #[test]
     fn test_replace_env_var_in_string() {
         use super::replace_env_var_in_string;
-        std::env::set_var("RATTAN_TEST_VAR", "test_value");
+        // SAFETY: no other test reads or writes `RATTAN_TEST_VAR`. So there's no concurrency issue.
+        unsafe { std::env::set_var("RATTAN_TEST_VAR", "test_value") };
         assert_eq!(
             replace_env_var_in_string("test_${RATTAN_TEST_VAR}_value"),
             "test_test_value_value"

@@ -269,9 +269,11 @@ unsafe fn sockaddr_ll_from_raw(
             return None;
         }
     }
-    if (*addr).sa_family as i32 != libc::AF_PACKET {
+    // SAFETY: the caller guarantees `addr` points to a valid sockaddr of at least `len` bytes.
+    if unsafe { (*addr).sa_family } as i32 != libc::AF_PACKET {
         return None;
     }
 
-    Some(ptr::read_unaligned(addr as *const _))
+    // SAFETY: `sa_family` is AF_PACKET, so `addr` holds a `sockaddr_ll`.
+    Some(unsafe { ptr::read_unaligned(addr as *const _) })
 }
