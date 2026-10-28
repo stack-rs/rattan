@@ -452,9 +452,9 @@ fn log_packet<T: Packet>(
             let flow_id = p.get_flow_id();
 
             let mut entry = if mode == PacketLogMode::RawIP {
-                RawLogEntry::new(GeneralPacketType::RawIP)
+                RawLogEntry::new(GeneralPacketType::RawL3L4)
             } else {
-                RawLogEntry::new(GeneralPacketType::RawTCPIP)
+                RawLogEntry::new(GeneralPacketType::RawL4)
             };
 
             entry.general_pkt_entry.pkt_length = pkt_len;

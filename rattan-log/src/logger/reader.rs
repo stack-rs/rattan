@@ -279,10 +279,10 @@ pub fn convert_log_to_pcapng(
 
                 let (mut packet_header, mock_l3) =
                     match raw_entry.general_pkt_entry.header.get_type().try_into() {
-                        Ok(GeneralPacketType::RawIP) => {
+                        Ok(GeneralPacketType::RawL3L4) => {
                             (Vec::with_capacity(14 + raw_header.len()), false)
                         }
-                        Ok(GeneralPacketType::RawTCPIP) => {
+                        Ok(GeneralPacketType::RawL4) => {
                             (Vec::with_capacity(34 + raw_header.len()), true)
                         }
                         _ => {
