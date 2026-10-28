@@ -1,10 +1,16 @@
+//! Match packets recorded by Rattan (`.rtl`, `compact-tcp` mode with the `drift-log` feature)
+//! against pcaps captured at the client and the server, and print per-packet time breakdowns.
+//!
+//! See `guide/src/ref/packet-log.md` for usage.
+
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::fs::File;
 use std::io::{Cursor, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use binread::BinRead;
+use clap::{Parser, ValueEnum};
 use etherparse::{EtherType, Ethernet2HeaderSlice, IpNumber, Ipv4HeaderSlice, TcpHeaderSlice};
 use memmap2::Mmap;
 use rattan_log::log_entry::entry::tcp_ip_compact::TCPProtocolEntry;
@@ -17,6 +23,24 @@ use rattan_log::{ParseContext, TCPTuple};
 pub enum Position {
     Client,
     Server,
+}
+
+/// Side of Rattan, as the namespace ID in bits 31..24 of a flow ID (1 for left, 2 for right).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Side {
+    Left = 1,
+    Right = 2,
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Match Rattan packet logs against endpoint pcaps to break down per-packet time")]
+struct Args {
+    /// Directory containing `exec-log/{client,server}.pcap` and `result/packet.{flow,rtl}`
+    artifacts_dir: PathBuf,
+
+    /// Side of Rattan where the server is
+    #[arg(long, value_enum, default_value_t = Side::Right)]
+    server_side: Side,
 }
 
 impl Position {
@@ -67,7 +91,10 @@ impl TimePoint {
 
     fn set_sender(&mut self, sender: Position) {
         if let Some(old_value) = self.sender {
-            assert_eq!(old_value, sender);
+            assert_eq!(
+                old_value, sender,
+                "The sender of a packet disagrees between the packet log and the pcaps. Is `--server-side` correct?"
+            );
         } else {
             self.sender = Some(sender);
         }
@@ -130,8 +157,6 @@ fn load_pcap(
 
         let sent_by_us = data[1] == 0x04;
 
-        // dbg!(ts, sent_by_us);
-
         // Standard Ethernet header is 14 bytes
         // But we get "Linux cooked capture", which is 16 bytes
         let data = &data[2..];
@@ -192,15 +217,13 @@ fn load_pcap(
             dataofs: tcp_hdr.data_offset(),
         };
 
-        // dbg!(&packet_matching);
-
         packet_matcher.add_rtl_packet(packet_matching, |entry| {
             if sent_by_us {
                 let _ = entry.sender_pcap.insert(ts);
-                let _ = entry.sender.insert(position);
+                entry.set_sender(position);
             } else {
                 let _ = entry.receiver_pcap.insert(ts);
-                let _ = entry.sender.insert(position.other_side());
+                entry.set_sender(position.other_side());
             }
         });
     }
@@ -208,7 +231,12 @@ fn load_pcap(
     Ok(())
 }
 
-fn load_rtl(path: &Path, matcher: &mut PacketMatcher, base_ts: u64) -> Result<()> {
+fn load_rtl(
+    path: &Path,
+    matcher: &mut PacketMatcher,
+    base_ts: u64,
+    server_side: Side,
+) -> Result<()> {
     // Read rattan_log
     let mut rattan_log_file = Cursor::new(load_file(path)?);
     while let Ok(entry) = LogEntry::read(&mut rattan_log_file) {
@@ -234,7 +262,8 @@ fn load_rtl(path: &Path, matcher: &mut PacketMatcher, base_ts: u64) -> Result<()
             let action = general_pkt_entry.header.get_pkt_action();
             let action = PktAction::try_from(action).expect("invalid pkt action");
 
-            let from_server = flow_id >= 0x02000000;
+            // A flow ID's namespace ID tells which side the packet entered Rattan from.
+            let from_server = (flow_id >> 24) == server_side as u32;
 
             let (position, direction) = match (from_server, action) {
                 // sent by endpoints
@@ -250,26 +279,6 @@ fn load_rtl(path: &Path, matcher: &mut PacketMatcher, base_ts: u64) -> Result<()
 
             let rtl_time = base_ts + ts;
             let event_time = rtl_time - drift;
-
-            // if matches!(action, PktAction::Send){
-            //     println!(
-            //         "RTL: {:?} {:?} at {:09} , should be   {:09}",
-            //         position,
-            //         direction,
-            //         rtl_time % 1_000_000_000,
-            //         event_time % 1_000_000_000
-            //     );
-            // }
-
-            // if matches!(action, PktAction::Recv){
-            //     println!(
-            //         "RTL: {:?} {:?} at {:09} , recorded at {:09}",
-            //         position,
-            //         direction,
-            //         event_time % 1_000_000_000,
-            //         rtl_time % 1_000_000_000
-            //     );
-            // }
 
             let packet_matching = PacketMatching {
                 flow_id,
@@ -330,8 +339,8 @@ impl Display for TimeDifference {
 }
 
 fn main() -> Result<()> {
-    let artifacts_dir = std::env::var("ARTIFACTS_DIR").unwrap();
-    let artifacts_dir = Path::new(&artifacts_dir);
+    let args = Args::parse();
+    let artifacts_dir = args.artifacts_dir.as_path();
     let client_pcap = artifacts_dir.join("./exec-log/client.pcap");
     let server_pcap = artifacts_dir.join("./exec-log/server.pcap");
     let rattan_flow = artifacts_dir.join("./result/packet.flow");
@@ -362,7 +371,12 @@ fn main() -> Result<()> {
 
     let mut matcher = PacketMatcher::default();
 
-    load_rtl(rattan_log.as_path(), &mut matcher, context.base_ts)?;
+    load_rtl(
+        rattan_log.as_path(),
+        &mut matcher,
+        context.base_ts,
+        args.server_side,
+    )?;
     load_pcap(
         client_pcap.as_path(),
         &context.tuple_to_flow,
@@ -395,7 +409,6 @@ fn main() -> Result<()> {
     }
 
     for (_key, value) in sorted {
-        // println!("{:?} {:?}", _key, value);
         if value.sender.unwrap() == Position::Client {
             print!("C->S");
         } else {

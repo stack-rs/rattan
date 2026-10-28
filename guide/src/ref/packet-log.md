@@ -101,6 +101,68 @@ uv run --script scripts/log_converter.py ./packet.rtl path/to/output
 
 The paths to input and output files are the same as those for `rattan convert`, and the behaviour of the python script is basically the same as `rattan convert`.
 
+### Break down per-packet time with endpoint pcaps
+
+The `drift-matcher` binary of the `rattan-log` crate matches each packet recorded in a Rattan packet log against the
+same packet captured at the client and at the server. It then shows how much time the packet spent before, inside, and
+after Rattan, including how late Rattan actually sent it compared to when it should have left (the egress drift).
+
+**Requirements**:
+
+- Rattan is built with the `drift-log` feature, and the packet log is recorded in `compact-tcp` mode.
+  With `drift-log`, the `ip.frag` field of each TCP log entry stores the time drift (in microseconds, capped at 65535)
+  instead of the IP fragment info.
+- The client and the server each capture their own traffic with `tcpdump` on all interfaces, in the classic pcap
+  format (not pcapng), e.g. inside the client's network namespace:
+
+  ```bash
+  tcpdump -i any -y LINUX_SLL -w client.pcap
+  ```
+
+  `drift-matcher` expects the Linux cooked capture (SLL) link type that `-i any` produces. `-y LINUX_SLL` keeps
+  newer `tcpdump` versions from choosing `LINUX_SLL2` instead.
+- The files are placed in one directory, the "artifacts directory", as:
+
+  ```text
+  <artifacts_dir>/
+  ├── exec-log/
+  │   ├── client.pcap
+  │   └── server.pcap
+  └── result/
+      ├── packet.flow
+      └── packet.rtl
+  ```
+
+Build and run it with:
+
+```bash
+cargo build --release -p rattan-log --bin drift-matcher
+./target/release/drift-matcher path/to/artifacts_dir > drift.log
+```
+
+By default, the server is assumed to be on the right side of Rattan. If it is on the left side, pass `--server-side left`.
+To process many artifacts directories at once, see
+[scripts/parse_time_drift.sh](https://github.com/stack-rs/rattan/blob/main/scripts/parse_time_drift.sh).
+
+Packets are matched by their flow and the TCP/IP header fields that the `compact-tcp` mode records
+(`tcp.seq`, `tcp.ack`, `ip.id`, `ip.checksum`, `tcp.flags` and `tcp.dataofs`).
+Progress, the flows found, and the trace start time are printed to stderr.
+To stdout, one line is printed per packet, sorted by the time it entered Rattan, with tab-separated columns.
+All times are in microseconds, and a value that could not be computed (the packet was not seen at some point)
+is shown as `*****`:
+
+| Column | Meaning |
+| --- | --- |
+| 1 | Direction, `C->S` (client to server) or `S->C` (server to client). |
+| 2 | The time the packet entered Rattan, in microseconds since the Unix epoch. |
+| 3 | Time from the sender's capture to entering Rattan. |
+| 4 | Time from entering Rattan to when the packet should have left Rattan, as emulated by the cells. |
+| 5 | Egress drift: time from when the packet should have left Rattan to when it actually left. |
+| 6 | Time from leaving Rattan to the receiver's capture. |
+
+A negative difference prints a `Warning!` line to stderr. Columns 3 and 6 compare timestamps taken by different
+clocks (`tcpdump` and Rattan), so they are only meaningful when all of them run on the same host.
+
 ## Specification
 
 ### Raw file
