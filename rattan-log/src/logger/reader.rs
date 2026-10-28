@@ -62,15 +62,22 @@ impl ParseContext {
         let mut base_ts = None;
         let mut trace_start_ts = None;
 
-        if input.len() > u16::MAX as usize {
-            tracing::error!("No more than 65535 flows are supported in current version. It will not be recorded from the 65,536th stream forward.");
-        }
+        // The flow index counts TCP flow entries only (other flow entries, e.g. TraceStart,
+        // do not take an index), matching how the writer assigns `RGP.flow_index`.
+        // flow_index 0 is reserved. So start from 1.
+        let mut tcp_flow_count: usize = 0;
 
-        for (index, entry) in input.into_iter().enumerate().take(u16::MAX as usize) {
-            // flow_index 0 is reserved. So start form 1.
-            let index = (index + 1) as u16;
+        for entry in input {
             match entry {
                 FlowEntryVariant::TCP(tcp) => {
+                    tcp_flow_count += 1;
+                    if tcp_flow_count > u16::MAX as usize {
+                        if tcp_flow_count == u16::MAX as usize + 1 {
+                            tracing::error!("No more than 65535 flows are supported in current version. It will not be recorded from the 65536th stream forward.");
+                        }
+                        continue;
+                    }
+                    let index = tcp_flow_count as FlowIndex;
                     let flow_id = tcp.flow_id;
                     flows.insert(flow_id, entry);
                     base_ts.get_or_insert(tcp.base_ts);
@@ -320,4 +327,60 @@ pub fn convert_log_to_pcapng(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use binread::BinRead;
+    use std::{io::Cursor, net::Ipv4Addr};
+
+    use super::ParseContext;
+    use crate::{
+        log_entry::{entry::flow_entry::FlowEntryVariant, LogEntry},
+        FlowDesc,
+    };
+
+    fn tcp_flow(flow_id: u32, src_port: u16) -> FlowEntryVariant {
+        let desc = FlowDesc::TCP(
+            Ipv4Addr::new(10, 1, 1, 1),
+            Ipv4Addr::new(10, 2, 1, 1),
+            src_port,
+            80,
+            None,
+        );
+        FlowEntryVariant::from((flow_id, 0u64, desc))
+    }
+
+    #[test]
+    pub fn flow_index_skips_trace_start() {
+        // Same order the writer produces when the trace starts after the first flow
+        // has been registered: [A, TraceStart, B, C].
+        let entries = vec![
+            tcp_flow(0x10, 1000),
+            FlowEntryVariant::from(1_700_000_000_000_000u64),
+            tcp_flow(0x20, 2000),
+            tcp_flow(0x30, 3000),
+        ];
+
+        // Round-trip through bytes, as the `.flow` file would be read back.
+        let bytes: Vec<u8> = entries.into_iter().flat_map(|e| e.build()).collect();
+        let mut cursor = Cursor::new(bytes);
+        let mut flows = vec![];
+        while (cursor.position() as usize) < cursor.get_ref().len() {
+            match LogEntry::read(&mut cursor).unwrap() {
+                LogEntry::TCPFlow(flow) => flows.push(flow.into()),
+                LogEntry::TraceStart(trace_start) => flows.push(trace_start.into()),
+                other => panic!("unexpected entry in .flow: {other:?}"),
+            }
+        }
+
+        let context = ParseContext::new(flows);
+
+        // The writer assigns 1, 2, 3 to A, B, C (TraceStart takes no index).
+        assert_eq!(context.flow_index.len(), 3);
+        assert_eq!(context.flow_index.get(&1), Some(&0x10));
+        assert_eq!(context.flow_index.get(&2), Some(&0x20));
+        assert_eq!(context.flow_index.get(&3), Some(&0x30));
+        assert_eq!(context.trace_start_ts, Some(1_700_000_000_000_000));
+    }
 }
