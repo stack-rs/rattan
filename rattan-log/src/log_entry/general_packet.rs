@@ -87,8 +87,8 @@ impl Default for GeneralPktHeader {
 #[repr(u8)]
 pub enum GeneralPacketType {
     Compact = 0,
-    RawTCPIP = 1,
-    RawIP = 2,
+    RawL4 = 1,
+    RawL3L4 = 2,
 }
 
 pub fn read_general_packet<R: std::io::Read + std::io::Seek>(
@@ -113,7 +113,7 @@ pub fn read_general_packet<R: std::io::Read + std::io::Seek>(
             }
         }
 
-        Ok(GeneralPacketType::RawTCPIP) | Ok(GeneralPacketType::RawIP) => {
+        Ok(GeneralPacketType::RawL4) | Ok(GeneralPacketType::RawL3L4) => {
             Ok(LogEntry::Raw(RawLogEntry {
                 header,
                 general_pkt_entry,
