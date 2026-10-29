@@ -91,6 +91,7 @@ xdp = ["dep:camellia-net"]
 drift-log = []
 drift-stat = ["drift-log"]
 first-packet = []
+first-payload = []
 http = ["dep:axum", "serde"]
 packet-dump = []
 serde = [

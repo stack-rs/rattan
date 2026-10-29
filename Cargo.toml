@@ -46,7 +46,7 @@ human-bandwidth = { version = "0.1.4", features = ["binary-system", "serde"] }
 ipnet = { version = "2.11.0", features = ["serde"] }
 jiff = "0.2.15"
 libc = "0.2.141"
-netem-trace = { version = "0.4.4", features = [
+netem-trace = { version = "0.5.0", features = [
   "human",
   "mahimahi",
   "serde",
@@ -131,6 +131,7 @@ default = ["first-packet"]
 drift-stat = ["rattan-core/drift-stat"]
 drift-log = ["rattan-core/drift-log"]
 first-packet = ["rattan-core/first-packet"]
+first-payload = ["rattan-core/first-payload"]
 http = ["rattan-core/http"]
 nat = ["dep:mnl", "dep:nftnl"]
 packet-dump = ["rattan-core/packet-dump"]
