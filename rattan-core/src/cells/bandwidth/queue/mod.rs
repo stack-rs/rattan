@@ -119,6 +119,23 @@ where
         }
         Instant::now() + LARGE_DURATION
     }
+
+    /// Returns true if there is no packet in the AQM.
+    pub fn is_empty(&self) -> bool {
+        self.inbound_buffer.is_empty() && self.queue.is_empty()
+    }
+
+    /// Returns true if there is no packet in the inner queue. Packets in the inbound buffer
+    /// (if any) have not been enqueued into the inner queue by `dequeue_at` yet.
+    pub fn is_queue_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    /// Returns the extra length added to the L3 length of each packet, given by the `BwType`
+    /// of the inner queue.
+    pub fn get_extra_length(&self) -> usize {
+        self.queue.get_extra_length()
+    }
 }
 
 pub trait PacketQueue<P>: Send
