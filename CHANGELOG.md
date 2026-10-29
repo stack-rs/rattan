@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0](https://github.com/stack-rs/rattan/compare/rattan-v0.1.1...rattan-v0.2.0) - 2026-10-29
+
+### Features
+
+- *(core)* Add first-payload alignment feature ([#227](https://github.com/stack-rs/rattan/pull/227)) - ([948e5a4](https://github.com/stack-rs/rattan/commit/948e5a46641e54283a62b3b97d56b247752e7409))
+- *(delay)* Add granularity round feature ([#228](https://github.com/stack-rs/rattan/pull/228)) - ([a0f63c6](https://github.com/stack-rs/rattan/commit/a0f63c6a846025568242a36b6339fa6a28cfeab8))
+- *(log)* Add packet drift statistics ([#226](https://github.com/stack-rs/rattan/pull/226)) - ([1f1251f](https://github.com/stack-rs/rattan/commit/1f1251ffb8f59e6389f85edec1af008159617442))
+- *(loss)* Add byte trigger for loss cells ([#217](https://github.com/stack-rs/rattan/pull/217)) - ([6669752](https://github.com/stack-rs/rattan/commit/6669752e748e3cf5753f2e8004998625f1132291))
+- *(queue)* Implement RED and PIE queues ([#197](https://github.com/stack-rs/rattan/pull/197)) - ([a18829c](https://github.com/stack-rs/rattan/commit/a18829caafbc50082c0e7931579b4eff8d48dfa7))
+
+### Bug Fixes
+
+- *(cell)* Handle zero value of Bw[Replay] trace - ([3db4c16](https://github.com/stack-rs/rattan/commit/3db4c16894656cf7df42214424d203690804bcd5))
+
+### Refactor
+
+- *(cell)* Change PacketQueue::dequeue to dequeue_at(ts) ([#198](https://github.com/stack-rs/rattan/pull/198)) - ([a11e8a1](https://github.com/stack-rs/rattan/commit/a11e8a16f0543ce42fd308584c72f349f18410bc))
+- *(queue)* Split module into multiple files ([#193](https://github.com/stack-rs/rattan/pull/193)) - ([bb351ee](https://github.com/stack-rs/rattan/commit/bb351ee99f83b64cc2c59860925ad926525c9ecf))
+- *(queue)* Unify Queue::new() to return Result ([#208](https://github.com/stack-rs/rattan/pull/208)) - ([b0e3a3f](https://github.com/stack-rs/rattan/commit/b0e3a3fb7d3aa3b003d695cfe1aef4f52b2f9a31))
+- *(queue)* Remove retain from PacketQueue trait - ([0410b0a](https://github.com/stack-rs/rattan/commit/0410b0ad2c0d09d2f58ef78d62579bd919407351))
+
+### Documentation
+
+- *(guide)* Update installation tips - ([390c796](https://github.com/stack-rs/rattan/commit/390c79638a9a035e136a83f838a780d859d2a178))
+
+### Styling
+
+- *(clippy)* Resolve clippy 1.99 warnings - ([3131a98](https://github.com/stack-rs/rattan/commit/3131a98f5c59a80e0306dc2b307fe54eeecc2027))
+- *(clippy)* Resolve clippy warnings - ([dafb830](https://github.com/stack-rs/rattan/commit/dafb830ef0ab46cff118febb58a31da95b07e868))
+- *(clippy)* Resolve clippy warnings - ([7f72dbe](https://github.com/stack-rs/rattan/commit/7f72dbe71969044011629756102cc7328af4de85))
+
+### Miscellaneous Tasks
+
+- *(release)* Tidy release-plz config and workflows - ([b4adf43](https://github.com/stack-rs/rattan/commit/b4adf4329f623368f5e84a040da2583ec0173742))
+- *(release)* Install system deps for release-plz semver checks ([#215](https://github.com/stack-rs/rattan/pull/215)) - ([afa0a8e](https://github.com/stack-rs/rattan/commit/afa0a8e06841292e423f4c91ae2718bb0f03c9cd))
+- *(scripts)* Support remote pre-compiled binary - ([d34e51e](https://github.com/stack-rs/rattan/commit/d34e51e826d4841ffcff3b66c85806e59eb93746))
+- *(test)* Reduce test concurrency to 1 - ([4ace463](https://github.com/stack-rs/rattan/commit/4ace463c5b59e7ec8cf3d34cf4769d69294653df))
+- *(test)* Add HTTP proxy support and expand VM build guide - ([9d81cf3](https://github.com/stack-rs/rattan/commit/9d81cf34f080e9a2eb789e4c4f91fb0a58a58497))
+- Run github runner as a systemd service - ([7a21f4d](https://github.com/stack-rs/rattan/commit/7a21f4dc7b7baec24c7d01506940a2ff1f83e8d7))
+- Reduce self-hosted runner disk I/O ([#207](https://github.com/stack-rs/rattan/pull/207)) - ([ef70e84](https://github.com/stack-rs/rattan/commit/ef70e84d08eac53cccf38bfef520eec5b2ca71c7))
+
+### Build
+
+- *(deps)* Fix cargo audit warnings - ([83341d7](https://github.com/stack-rs/rattan/commit/83341d7b2a2cc96ab2e4f630e56d88fe8d4ce70f))
+
+
 ## [0.1.1](https://github.com/stack-rs/rattan/compare/rattan-v0.1.0...rattan-v0.1.1) - 2026-03-10
 
 ### Features
