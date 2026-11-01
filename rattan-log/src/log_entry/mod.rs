@@ -4,9 +4,12 @@ use num_enum::TryFromPrimitive;
 use plain::Plain;
 
 use crate::log_entry::{
-    entry::chunk_header::ChunkPrologue,
-    entry::flow_entry::{read_flow_entry, TCPFlowEntry},
-    entry::{raw::RawLogEntry, tcp_ip_compact::TCPLogEntry},
+    entry::{
+        chunk_header::ChunkPrologue,
+        flow_entry::{read_flow_entry, TCPFlowEntry, TraceStartEntry},
+        raw::RawLogEntry,
+        tcp_ip_compact::TCPLogEntry,
+    },
     general_packet::read_general_packet,
 };
 
@@ -56,6 +59,7 @@ pub enum LogEntry {
     Raw(RawLogEntry),
     Chunk(ChunkPrologue),
     TCPFlow(TCPFlowEntry),
+    TraceStart(TraceStartEntry),
 }
 
 #[derive(Debug, Clone, Copy, TryFromPrimitive)]

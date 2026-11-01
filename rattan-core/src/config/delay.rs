@@ -1,8 +1,9 @@
+use std::time::Duration;
+
 use figment::{
     providers::{Format, Json, Toml},
     Figment,
 };
-
 use netem_trace::{model::DelayTraceConfig, DelayTrace};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,7 @@ impl DelayCellBuildConfig {
     pub fn into_factory<P: Packet>(self) -> impl CellFactory<delay::DelayCell<P>> {
         move |handle| {
             let _guard = handle.enter();
-            delay::DelayCell::new(self.delay)
+            delay::DelayCell::with_ingress_round_up(self.delay, self.ingress_round_up)
         }
     }
 }
@@ -29,6 +30,12 @@ impl DelayCellBuildConfig {
 #[derive(Debug, Clone)]
 pub struct DelayReplayCellBuildConfig {
     pub trace: String,
+    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "crate::utils::serde::duration::option")
+    )]
+    pub ingress_round_up: Option<Duration>,
 }
 
 impl DelayReplayCellBuildConfig {
@@ -60,7 +67,7 @@ impl DelayReplayCellBuildConfig {
         move |handle| {
             let _guard = handle.enter();
             let trace = self.get_trace()?;
-            delay::DelayReplayCell::new(trace)
+            delay::DelayReplayCell::with_ingress_round_up(trace, self.ingress_round_up)
         }
     }
 }

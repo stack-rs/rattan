@@ -228,6 +228,18 @@ class TCPFlowLogEntry(ctypes.LittleEndianStructure):
         )
 
 
+class TraceStartFlowEntry(ctypes.LittleEndianStructure):
+    _pack_ = 2
+    _fields_ = [
+        ("header", FlowEntryHeader),
+        ("_reserved", c_uint32),
+        ("trace_start_ts", c_uint64),
+    ]
+
+    def __repr__(self):
+        return f"TraceStart(trace_start_ts={self.trace_start_ts})"
+
+
 class RawGeneralPacket(ctypes.LittleEndianStructure):
     _pack = 2
     _fields_ = [
@@ -366,8 +378,13 @@ class LogEntryVariant:
                     raise ValueError("Too short for FlowEntry")
                 entry = TCPFlowLogEntry.from_buffer(entry_buf)
                 return entry
+            elif FLH.type == 1:  # Trace Start
+                if len(entry_buf) < FLH.length:
+                    raise ValueError("Too short for TraceStartFlowEntry")
+                entry = TraceStartFlowEntry.from_buffer(entry_buf)
+                return entry
             else:
-                print(f"Unsupported GeneralPktHeader type: {FLH.type}")
+                print(f"Unsupported FlowEntryHeader type: {FLH.type}")
                 return None
 
         elif LH.type == 15:  # Chunk
@@ -454,6 +471,10 @@ def convert_log_to_pcapng(input_file: str, output_base: str):
             data = f.read()
 
             for entry, _ in iter_log_entries(data):
+                if isinstance(entry, TraceStartFlowEntry):
+                    # Not a flow: it does not take a flow index.
+                    print(entry)
+                    continue
                 if isinstance(entry, TCPFlowLogEntry):
                     flow_cnt += 1
                     flow_index[flow_cnt] = entry.flow_id
@@ -500,7 +521,7 @@ def convert_log_to_pcapng(input_file: str, output_base: str):
                 continue
             elif isinstance(entry, TCPLogEntry):
                 # Use microseconds for ts
-                base_ts = flow_map[entry.tcp.flow_id].base_ts // 1000
+                base_ts = flow_map[entry.tcp.flow_id].base_ts
                 pkt_ts = base_ts + entry.general_pkt.ts
 
                 src_ip, src_port, dst_ip, dst_port = flow_map[
@@ -547,7 +568,7 @@ def convert_log_to_pcapng(input_file: str, output_base: str):
             elif isinstance(entry, RawGeneralPacket):
                 flow_id = flow_index[entry.flow_index]
                 # Use microseconds for ts
-                base_ts = flow_map[flow_id].base_ts // 1000
+                base_ts = flow_map[flow_id].base_ts
                 pkt_ts = base_ts + entry.general_pkt.ts
 
                 src_ip, src_port, dst_ip, dst_port = flow_map[flow_id].flow_tuple()

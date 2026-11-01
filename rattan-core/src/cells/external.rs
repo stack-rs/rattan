@@ -11,6 +11,8 @@ use std::{
 
 use async_trait::async_trait;
 use bitfield::{BitRange, BitRangeMut};
+#[cfg(feature = "drift-log")]
+use once_cell::sync::OnceCell;
 use parking_lot::RwLock;
 use rattan_env::veth::VethCell;
 use rattan_log::{
@@ -24,10 +26,12 @@ use tracing::{debug, error, instrument, warn};
 
 use crate::{
     cells::{Cell, ControlInterface, Egress, Ingress, Packet},
-    error::{Error, TokioRuntimeError},
+    error::Error,
     metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender},
     radix::{PacketLogMode, BASE_TS, PKT_LOG_MODE},
 };
+
+const SEND_CHANNEL_PACKETS: usize = 16384;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(transparent)]
@@ -104,15 +108,21 @@ where
         base_ts: i64,
     ) -> Self {
         let mut senders: Vec<tokio::sync::mpsc::Sender<D::Packet>> = vec![];
-        let (dev_tx, dev_rx) = tokio::sync::mpsc::channel(1024);
+        let (dev_tx, dev_rx) = tokio::sync::mpsc::channel(SEND_CHANNEL_PACKETS);
 
-        for s in dev_sender.iter() {
-            let (tx, rx) = tokio::sync::mpsc::channel(1024);
-            tokio::spawn(Self::send(rx, s.clone()));
-            senders.push(tx);
+        if dev_sender.len() == 1 {
+            tracing::info!("Only one sender, skipping demux");
+            tokio::spawn(Self::send(dev_rx, dev_sender[0].clone()));
+        } else {
+            tracing::info!("Sender count = {}, using demux", dev_sender.len());
+            for s in dev_sender.iter() {
+                let (tx, rx) = tokio::sync::mpsc::channel(SEND_CHANNEL_PACKETS);
+                tokio::spawn(Self::send(rx, s.clone()));
+                senders.push(tx);
+            }
+            tokio::spawn(Self::demux(dev_rx, senders.clone()));
         }
 
-        tokio::spawn(Self::demux(dev_rx, senders.clone()));
         Self {
             sender: dev_tx,
             id,
@@ -166,13 +176,17 @@ where
     D::Sender: Send + Sync,
 {
     fn enqueue(&self, packet: D::Packet) -> Result<(), Error> {
-        if let (Some(&log_mode), Some(log_tx)) = (PKT_LOG_MODE.get(), self.log_tx.as_ref()) {
-            log_packet(log_tx, &packet, PktAction::Send, self.base_ts, log_mode);
+        if let Ok(v) = self.sender.try_reserve() {
+            if let (Some(&log_mode), Some(log_tx)) = (PKT_LOG_MODE.get(), self.log_tx.as_ref()) {
+                log_packet(log_tx, &packet, PktAction::Send, self.base_ts, log_mode);
+            }
+            v.send(packet);
+            return Ok(());
         }
-        Ok(self
-            .sender
-            .try_send(packet)
-            .map_err(|e| TokioRuntimeError::MpscError(e.to_string()))?)
+        Err(Error::IoError(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "drop on veth egress",
+        )))
     }
 }
 
@@ -315,6 +329,9 @@ fn cnt_log_op_error() {
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
+#[cfg(feature = "drift-log")]
+static TRACE_START_IN_UNIX: OnceCell<u64> = OnceCell::new();
+
 fn log_packet<T: Packet>(
     tx: &UnboundedSender<RattanLogOp>,
     p: &T,
@@ -322,13 +339,57 @@ fn log_packet<T: Packet>(
     base_ts: i64,
     mode: PacketLogMode,
 ) {
+    #[cfg(feature = "drift-log")]
+    {
+        use crate::cells::TRACE_START_INSTANT;
+        if TRACE_START_IN_UNIX.get().is_none() {
+            if let Some(trace_start_instart) = TRACE_START_INSTANT.get() {
+                let since_base = trace_start_instart.duration_since(BASE_TS.2);
+                let unix_time_base = BASE_TS.1;
+                let trace_start_in_unix = unix_time_base + since_base.as_micros() as u64;
+                debug!(trace_start_in_unix, unix_time_base, "Trace start");
+                if TRACE_START_IN_UNIX.set(trace_start_in_unix).is_ok()
+                    && tx
+                        .send(RattanLogOp::TraceStart(trace_start_in_unix))
+                        .is_err()
+                {
+                    cnt_log_op_error();
+                }
+            }
+        }
+    }
+    #[cfg(feature = "drift-log")]
+    let time_drift = p
+        .get_timestamp()
+        .elapsed()
+        .as_micros()
+        .min(u64::MAX as u128) as u64;
+
     let ts = ((get_clock_ns() - base_ts) / 1000)
         .max(0)
         .min(u32::MAX as i64) as u32;
 
     let pkt_len = p.length() as u16;
 
+    #[cfg(all(feature = "drift-log", feature = "drift-stat"))]
+    match action {
+        PktAction::Send => {
+            tx.send(RattanLogOp::DriftSample(p.get_flow_id(), time_drift, true))
+                .ok();
+        }
+        PktAction::Recv => {
+            tx.send(RattanLogOp::DriftSample(p.get_flow_id(), time_drift, false))
+                .ok();
+        }
+        _ => {}
+    }
+
     match mode {
+        #[cfg(feature = "drift-stat")]
+        PacketLogMode::DriftStat => {
+            // Nothing to do here. `DriftStat` is a placeholder mode that does not record any per-packet logs.
+            // The drift statistics are recorded if and only if any packet log mode is enabled, and the `drift-stat` feature is enabled.
+        }
         PacketLogMode::CompactTCP => {
             // Make it simple as only TCP is supported.
             let mut entry = rattan_log::TCPLogEntry::new();
@@ -347,15 +408,23 @@ fn log_packet<T: Packet>(
                         ) {
                             Ok(ip_hdr) => {
                                 entry.tcp_entry.ip_id = ip_hdr.identification();
-                                entry.tcp_entry.ip_frag = unsafe {
-                                    // SAFETY:
-                                    // Safe as the slice length is checked to be at least
-                                    // Ipv4Header::MIN_LEN (20) in the constructor.
-                                    u16::from_be_bytes([
-                                        *ip_hdr.slice().get_unchecked(6),
-                                        *ip_hdr.slice().get_unchecked(7),
-                                    ])
-                                };
+                                #[cfg(feature = "drift-log")]
+                                {
+                                    entry.tcp_entry.ip_frag =
+                                        time_drift.min(u16::MAX as u64) as u16;
+                                }
+                                #[cfg(not(feature = "drift-log"))]
+                                {
+                                    entry.tcp_entry.ip_frag = unsafe {
+                                        // SAFETY:
+                                        // Safe as the slice length is checked to be at least
+                                        // Ipv4Header::MIN_LEN (20) in the constructor.
+                                        u16::from_be_bytes([
+                                            *ip_hdr.slice().get_unchecked(6),
+                                            *ip_hdr.slice().get_unchecked(7),
+                                        ])
+                                    };
+                                }
                                 entry.tcp_entry.checksum = ip_hdr.header_checksum();
                                 #[allow(clippy::single_match)]
                                 match ip_hdr.protocol() {
@@ -395,9 +464,9 @@ fn log_packet<T: Packet>(
             let flow_id = p.get_flow_id();
 
             let mut entry = if mode == PacketLogMode::RawIP {
-                RawLogEntry::new(GeneralPacketType::RawIP)
+                RawLogEntry::new(GeneralPacketType::RawL3L4)
             } else {
-                RawLogEntry::new(GeneralPacketType::RawTCPIP)
+                RawLogEntry::new(GeneralPacketType::RawL4)
             };
 
             entry.general_pkt_entry.pkt_length = pkt_len;
@@ -434,7 +503,8 @@ fn log_packet<T: Packet>(
 }
 
 pub fn get_clock_ns() -> i64 {
-    nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC)
+    // nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC)
+    nix::time::clock_gettime(nix::time::ClockId::CLOCK_REALTIME)
         .map(|ts| ts.tv_sec() * 1_000_000_000 + ts.tv_nsec())
         .unwrap_or(0)
 }
