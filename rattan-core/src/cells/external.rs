@@ -26,10 +26,12 @@ use tracing::{debug, error, instrument, warn};
 
 use crate::{
     cells::{Cell, ControlInterface, Egress, Ingress, Packet},
-    error::{Error, TokioRuntimeError},
+    error::Error,
     metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender},
     radix::{PacketLogMode, BASE_TS, PKT_LOG_MODE},
 };
+
+const SEND_CHANNEL_PACKETS: usize = 16384;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(transparent)]
@@ -106,15 +108,21 @@ where
         base_ts: i64,
     ) -> Self {
         let mut senders: Vec<tokio::sync::mpsc::Sender<D::Packet>> = vec![];
-        let (dev_tx, dev_rx) = tokio::sync::mpsc::channel(1024);
+        let (dev_tx, dev_rx) = tokio::sync::mpsc::channel(SEND_CHANNEL_PACKETS);
 
-        for s in dev_sender.iter() {
-            let (tx, rx) = tokio::sync::mpsc::channel(1024);
-            tokio::spawn(Self::send(rx, s.clone()));
-            senders.push(tx);
+        if dev_sender.len() == 1 {
+            tracing::info!("Only one sender, skipping demux");
+            tokio::spawn(Self::send(dev_rx, dev_sender[0].clone()));
+        } else {
+            tracing::info!("Sender count = {}, using demux", dev_sender.len());
+            for s in dev_sender.iter() {
+                let (tx, rx) = tokio::sync::mpsc::channel(SEND_CHANNEL_PACKETS);
+                tokio::spawn(Self::send(rx, s.clone()));
+                senders.push(tx);
+            }
+            tokio::spawn(Self::demux(dev_rx, senders.clone()));
         }
 
-        tokio::spawn(Self::demux(dev_rx, senders.clone()));
         Self {
             sender: dev_tx,
             id,
@@ -168,13 +176,17 @@ where
     D::Sender: Send + Sync,
 {
     fn enqueue(&self, packet: D::Packet) -> Result<(), Error> {
-        if let (Some(&log_mode), Some(log_tx)) = (PKT_LOG_MODE.get(), self.log_tx.as_ref()) {
-            log_packet(log_tx, &packet, PktAction::Send, self.base_ts, log_mode);
+        if let Ok(v) = self.sender.try_reserve() {
+            if let (Some(&log_mode), Some(log_tx)) = (PKT_LOG_MODE.get(), self.log_tx.as_ref()) {
+                log_packet(log_tx, &packet, PktAction::Send, self.base_ts, log_mode);
+            }
+            v.send(packet);
+            return Ok(());
         }
-        Ok(self
-            .sender
-            .try_send(packet)
-            .map_err(|e| TokioRuntimeError::MpscError(e.to_string()))?)
+        Err(Error::IoError(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "drop on veth egress",
+        )))
     }
 }
 
