@@ -4,7 +4,7 @@ use rattan_env::env::RattanEnvConfig;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::cells::Packet;
+use crate::cells::PacketHeader;
 #[cfg(feature = "http")]
 use crate::control::http::HttpConfig;
 use crate::radix::PacketLogMode;
@@ -30,7 +30,7 @@ pub use token_bucket::*;
 /// Configuration for the whole Rattan system.
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(bound = ""))]
 #[derive(Clone, Debug)]
-pub struct RattanConfig<P: Packet, EC: RattanEnvConfig> {
+pub struct RattanConfig<P: PacketHeader, EC: RattanEnvConfig> {
     #[cfg_attr(feature = "serde", serde(default))]
     pub env: EC,
     #[cfg(feature = "http")]
@@ -46,7 +46,7 @@ pub struct RattanConfig<P: Packet, EC: RattanEnvConfig> {
     pub general: RattanGeneralConfig,
 }
 
-impl<P: Packet, E: RattanEnvConfig> Default for RattanConfig<P, E> {
+impl<P: PacketHeader, E: RattanEnvConfig> Default for RattanConfig<P, E> {
     fn default() -> Self {
         Self {
             env: E::default(),
@@ -105,7 +105,7 @@ impl RattanGeneralConfig {
     serde(bound = "", tag = "type")
 )]
 #[derive(Clone, Debug)]
-pub enum CellBuildConfig<P: Packet> {
+pub enum CellBuildConfig<P: PacketHeader> {
     Bw(BwCellBuildConfig<P>),
     BwReplay(BwReplayCellBuildConfig<P>),
     Delay(DelayCellBuildConfig),

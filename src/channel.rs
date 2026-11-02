@@ -6,8 +6,8 @@ use paste::paste;
 use rattan_core::{
     cells::bandwidth::{
         queue::{
-            CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, InfiniteQueueConfig,
-            PieQueueConfig, RedQueueConfig,
+            CoDelQueueConfig, DropHeadQueueConfig, DropTailQueueConfig, DualPi2QueueConfig,
+            InfiniteQueueConfig, PieQueueConfig, RedQueueConfig,
         },
         BwCellConfig,
     },
@@ -96,6 +96,7 @@ enum QueueType {
     CoDel,
     Red,
     Pie,
+    DualPi2,
 }
 
 // Deserialize queue args and create BwCellBuildConfig
@@ -149,7 +150,7 @@ macro_rules! bwreplay_q_args_into_config {
 impl ChannelArgs {
     pub fn build_rattan_config<P, EC>(self) -> rattan_core::error::Result<RattanConfig<P, EC>>
     where
-        P: rattan_core::cells::Packet,
+        P: rattan_core::cells::PacketHeader,
         EC: rattan_env::RattanEnvConfig,
     {
         let mut cells_config = HashMap::<String, CellBuildConfig<P>>::new();
@@ -180,6 +181,9 @@ impl ChannelArgs {
                 }
                 Some(QueueType::Pie) => {
                     bw_q_args_into_config!(Pie, self.uplink_queue_args.clone(), bandwidth)
+                }
+                Some(QueueType::DualPi2) => {
+                    bw_q_args_into_config!(DualPi2, self.uplink_queue_args.clone(), bandwidth)
                 }
             };
             uplink_count += 1;
@@ -214,6 +218,13 @@ impl ChannelArgs {
                 Some(QueueType::Pie) => {
                     bwreplay_q_args_into_config!(Pie, self.uplink_queue_args.clone(), trace_file)
                 }
+                Some(QueueType::DualPi2) => {
+                    bwreplay_q_args_into_config!(
+                        DualPi2,
+                        self.uplink_queue_args.clone(),
+                        trace_file
+                    )
+                }
             };
             uplink_count += 1;
             cells_config.insert(format!("up_{uplink_count}"), cell_config);
@@ -242,6 +253,9 @@ impl ChannelArgs {
                 }
                 Some(QueueType::Pie) => {
                     bw_q_args_into_config!(Pie, self.downlink_queue_args.clone(), bandwidth)
+                }
+                Some(QueueType::DualPi2) => {
+                    bw_q_args_into_config!(DualPi2, self.downlink_queue_args.clone(), bandwidth)
                 }
             };
             downlink_count += 1;
@@ -279,6 +293,13 @@ impl ChannelArgs {
                 }
                 Some(QueueType::Pie) => {
                     bwreplay_q_args_into_config!(Pie, self.downlink_queue_args.clone(), trace_file)
+                }
+                Some(QueueType::DualPi2) => {
+                    bwreplay_q_args_into_config!(
+                        DualPi2,
+                        self.downlink_queue_args.clone(),
+                        trace_file
+                    )
                 }
             };
             downlink_count += 1;
