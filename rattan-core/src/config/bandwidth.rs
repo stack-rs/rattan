@@ -37,6 +37,7 @@ pub enum BwCellBuildConfig<P: Packet> {
     CoDel(bandwidth::BwCellConfig<P, queue::CoDelQueue<P>>),
     Red(bandwidth::BwCellConfig<P, queue::RedQueue<P>>),
     Pie(bandwidth::BwCellConfig<P, queue::PieQueue<P>>),
+    DualPi2(bandwidth::BwCellConfig<P, queue::DualPi2Queue<P>>),
 }
 
 macro_rules! impl_bw_cell_into_factory {
@@ -64,7 +65,8 @@ impl_bw_cell_into_factory!(
     DropHeadQueue,
     CoDelQueue,
     RedQueue,
-    PieQueue
+    PieQueue,
+    DualPi2Queue
 );
 
 #[cfg_attr(
@@ -80,6 +82,7 @@ pub enum BwReplayCellBuildConfig<P: Packet> {
     CoDel(BwReplayQueueConfig<P, queue::CoDelQueue<P>>),
     Red(BwReplayQueueConfig<P, queue::RedQueue<P>>),
     Pie(BwReplayQueueConfig<P, queue::PieQueue<P>>),
+    DualPi2(BwReplayQueueConfig<P, queue::DualPi2Queue<P>>),
 }
 
 #[cfg_attr(
@@ -235,5 +238,6 @@ impl_bw_replay_cell_into_factory!(
     DropHeadQueue,
     CoDelQueue,
     RedQueue,
-    PieQueue
+    PieQueue,
+    DualPi2Queue
 );
