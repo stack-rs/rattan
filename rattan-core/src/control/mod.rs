@@ -127,16 +127,16 @@ impl RattanController {
 
     fn handle_op(&mut self, op: RattanOp) -> Result<RattanOpResult, Error> {
         match op {
-            RattanOp::SendNotify(notify) => {
-                if notify == RattanNotify::Start
-                    && self.state.load(Ordering::Relaxed) != RattanState::Spawned as u8
-                {
+            RattanOp::SendNotify(RattanNotify::Start) => {
+                let state = self.state.load(Ordering::Acquire);
+                if state != RattanState::Spawned as u8 {
                     Err(RattanCoreError::SendNotifyError(format!(
                         "Rattan state is {:?} instead of Spawned when sending Start notify",
-                        RattanState::from(self.state.load(Ordering::Relaxed))
+                        RattanState::from(state)
                     ))
                     .into())
                 } else {
+                    let notify = RattanNotify::Start;
                     self.notify_tx
                         .send(notify.clone())
                         .map(|count| {
@@ -144,7 +144,7 @@ impl RattanController {
                                 warn!("No receiver for rattan notify {notify:?}");
                             }
                             self.state
-                                .store(RattanState::Running as u8, Ordering::Relaxed);
+                                .store(RattanState::Running as u8, Ordering::Release);
                             RattanOpResult::SendNotify
                         })
                         .map_err(|tokio::sync::broadcast::error::SendError(notify)| {
@@ -155,8 +155,28 @@ impl RattanController {
                         })
                 }
             }
+            RattanOp::SendNotify(RattanNotify::FirstPacket) => {
+                // FirstPacket is only a trace alignment point for replay cells, and it is
+                // sent at most once. It neither participates in the Rattan state machine
+                // nor may be rejected: dropping it would leave replay cells waiting forever.
+                let notify = RattanNotify::FirstPacket;
+                self.notify_tx
+                    .send(notify.clone())
+                    .map(|count| {
+                        if count <= 1 {
+                            warn!("No receiver for rattan notify {notify:?}");
+                        }
+                        RattanOpResult::SendNotify
+                    })
+                    .map_err(|tokio::sync::broadcast::error::SendError(notify)| {
+                        RattanCoreError::SendNotifyError(format!(
+                            "Failed to send notify, {notify:?}"
+                        ))
+                        .into()
+                    })
+            }
             RattanOp::QueryState => Ok(RattanOpResult::QueryState(
-                self.state.load(Ordering::Relaxed).into(),
+                self.state.load(Ordering::Acquire).into(),
             )),
             #[cfg(feature = "serde")]
             RattanOp::AddControlInterface(id, control_interface) => {
