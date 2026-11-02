@@ -201,3 +201,94 @@ impl RattanController {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestController {
+        controller: RattanController,
+        state: Arc<AtomicU8>,
+        notify_rx: broadcast::Receiver<RattanNotify>,
+    }
+
+    impl TestController {
+        fn new(state: RattanState) -> Self {
+            let (_op_tx, op_rx) = mpsc::unbounded_channel();
+            let (notify_tx, notify_rx) = broadcast::channel(16);
+            let state = Arc::new(AtomicU8::from(state as u8));
+            let controller =
+                RattanController::new(op_rx, notify_tx, CancellationToken::new(), state.clone());
+            Self {
+                controller,
+                state,
+                notify_rx,
+            }
+        }
+
+        fn state(&self) -> RattanState {
+            self.state.load(Ordering::Acquire).into()
+        }
+    }
+
+    #[test]
+    fn first_packet_broadcasts_without_state_change() {
+        let mut t = TestController::new(RattanState::Spawned);
+        let res = t
+            .controller
+            .handle_op(RattanOp::SendNotify(RattanNotify::FirstPacket));
+        assert!(matches!(res, Ok(RattanOpResult::SendNotify)), "{res:?}");
+        // FirstPacket must not participate in the Rattan state machine.
+        assert_eq!(t.state(), RattanState::Spawned);
+        let notify = t
+            .notify_rx
+            .try_recv()
+            .expect("FirstPacket notify should be broadcast");
+        assert_eq!(notify, RattanNotify::FirstPacket);
+    }
+
+    /// Regression test for the race where a background packet arrives between
+    /// `spawn_rattan()` and `start_rattan()`: the router task sends FirstPacket
+    /// first, which used to store `Running` and make the following Start fail
+    /// with "Rattan state is Running instead of Spawned when sending Start
+    /// notify".
+    #[test]
+    fn first_packet_before_start_does_not_block_start() {
+        let mut t = TestController::new(RattanState::Spawned);
+        t.controller
+            .handle_op(RattanOp::SendNotify(RattanNotify::FirstPacket))
+            .expect("FirstPacket before Start must be accepted");
+        let res = t
+            .controller
+            .handle_op(RattanOp::SendNotify(RattanNotify::Start));
+        assert!(matches!(res, Ok(RattanOpResult::SendNotify)), "{res:?}");
+        assert_eq!(t.state(), RattanState::Running);
+        assert_eq!(
+            t.notify_rx.try_recv().expect("FirstPacket notify"),
+            RattanNotify::FirstPacket
+        );
+        assert_eq!(
+            t.notify_rx.try_recv().expect("Start notify"),
+            RattanNotify::Start
+        );
+    }
+
+    #[test]
+    fn start_notify_guards_state_machine() {
+        // Start is only accepted in `Spawned`: rejected before spawn (Initial),
+        // on double Start (Running) and after teardown (Exited).
+        for state in [
+            RattanState::Initial,
+            RattanState::Running,
+            RattanState::Exited,
+        ] {
+            let mut t = TestController::new(state.clone());
+            let err = t
+                .controller
+                .handle_op(RattanOp::SendNotify(RattanNotify::Start))
+                .expect_err("Start must be rejected outside Spawned");
+            assert!(err.to_string().contains("instead of Spawned"), "{err}");
+            assert_eq!(t.state(), state);
+        }
+    }
+}

@@ -59,7 +59,7 @@ pub trait CellFactory<D>: FnOnce(&Handle) -> Result<D, Error> {}
 impl<T: FnOnce(&Handle) -> Result<D, Error>, D> CellFactory<D> for T {}
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RattanState {
     Initial = 0,
