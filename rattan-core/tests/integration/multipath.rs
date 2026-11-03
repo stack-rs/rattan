@@ -3,20 +3,20 @@
 use std::collections::HashMap;
 
 use rattan_core::cells::router::RoutingEntry;
-use rattan_core::cells::StdPacket;
 use rattan_core::config::{CellBuildConfig, RattanConfig, RouterCellBuildConfig};
-use rattan_core::env::{StdNetEnvConfig, StdNetEnvMode};
-use rattan_core::metal::io::af_packet::AfPacketDriver;
 use rattan_core::radix::RattanRadix;
+use rattan_env::{
+    env::standard::{AfPacketDriver, StdNetEnv, StdNetEnvConfig, StdPacket},
+    StdNetEnvMode,
+};
 use tracing::instrument;
-
 use tracing::warn;
 
 #[instrument]
 #[test_log::test]
 #[serial_test::parallel]
 fn test_multipath_ping() {
-    let mut config = RattanConfig::<StdPacket> {
+    let mut config = RattanConfig::<StdPacket, StdNetEnvConfig> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
             left_veth_count: 4,
@@ -51,7 +51,7 @@ fn test_multipath_ping() {
         ("left3".to_string(), "router".to_string()),
         ("right1".to_string(), "router".to_string()),
     ]);
-    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver, StdNetEnv>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 

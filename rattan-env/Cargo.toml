@@ -25,10 +25,14 @@ serde = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+etherparse = { workspace = true }
+camellia-net = { version = "0.0.1", optional = true }
+rattan-log = { path = "../rattan-log" }
 
 [dev-dependencies]
 test-log = { workspace = true }
 
 [features]
-default = []
+default = ["xdp"]
 serde = ["dep:serde"]
+xdp = ["dep:camellia-net"]
