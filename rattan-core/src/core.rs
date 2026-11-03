@@ -59,7 +59,7 @@ pub trait CellFactory<D>: FnOnce(&Handle) -> Result<D, Error> {}
 impl<T: FnOnce(&Handle) -> Result<D, Error>, D> CellFactory<D> for T {}
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RattanState {
     Initial = 0,
@@ -251,10 +251,11 @@ where
     }
 
     pub fn spawn_rattan(&mut self) -> Result<(), RattanCoreError> {
-        if self.state.load(Ordering::Relaxed) != RattanState::Initial as u8 {
+        let state = self.state.load(Ordering::Acquire);
+        if state != RattanState::Initial as u8 {
             return Err(RattanCoreError::SpawnError(format!(
                 "Rattan state is {:?} instead of Initial",
-                RattanState::from(self.state.load(Ordering::Relaxed))
+                RattanState::from(state)
             )));
         }
         if self.router.is_empty() {
@@ -350,8 +351,11 @@ where
             ));
         }
 
+        // Publish `Spawned` only after every router has registered its notify
+        // receiver: the Start check in `RattanController` treats this as a
+        // subscription barrier, so that a Start broadcast reaches every cell.
         self.state
-            .store(RattanState::Spawned as u8, Ordering::Relaxed);
+            .store(RattanState::Spawned as u8, Ordering::Release);
         Ok(())
     }
 
@@ -365,7 +369,7 @@ where
     }
 
     pub fn join_rattan(&mut self) {
-        if self.state.load(Ordering::Relaxed) == RattanState::Exited as u8 {
+        if self.state.load(Ordering::Acquire) == RattanState::Exited as u8 {
             return;
         }
         self.runtime.block_on(async {
@@ -375,7 +379,7 @@ where
         });
         self.rt_cancel_token.cancel();
         self.state
-            .store(RattanState::Exited as u8, Ordering::Relaxed);
+            .store(RattanState::Exited as u8, Ordering::Release);
         #[cfg(feature = "packet-dump")]
         if let Ok(path) = std::env::var("PACKET_DUMP_FILE") {
             let mut file_out = File::create(&path)
