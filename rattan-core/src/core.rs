@@ -35,6 +35,22 @@ use pcap_file::pcapng::{
 #[cfg(feature = "packet-dump")]
 use std::{fs::File, io::Write, sync::Mutex};
 
+fn trigger_first_payload<P: Packet>(packet: &P) -> bool {
+    if cfg!(not(feature = "first-payload")) {
+        tracing::warn!("first-payload is disabled");
+        // Disable first payload for all the tests for now.
+        return true;
+    }
+    // A largest possible L3 TCP/IP packet without payload:
+    // IP header 20B + 40B option
+    // TCP header 20B + 40B option, which is 120B in total
+    let has_payload = packet.l3_length() >= 500;
+    if has_payload {
+        tracing::info!("Found first payload");
+    }
+    has_payload
+}
+
 pub static CALIBRATED_START_INSTANT: OnceCell<tokio::time::Instant> = OnceCell::new();
 pub static FIRST_PACKET_INSTANT: OnceCell<tokio::time::Instant> = OnceCell::new();
 
@@ -43,7 +59,7 @@ pub trait CellFactory<D>: FnOnce(&Handle) -> Result<D, Error> {}
 impl<T: FnOnce(&Handle) -> Result<D, Error>, D> CellFactory<D> for T {}
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RattanState {
     Initial = 0,
@@ -235,10 +251,11 @@ where
     }
 
     pub fn spawn_rattan(&mut self) -> Result<(), RattanCoreError> {
-        if self.state.load(Ordering::Relaxed) != RattanState::Initial as u8 {
+        let state = self.state.load(Ordering::Acquire);
+        if state != RattanState::Initial as u8 {
             return Err(RattanCoreError::SpawnError(format!(
                 "Rattan state is {:?} instead of Initial",
-                RattanState::from(self.state.load(Ordering::Relaxed))
+                RattanState::from(state)
             )));
         }
         if self.router.is_empty() {
@@ -282,7 +299,7 @@ where
                                 if let Some(p) = packet {
                                     // Check if this is the first packet from VirtualEthernet and send FirstPacket notify
                                     if (rx_id.starts_with("left") || rx_id.starts_with("right")) &&
-                                       FIRST_PACKET_INSTANT.get().is_none() &&
+                                       FIRST_PACKET_INSTANT.get().is_none() && trigger_first_payload(&p) &&
                                        FIRST_PACKET_INSTANT.set(tokio::time::Instant::now()).is_ok() {
                                         if let Err(e) = notify_tx.exec(RattanOp::SendNotify(RattanNotify::FirstPacket)).await {
                                             warn!(rx_id, tx_id, "Failed to send FirstPacket notify: {e:?}");
@@ -327,15 +344,18 @@ where
                                 return
                             }
                         }
-                        tokio::task::yield_now().await;
+                        tokio::task::consume_budget().await;
                     }
                 }
                 .instrument(span!(Level::DEBUG, "CoreRouter").or_current()),
             ));
         }
 
+        // Publish `Spawned` only after every router has registered its notify
+        // receiver: the Start check in `RattanController` treats this as a
+        // subscription barrier, so that a Start broadcast reaches every cell.
         self.state
-            .store(RattanState::Spawned as u8, Ordering::Relaxed);
+            .store(RattanState::Spawned as u8, Ordering::Release);
         Ok(())
     }
 
@@ -349,7 +369,7 @@ where
     }
 
     pub fn join_rattan(&mut self) {
-        if self.state.load(Ordering::Relaxed) == RattanState::Exited as u8 {
+        if self.state.load(Ordering::Acquire) == RattanState::Exited as u8 {
             return;
         }
         self.runtime.block_on(async {
@@ -359,7 +379,7 @@ where
         });
         self.rt_cancel_token.cancel();
         self.state
-            .store(RattanState::Exited as u8, Ordering::Relaxed);
+            .store(RattanState::Exited as u8, Ordering::Release);
         #[cfg(feature = "packet-dump")]
         if let Ok(path) = std::env::var("PACKET_DUMP_FILE") {
             let mut file_out = File::create(&path)

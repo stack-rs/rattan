@@ -24,14 +24,19 @@ rattan link --packet-log packet.rtl --packet-log-mode compact-tcp
 rattan run --config config.toml --packet-log packet.rtl --packet-log-mode raw-ip
 ```
 
-The possible values for `--packet-log-mode` are:
+For generating packet logs, possible values for `--packet-log-mode` are:
 
 - `compact-tcp` (as default, if not specified). In this mode, some fields from TCP and IP headers are recorded.
 - `raw-ip`. In this mode, the raw L3 and L4 headers are recorded.
 - `raw-tcp`. In this mode, the raw L4 headers are recorded.
 
 This will create a file named `packet.rtl` in the current directory, which will contain the compressed packet log.
-The flow description file will be named `packet.flows`. Also, if any raw headers are recorded, a `packet.raw` will be created.
+The flow description file will be named `packet.flow`. Also, if any raw headers are recorded, a `packet.raw` will be created.
+
+A special packet log mode `drift-stat` is implemented if the feature `drift-stat` is enabled. In this mode, 
+**no** per-packet logs are recorded. 
+
+If the `drift-stat` feature is active, enabling any packet log mode (including `compact-tcp`, `raw-ip`, `raw-tcp`, or `drift-stat`) will trigger the recording of basic statistics for ingress/egress time drifts in Rattan. These statistics are saved as a `.jsonl` file.
 
 ### Convert a Rattan packet log
 
@@ -49,7 +54,7 @@ rattan convert ./packet.rtl [path/to/output]
 This expects the following files exist, as input:
 
 - `./packet.rtl`
-- `./packet.flows`
+- `./packet.flow`
 - `./packet.raw` (optional, only if the packet log was recorded in `raw-tcp` or `raw-ip` mode).
 
 And it will generate the following files, as output, if the address of the two ends of the emulated link
@@ -96,6 +101,68 @@ uv run --script scripts/log_converter.py ./packet.rtl path/to/output
 
 The paths to input and output files are the same as those for `rattan convert`, and the behaviour of the python script is basically the same as `rattan convert`.
 
+### Break down per-packet time with endpoint pcaps
+
+The `drift-matcher` binary of the `rattan-log` crate matches each packet recorded in a Rattan packet log against the
+same packet captured at the client and at the server. It then shows how much time the packet spent before, inside, and
+after Rattan, including how late Rattan actually sent it compared to when it should have left (the egress drift).
+
+**Requirements**:
+
+- Rattan is built with the `drift-log` feature, and the packet log is recorded in `compact-tcp` mode.
+  With `drift-log`, the `ip.frag` field of each TCP log entry stores the time drift (in microseconds, capped at 65535)
+  instead of the IP fragment info.
+- The client and the server each capture their own traffic with `tcpdump` on all interfaces, in the classic pcap
+  format (not pcapng), e.g. inside the client's network namespace:
+
+  ```bash
+  tcpdump -i any -y LINUX_SLL -w client.pcap
+  ```
+
+  `drift-matcher` expects the Linux cooked capture (SLL) link type that `-i any` produces. `-y LINUX_SLL` keeps
+  newer `tcpdump` versions from choosing `LINUX_SLL2` instead.
+- The files are placed in one directory, the "artifacts directory", as:
+
+  ```text
+  <artifacts_dir>/
+  ├── exec-log/
+  │   ├── client.pcap
+  │   └── server.pcap
+  └── result/
+      ├── packet.flow
+      └── packet.rtl
+  ```
+
+Build and run it with:
+
+```bash
+cargo build --release -p rattan-log --bin drift-matcher
+./target/release/drift-matcher path/to/artifacts_dir > drift.log
+```
+
+By default, the server is assumed to be on the right side of Rattan. If it is on the left side, pass `--server-side left`.
+To process many artifacts directories at once, see
+[scripts/parse_time_drift.sh](https://github.com/stack-rs/rattan/blob/main/scripts/parse_time_drift.sh).
+
+Packets are matched by their flow and the TCP/IP header fields that the `compact-tcp` mode records
+(`tcp.seq`, `tcp.ack`, `ip.id`, `ip.checksum`, `tcp.flags` and `tcp.dataofs`).
+Progress, the flows found, and the trace start time are printed to stderr.
+To stdout, one line is printed per packet, sorted by the time it entered Rattan, with tab-separated columns.
+All times are in microseconds, and a value that could not be computed (the packet was not seen at some point)
+is shown as `*****`:
+
+| Column | Meaning |
+| --- | --- |
+| 1 | Direction, `C->S` (client to server) or `S->C` (server to client). |
+| 2 | The time the packet entered Rattan, in microseconds since the Unix epoch. |
+| 3 | Time from the sender's capture to entering Rattan. |
+| 4 | Time from entering Rattan to when the packet should have left Rattan, as emulated by the cells. |
+| 5 | Egress drift: time from when the packet should have left Rattan to when it actually left. |
+| 6 | Time from leaving Rattan to the receiver's capture. |
+
+A negative difference prints a `Warning!` line to stderr. Columns 3 and 6 compare timestamps taken by different
+clocks (`tcpdump` and Rattan), so they are only meaningful when all of them run on the same host.
+
 ## Specification
 
 ### Raw file
@@ -111,7 +178,7 @@ can be indexed by the pair (`offset`, `length`).
 
 Now we have 2 kinds of log entry files:
 
-- `.flows` files, which contains the metadata for flows. They consist of `Flow Entries`.
+- `.flow` files, which contain the metadata for flows. They consist of `Flow Entries`.
 - `.rtl` files, which contains per-packet log for packets in those flows.
   - For non-raw modes, they consist of non-raw `General Packet Entries`.
   - For raw modes, they consist of chunks. Each chunk starts with a `Chunk Prologue`, which is followed by raw `General Packet Entries`.
@@ -143,7 +210,7 @@ protocol "LH.length:12,LH.ty.:4,payload:112"
 Generated with [protocol](https://github.com/luismartingarcia/protocol), where
 `LH` is short for log entry header.
 
-`LH.length` denotes the whole length of the log entry file, including the header (2 bytes) and its payload, in bytes.
+`LH.length` denotes the whole length of the log entry, including the header (2 bytes) and its payload, in bytes.
 
 Currently, there are multiple types of `LH.ty.` that indicate how a log entry's payload is organized. They are:
 
@@ -186,7 +253,7 @@ Where `CPH` is short for Chunk Prologue Header, and `CP` is short for Chunk Prol
 The meaning of each field is as follows:
 
 - `CPH.length` denotes the length of the chunk prologue entry itself.
-- `CPH.ty.` is always 0 now.
+- `CPH.ty.` is 0 for a chunk of log entries, which is the only kind of chunk written now. The value 1 is reserved for meta chunks.
 - `CPH.log_version` is a magic number, which is 0x20260101 in this specification.
 - `CPH.data_length` is the sum of the length of this Chunk Prologue Entry and all subsequent content (which, for now, consists solely of raw General Packet Entries).
 - `CPH.chunk_length` is the logical length of the current chunk. It indicates that the next Chunk Prologue is expected to be found, or the End-of-File (EOF) is expected to be reached, exactly `CPH.chunk_length` bytes from the offset of this log entry.
@@ -255,7 +322,7 @@ protocol "LH.length:12,LH.ty.:4,GPH.length:8,GPH.ac.:4,GPH.ty.:4,GP.timestamp:32
 The meaning of each field is as follows:
 
 - `LH.length`: Length of the whole log entry in bytes. For TCP log entries, it is 32 bytes.
-- `LH.ty.`: Type of the log entry, currently only `0` is supported (indicating a general packet entry).
+- `LH.ty.`: Type of the log entry, always `0` here (indicating a general packet entry).
 - `GPH.length`: Length of the general packet entry in bytes, including the header and body (`GPH` + `GP`). It is 8 bytes in most cases.
 - `GPH.ac.`: Action of the general packet entry. It can be one of the following values:
   - `0`: Send (packet leaves Rattan)
@@ -320,13 +387,14 @@ And `RGP` is short for raw General Packet.
 
 For raw General Packet Entries, `GPH.ty.` could be one of:
 
-- `GPH.ty.` = 1, for raw packet logs with raw L3 and L4 headers (`raw-ip`).
-- `GPH.ty.` = 2, for raw packet logs with raw L4 headers (`raw-tcp`).
+- `GPH.ty.` = 1, for raw packet logs with raw L4 headers (`raw-tcp`).
+- `GPH.ty.` = 2, for raw packet logs with raw L3 and L4 headers (`raw-ip`).
 
 And those are descriptions for other fields that will be only used in raw General Packet Entries:
 
 If `RGP.flow_index` is 0, it is a default value for packets that can not be
-related to a recorded flow for any reason. Otherwise, it means the index of flow in the `.flow` file (counting from 1), that this packet belongs to. It is used, rather
+related to a recorded flow for any reason. Otherwise, it means the index of the flow that this packet belongs to, among the TCP/IPv4 Flow Entries in the `.flow` file (counting from 1).
+Other kinds of Flow Entries (e.g. the Trace Start Entry) are skipped when counting. It is used, rather
 than directly the 32-bit flow id, for a more compact and cache line-friendly representation.
 
 Instead of recording the variable-length raw headers of the packet directly in the raw mode General Packet Entry, we record them in an indirect way:
@@ -341,12 +409,19 @@ The `length` is recorded as `RGP.len` in the current raw General Packet Entry. T
 
 #### Flow Entry
 
-A flow entry is a log entry with `LH.ty.` = 2, which records basic descriptive info for a flow.
+A flow entry is a log entry with `LH.ty.` = 2, stored in the `.flow` file. There are two kinds of Flow Entries, distinguished by `FLH.ty.`:
+
+- `FLH.ty.` = 0, for a TCP/IPv4 Flow Entry, which records basic descriptive info for a flow.
+- `FLH.ty.` = 1, for a Trace Start Entry, which records when the trace starts.
+
+All Flow Entries are stored continuously in the `.flow` file, and the two kinds can be interleaved.
+
+##### TCP/IPv4 Flow Entry
 
 A "flow" is unidirectional in Rattan Packet Log.
 For example, a single connection between a TCP client and TCP server is considered as 2 flows.
 
-Currently there are only one type of flows supported, the TCP/IPv4 flow, and the Flow entries for those flows, stored continuously in the `.flow` file, have a specification as follows:
+Currently there is only one type of flow supported, the TCP/IPv4 flow, and the Flow Entries for those flows have a specification as follows:
 
 ```text
  0                   1                   2                   3
@@ -398,9 +473,40 @@ Where `FLH` is short for Flow Entry Header, and `FLE` is short for Flow Entry.
 The meaning of each field is as follows:
 
 - `FLH.length` is the length for the whole flow entry.
-- `FLH.ty.` must be 0, denoting a TCP/IPv4 flow.
+- `FLH.ty.` is 0, denoting a TCP/IPv4 flow.
 - `FLE.id`: The identifier of the flow. The high 16 bits are the interface ID where the packet enters Rattan, and the low 16 bits are the incremental flow counter.
-- `FLE.base_timestamp`: The base timestamp in nanoseconds (this unit is different from the `GP.timestamp` field) for this flow.
+- `FLE.base_timestamp`: The base timestamp for this flow, in microseconds since the Unix epoch. The timestamp of a packet in this flow is `FLE.base_timestamp` + `GP.timestamp`.
 - `src.ip`, `dst.ip`, `src.port`, `dst.port`: The source IPv4 address, destination IPv4 address, source TCP port number, destination TCP port number.
 - `FLE.tcp_syn_options`: As flows are unidirectional here, only one valid SYN (TCP client side) or SYN_ACK (TCP server side) packet would exist in a TCP connection. The TCP options fields in such packets are recorded in raw here. This field has a fixed length of 40 bytes, and zero-padding at the end if the tcp options are less than 40 bytes. 40 bytes are the upper limit in TCP protocol: a TCP header can be at most 15
 \* 4 = 60 bytes in length, and the first 20 bytes are used for fixed fields in the TCP header.
+
+##### Trace Start Entry
+
+A Trace Start Entry is written only when Rattan is built with the `drift-log` feature. At most one is recorded per run.
+It can appear anywhere among the TCP/IPv4 Flow Entries.
+
+```text
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       LH.length       | LH.ty.|       FLH.length      |FLH.ty.|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                            Reserved                           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
++                      TSE.trace_timestamp                      +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+```bash
+protocol "LH.length:12,LH.ty.:4,FLH.length:12,FLH.ty.:4,Reserved:32,TSE.trace_timestamp:64"
+```
+
+Where `TSE` is short for Trace Start Entry.
+The meaning of each field is as follows:
+
+- `LH.length` is 16.
+- `FLH.length` is 14, the length of the Trace Start Entry excluding `LH`.
+- `FLH.ty.` is 1, denoting a Trace Start Entry.
+- `TSE.trace_timestamp`: The logical start time of the trace replayed by Rattan's cells, in microseconds since the Unix epoch (the same unit as `FLE.base_timestamp`).
