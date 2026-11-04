@@ -7,7 +7,7 @@ set -e
 DURATION=${DURATION:-20}
 DELAY=${DELAY:-10ms}
 MIN_UTIL=${MIN_UTIL:-0.95}
-MAX_UTIL=${MAX_UTIL:-1.05}
+MAX_UTIL=${MAX_UTIL:-1.01}
 
 # Traces from the Orca paper (SIGCOMM '20), pinned to a commit
 NYC_COMMIT=ac6717b5f113bf899344e91ffc57e472daf29954
@@ -49,8 +49,10 @@ for entry in "${NYC_TRACES[@]}"; do
     traces+=("$file")
 done
 
+# first-payload starts the trace at the first packet with real payload, so it
+# lines up with what iperf3 measures.
 # Build first so the timeout below only covers the test itself
-cargo build --release -q -p rattan
+cargo build --release -q -p rattan --features first-payload
 
 failed=()
 for trace in "${traces[@]}"; do
@@ -65,7 +67,7 @@ for trace in "${traces[@]}"; do
     set +e
     RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' \
         timeout $((DURATION + 120)) \
-        cargo run --release -q -p rattan -- \
+        cargo run --release -q -p rattan --features first-payload -- \
         link \
         --uplink-delay $DELAY \
         --downlink-delay $DELAY \
