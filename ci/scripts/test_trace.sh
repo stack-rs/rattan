@@ -51,8 +51,9 @@ done
 
 # first-payload starts the trace at the first packet with real payload, so it
 # lines up with what iperf3 measures.
+FEATURE_SET="first-payload"
 # Build first so the timeout below only covers the test itself
-cargo build --release -q -p rattan --features first-payload
+cargo build --release -q -p rattan --features $FEATURE_SET
 
 failed=()
 for trace in "${traces[@]}"; do
@@ -67,7 +68,7 @@ for trace in "${traces[@]}"; do
     set +e
     RUST_LOG=info CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E' \
         timeout $((DURATION + 120)) \
-        cargo run --release -q -p rattan --features first-payload -- \
+        cargo run --release -q -p rattan --features $FEATURE_SET -- \
         link \
         --uplink-delay $DELAY \
         --downlink-delay $DELAY \
