@@ -57,3 +57,11 @@ jobs:
             ci/scripts/cache/verify_log.tar.gz
       - name: Real trace verification
         run: /bin/bash ./ci/scripts/test_trace.sh
+      - name: Archive real trace results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real_trace_${{ matrix.kernel }}
+          path: |
+            ci/scripts/cache/traces/*.log
+            ci/scripts/cache/traces/*.json

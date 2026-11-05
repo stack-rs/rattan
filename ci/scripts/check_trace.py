@@ -49,7 +49,7 @@ def main():
     if not intervals:
         print("FAIL: iperf3 reported no intervals")
         sys.exit(1)
-    seconds = len(intervals)
+    seconds = sum(iv["sum"]["seconds"] for iv in intervals)
     got = sum(iv["sum"]["bytes"] * 8 for iv in intervals)
     cap = trace_capacity_bits(trace, seconds)
     if cap == 0:
@@ -61,7 +61,7 @@ def main():
     print(
         f"{'PASS' if ok else 'FAIL'}: capacity {cap / seconds / 1e6:.2f} Mbps, "
         f"iperf3 {got / seconds / 1e6:.2f} Mbps, utilization {util:.1%} "
-        f"(allowed {min_util:.0%}-{max_util:.0%}, {seconds} s)"
+        f"(allowed {min_util:.0%}-{max_util:.0%}, {seconds:.1f} s)"
     )
     sys.exit(0 if ok else 1)
 
