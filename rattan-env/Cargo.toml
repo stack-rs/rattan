@@ -36,6 +36,7 @@ test-log = { workspace = true }
 [features]
 default = []
 drop-stat = []
+packet-seq = []
 serde = ["dep:serde"]
 xdp = ["dep:camellia-net"]
 rvnic = ["dep:rvnic"]

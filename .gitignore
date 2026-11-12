@@ -32,3 +32,6 @@ guide/book
 .pre-commit-config.yaml
 
 **/.DS_Store
+
+# For local debug
+debug

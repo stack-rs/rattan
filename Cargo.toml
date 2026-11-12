@@ -144,6 +144,7 @@ first-payload = ["rattan-core/first-payload"]
 http = ["rattan-core/http"]
 nat = ["dep:mnl", "dep:nftnl"]
 packet-dump = ["rattan-core/packet-dump"]
+packet-seq = ["rattan-env/packet-seq", "rvnic"]
 xdp = ["rattan-env/xdp"]
 rvnic = ["rattan-env/rvnic"]
 
