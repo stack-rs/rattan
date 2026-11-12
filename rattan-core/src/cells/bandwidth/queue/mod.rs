@@ -113,6 +113,16 @@ where
         self.queue.dequeue_at(timestamp)
     }
 
+    /// Number of packets in the inbound buffer, i.e. not yet logically entered the queue.
+    pub fn inbound_length(&self) -> usize {
+        self.inbound_buffer.len()
+    }
+
+    /// Number of packets in the inner queue.
+    pub fn queue_length(&self) -> usize {
+        self.queue.length()
+    }
+
     pub fn next_call_time(&self) -> Instant {
         if let Some(head) = self.inbound_buffer.front() {
             return head.get_timestamp();
