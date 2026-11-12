@@ -1,12 +1,16 @@
 #[cfg(feature = "http")]
 use std::net::IpAddr;
 use std::{
-    sync::{mpsc, Arc},
+    sync::{atomic::AtomicUsize, mpsc, Arc},
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use backon::{BlockingRetryable, ExponentialBuilder};
+use nix::{
+    sched::{sched_setaffinity, CpuSet},
+    unistd::Pid,
+};
 use once_cell::sync::{Lazy, OnceCell};
 use rattan_env::{env::standard::AfPacketDriver, InterfaceDriver, StdNetEnv};
 use rattan_env::{
@@ -18,10 +22,6 @@ use rattan_log::{file_logging_thread, RattanLogOp, LOGGING_TX};
 use tokio::{runtime::Runtime, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, span, warn, Level};
-// use nix::{
-//     sched::{sched_setaffinity, CpuSet},
-//     unistd::Pid,
-// };
 
 use crate::{
     cells::{
@@ -51,6 +51,44 @@ pub static BASE_TS: Lazy<(i64, u64, tokio::time::Instant)> = Lazy::new(|| {
         .as_micros();
     (machine_time, unix_time as u64, Instant::now())
 });
+
+// Upon worker thread startup, this counter is incremented. So that the working threads
+// are assigned unique CPU affinity from the given user-specified CPU set.
+static AFFINITY_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+// Utility function to set CPU affinity for the current working thread.
+// If anything failes, an error is printed, and the worker thread will continue.
+fn set_cpu_affinity(available_cpus: &[u32]) {
+    let index = AFFINITY_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if available_cpus.is_empty() {
+        return;
+    }
+    let cpu = available_cpus[index % available_cpus.len()] as usize;
+
+    let mut cpu_set = CpuSet::new();
+    if cpu_set.set(cpu).is_err() {
+        error!(
+            target : "working_thread",
+            "Failed to set CPU affinity: CPU {} is not available", cpu
+        );
+        return;
+    }
+
+    info!(
+        target : "working_thread",
+        "Trying to set CPU affinity for working thread to CPU {}", cpu
+    );
+
+    if let Err(e) = sched_setaffinity(
+        Pid::from_raw(0), // current thread
+        &cpu_set,
+    ) {
+        error!(
+            target : "working_thread",
+            "Failed to set CPU affinity to CPU {}: {}", cpu, e
+        );
+    }
+}
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -128,7 +166,14 @@ where
             )
             .call()?;
 
-        let running_core = config.env.get_running_cpu();
+        let running_core = config.resource.get_cpu().unwrap_or_default();
+        let worker_thread_cnt = config.resource.working_threads().max(1);
+
+        if running_core.is_empty() {
+            info!(target : "working_thread", "Try to start {} working threads without setting CPU affinity", worker_thread_cnt);
+        } else {
+            info!(target : "working_thread", "Try to start {} working threads with CPU affinity on CPUs: {:?}",  worker_thread_cnt, running_core);
+        };
 
         // Log env creation to kmsg for system-level observability
         if let Ok(mut kmesg_logger) = std::fs::OpenOptions::new().write(true).open("/dev/kmsg") {
@@ -165,15 +210,11 @@ where
 
             // TODO(enhancement): need to handle panic due to affinity setting
             let runtime = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(running_core.len())
+                .worker_threads(worker_thread_cnt)
                 .enable_all()
-                // .on_thread_start(move || {
-                //     let mut cpuset = CpuSet::new();
-                //     for core in running_core.iter() {
-                //         cpuset.set(*core as usize).unwrap();
-                //     }
-                //     sched_setaffinity(Pid::from_raw(0), &cpuset).unwrap();
-                // })
+                .on_thread_start(move || {
+                    set_cpu_affinity(running_core.as_slice());
+                })
                 .build()
                 .map(Arc::new);
 
@@ -269,9 +310,15 @@ where
             http_thread_handle,
         };
         // This could be veth pairs, or rvnic
-        radix.init_iterfaces()?;
-        radix.load_cells_config(config.cells)?;
-        radix.link_cells(config.links)?;
+        radix
+            .init_iterfaces()
+            .inspect_err(|e| tracing::error!(?e, "Failed to init interfaces"))?;
+        radix
+            .load_cells_config(config.cells)
+            .inspect_err(|e| tracing::error!(?e, "Failed to load cell config"))?;
+        radix
+            .link_cells(config.links)
+            .inspect_err(|e| tracing::error!(?e, "Failed to link cells"))?;
         Ok(radix)
     }
 
@@ -299,13 +346,16 @@ where
             drivers,
         } = interface;
 
+        let name_clone = name.clone();
+
         self.build_cell(name.clone(), move |rt| {
             let _guard = rt.enter();
             let mut id = VirtualEthernetId::new();
             id.set_ns_id(ns_id);
             id.set_veth_id_copied(veth_id);
             VirtualEthernet::<D>::new(drivers, id)
-        })?;
+        })
+        .inspect_err(|e| tracing::error!(?e, "Failed to init interface {}", name_clone))?;
 
         Ok(())
     }
@@ -316,9 +366,11 @@ where
         let interfaces = self
             .env
             .build_interfaces(self.rattan.get_runtime_handle())?;
+        info!("{} interfaces to be registered as cells.", interfaces.len());
         for interface in interfaces.into_iter() {
             self.init_interface(interface)?;
         }
+        info!("Interfaces registered as cells");
         Ok(())
     }
 

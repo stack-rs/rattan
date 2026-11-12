@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, env, path::PathBuf};
 
 use rattan_env::env::RattanEnvConfig;
 #[cfg(feature = "serde")]
@@ -77,6 +77,31 @@ pub struct RattanResourceConfig {
 impl RattanResourceConfig {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    pub fn working_threads(&self) -> usize {
+        // If env `RATTAN_WORKING_THREADS` is set, use it; otherwise use cpu cores
+        if let Some(threads) = env::var("RATTAN_WORKING_THREADS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
+            return threads;
+        }
+        if let Some(cpu) = &self.cpu {
+            cpu.len()
+        } else {
+            4
+        }
+    }
+
+    pub fn get_cpu(&self) -> Option<Vec<u32>> {
+        // If env `RATTAN_CPU` is set, use it; otherwise use the cpu cores from the config
+        if let Ok(cpu_list) = env::var("RATTAN_CPU") {
+            // split by comma and parse each core
+            let cpu: Vec<u32> = cpu_list.split(',').filter_map(|s| s.parse().ok()).collect();
+            return Some(cpu);
+        }
+        self.cpu.clone()
     }
 }
 

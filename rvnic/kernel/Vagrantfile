@@ -1,0 +1,148 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+#
+# Rattan vNIC Kernel Module Development VM (libvirt)
+#
+# Prerequisites:
+#   sudo apt install vagrant libvirt-daemon-system vagrant-libvirt
+#   sudo usermod -aG libvirt $USER
+#   newgrp libvirt  # or logout/login
+#
+# Usage:
+#   cd rvnic/kernel/
+#   vagrant up              - Create and provision the VM (default: debian13)
+#   vagrant ssh             - SSH into the VM
+#   vagrant halt            - Stop the VM
+#   vagrant destroy         - Remove the VM
+#   vagrant rsync-auto      - Auto-sync on file changes (if using rsync)
+#
+# Crash capture:
+#   The guest kernel console goes to the serial port, which is written to
+#   SERIAL_LOG on the host (default .vagrant/serial.log next to this file,
+#   override with RVNIC_SERIAL_LOG, but not under /tmp, see below). An oops
+#   panics and reboots the guest after 5 s instead of wedging it, so the BUG
+#   text, RIP and call trace are always left in that file:
+#     tail -f rvnic/kernel/.vagrant/serial.log
+#   The serial port is part of the domain definition: an existing VM needs
+#   `vagrant destroy && vagrant up` to pick it up. The guest side can be
+#   (re)applied alone with `vagrant provision --provision-with debug-console`
+#   followed by `vagrant reload`.
+#
+# Inside VM:
+#   cd /rattan              - Access the full rattan project
+#   cd /rattan/rvnic/kernel - Kernel module directory
+#   make                    - Build the kernel module
+#   sudo insmod rattan_vnic.ko  - Load the module
+#   sudo rmmod rattan_vnic      - Unload the module
+#   dmesg | tail            - Check kernel messages
+#
+
+SERIAL_LOG = ENV.fetch("RVNIC_SERIAL_LOG", File.join(__dir__, ".vagrant", "serial.log"))
+
+# libvirt opens the serial file as root with O_CREAT. Pre-create it here, as
+# the invoking user, so it stays readable without sudo. Keep it out of sticky
+# dirs such as /tmp: with fs.protected_regular=2 root may not O_CREAT-open an
+# existing file there that someone else owns, and the domain fails to start.
+unless File.exist?(SERIAL_LOG)
+  require "fileutils"
+  FileUtils.mkdir_p(File.dirname(SERIAL_LOG))
+  File.open(SERIAL_LOG, "a", 0o644) {}
+end
+
+Vagrant.configure("2") do |config|
+  # Base box
+  config.vm.box = "behemoth/debian13"
+  
+  config.vm.hostname = "rattan-dev"
+
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  config.vm.synced_folder ".", "/home/vagrant/rvnic",
+    type: "rsync",
+    rsync__auto: true,  
+    rsync__include: ["rattan_vnic.ko"]
+    
+  config.vm.synced_folder "../librvnic/target/release/examples", "/home/vagrant/examples",
+    type: "rsync",
+    rsync__auto: true,  
+    rsync__include: ["test_forward", "test_forward_drop", "test_forward_multiqueue", "test_umem"]
+
+  # Libvirt provider configuration
+  config.vm.provider "libvirt" do |lv|
+
+    lv.memory = 4096
+    lv.cpus = 16
+
+    lv.driver = "kvm"
+    lv.nested = true
+
+    lv.cpu_mode = "host-passthrough"
+
+    # Kernel console -> host file (see "Crash capture" above)
+    lv.serial :type => "file", :source => { :path => SERIAL_LOG }
+    # lv.machine_virtual_size = 128 # 128GB 
+
+  end
+  
+  # Provisioning script
+  config.vm.provision "shell", inline: <<-SHELL
+    # Update package lists
+    apt-get update
+
+    # 1. System Essentials (Keep for stability)
+    apt-get install -y libpam-systemd libnss-systemd systemd-timesyncd
+    
+    # 2. Network Experiment Tools
+
+    apt-get install -y \
+      bash-completion \
+      bridge-utils \
+      bzip2 \
+      bpftrace \
+      ca-certificates \
+      dbus \
+      ethtool \
+      file \
+      gettext-base \
+      gnupg \
+      htop \
+      iproute2 \
+      iputils-ping \
+      liblockfile-bin \
+      lsof \
+      ltrace \
+      lvm2 \
+      media-types \
+      ncurses-term \
+      netcat-traditional \
+      openssh-client \
+      perl \
+      psmisc \
+      rsync \
+      socat \
+      ssl-cert \
+      strace \
+      tcpdump \
+      traceroute \
+      util-linux-extra \
+      xz-utils
+      
+    DEBIAN_FRONTEND=noninteractive apt-get install -y iperf3
+    
+    # 3. Update to the newest kernel
+    apt-get install -y linux-image-amd64 linux-headers-amd64
+
+  SHELL
+
+  # Kernel console on ttyS0, and panic + reboot on oops (see "Crash capture")
+  config.vm.provision "debug-console", type: "shell", inline: <<-SHELL
+    set -e
+    if ! grep -q 'console=ttyS0' /etc/default/grub; then
+      sed -i 's/^GRUB_CMDLINE_LINUX="\\(.*\\)"/GRUB_CMDLINE_LINUX="\\1 console=tty0 console=ttyS0,115200n8"/' /etc/default/grub
+      update-grub
+    fi
+    printf 'kernel.panic_on_oops = 1\\nkernel.panic = 5\\n' > /etc/sysctl.d/90-rattan-crash.conf
+    sysctl -q -p /etc/sysctl.d/90-rattan-crash.conf
+  SHELL
+
+end

@@ -25,6 +25,14 @@ pub trait InterfaceDriver: Send + 'static {
     fn sender(&self) -> Arc<Self::Sender>;
     fn receiver(&mut self) -> &mut Self::Receiver;
     fn into_receiver(self) -> Self::Receiver;
+
+    // Let the driver to decide use async recving or blocking recv
+    fn use_blocking_recv() -> bool {
+        false
+    }
+    fn recv_thread(_receiver: Self::Receiver, _tx: tokio::sync::mpsc::Sender<Self::Packet>) {
+        unimplemented!("Driver decided to use blocking recv but did not implement it")
+    }
 }
 
 pub struct InterfaceBuildArtifact<D: InterfaceDriver> {
