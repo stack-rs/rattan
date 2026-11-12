@@ -23,6 +23,11 @@ use crate::{
 #[derive(Debug)]
 pub struct RvnicPacket {
     desc: RattanDesc,
+    // Per-receive-queue monotonically increasing packet sequence. Only tracked
+    // with the `packet_seq` feature, for debug logging: the kernel token is
+    // opaque and recycled, so it cannot serve as a packet counter.
+    #[cfg(feature = "packet-seq")]
+    seq: u64,
     timestamp: Instant,
     // This tells when we drop this packet in Rattan, to which FILL Ring
     // should we return the buffer!
@@ -119,6 +124,25 @@ impl Packet for RvnicPacket {
     fn delay_until(&mut self, timestamp: Instant) {
         self.timestamp = timestamp;
     }
+
+    #[inline(always)]
+    #[cfg(not(feature = "packet-seq"))]
+    fn debug_log(&self, _args: std::fmt::Arguments) {}
+
+    #[inline(always)]
+    #[cfg(feature = "packet-seq")]
+    fn debug_log(&self, args: std::fmt::Arguments) {
+        if self.seq & 0xFFFF == 0 {
+            let msg = format!("{args}");
+            tracing::debug!(
+                target: "rvnic",
+                "Pkt {}-{:08x}: {}",
+                self.received_from,
+                self.seq,
+                msg,
+            );
+        }
+    }
 }
 
 pub struct RvnicSender {
@@ -207,6 +231,8 @@ fn packet_send_prepare(packet: impl Into<RvnicPacket>) -> (RattanDesc, (QueueID,
     packet.sent = true;
     let token = packet.desc.token;
     let desc = packet.desc;
+
+    packet.debug_log(format_args!("sent out"));
 
     // Make the constant compare first, make it easier for the compiler's optimizier.
     // Warning: As no cells we currently have modifies the header, this function is never tested!
@@ -371,6 +397,11 @@ impl InterfaceDriver for RvnicDriver {
         // i.e. CLOCK_MONOTONIC) when the packet is pushed to the RX ring.
         let clock_anchor = MonotonicAnchor::new();
 
+        // Per-queue monotonic packet sequence, assigned in RX-ring order.
+        // Only tracked with the `packet_seq` feature.
+        #[cfg(feature = "packet-seq")]
+        let mut recv_seq: u64 = 0;
+
         for loop_cnt in 0..u64::MAX {
             let Ok(nfds) = epoll_fd
                 .wait(&mut events, RECV_EPOLL_MAX_WAIT_MS)
@@ -393,6 +424,7 @@ impl InterfaceDriver for RvnicDriver {
 
                 let mut batch_count = 0;
                 let mut to_receive = [RattanDesc::default(); BATCH_SIZE];
+
                 loop {
                     let filled = receiver.rx_ring.consume(&mut to_receive);
                     if filled == 0 {
@@ -405,12 +437,20 @@ impl InterfaceDriver for RvnicDriver {
                         let timestamp = clock_anchor.to_instant(desc.timestamp);
                         let packet = RvnicPacket {
                             desc,
+                            #[cfg(feature = "packet-seq")]
+                            seq: recv_seq + i as u64,
                             header: None,
                             timestamp,
                             received_from: receiver.id,
                             sent: false,
                         };
+                        packet.debug_log(format_args!("received by epoll"));
                         let _ = tx.blocking_send(packet);
+                    }
+
+                    #[cfg(feature = "packet-seq")]
+                    {
+                        recv_seq += filled as u64;
                     }
                 }
                 tracing::trace!(target: "rvnic", "[{}]Recv batch {} @ {}", self_raw_fd, batch_count, loop_cnt);
