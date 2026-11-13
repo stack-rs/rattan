@@ -359,3 +359,177 @@ pub fn set_cpu_affinity(cpu: u32) -> std::io::Result<()> {
     }
     Ok(())
 }
+
+/// Maps kernel `CLOCK_MONOTONIC` nanosecond timestamps (as produced by
+/// `ktime_get_ns()` in the rvnic driver, e.g. `RattanDesc::timestamp`) to
+/// [`tokio::time::Instant`].
+///
+/// On Linux, `Instant` is backed by `CLOCK_MONOTONIC` as well, so the two clocks
+/// differ only by a constant offset. `Instant` cannot be built from raw
+/// nanoseconds, so we pair one `Instant` with its raw clock value once and
+/// convert relative to that anchor afterwards, avoiding any syscall on the hot
+/// path.
+#[derive(Debug, Clone, Copy)]
+pub struct MonotonicAnchor {
+    ns: u64,
+    instant: tokio::time::Instant,
+}
+
+/// Maximum disagreement tolerated between the exact (parsed) anchor and the
+/// bracketed estimate before the former is considered bogus.
+const ANCHOR_TOLERANCE_NS: u64 = 100_000;
+
+fn monotonic_ns() -> u64 {
+    let ts = nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC)
+        .expect("CLOCK_MONOTONIC is always available");
+    ts.tv_sec() as u64 * 1_000_000_000 + ts.tv_nsec() as u64
+}
+
+/// Recovers the raw clock value of a `std::time::Instant` from its `Debug`
+/// output, which on Unix is `Instant { tv_sec: <s>, tv_nsec: <ns> }`.
+///
+/// The format is not a stable API, so this returns `None` on anything
+/// unexpected; callers must validate the result anyway.
+fn parse_instant_debug(s: &str) -> Option<u64> {
+    let field = |name: &str| -> Option<u64> {
+        let rest = &s[s.find(name)? + name.len()..];
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        rest[..end].parse().ok()
+    };
+    let sec = field("tv_sec: ")?;
+    let nsec = field("tv_nsec: ")?;
+    (nsec < 1_000_000_000).then(|| sec.checked_mul(1_000_000_000)?.checked_add(nsec))?
+}
+
+impl MonotonicAnchor {
+    pub fn new() -> Self {
+        let estimated = Self::estimated();
+        match Self::exact() {
+            Some(exact) if exact.agrees_with(estimated) => exact,
+            exact => {
+                tracing::warn!(
+                    target = "rvnic",
+                    ?exact,
+                    ?estimated,
+                    "Exact monotonic anchor unavailable, using estimated one"
+                );
+                estimated
+            }
+        }
+    }
+
+    /// Exact anchor: read the raw clock value of an `Instant` directly.
+    fn exact() -> Option<Self> {
+        let instant = tokio::time::Instant::now();
+        let ns = parse_instant_debug(&format!("{:?}", instant.into_std()))?;
+        Some(Self { ns, instant })
+    }
+
+    /// Estimated anchor: bracket `Instant::now()` between two raw clock reads
+    /// and keep the tightest window out of a few tries. Off by a constant of
+    /// (roughly) half a clock read.
+    fn estimated() -> Self {
+        let mut best: Option<(u64, Self)> = None;
+        for _ in 0..8 {
+            let before = monotonic_ns();
+            let instant = tokio::time::Instant::now();
+            let after = monotonic_ns();
+            let window = after - before;
+            if best.as_ref().is_none_or(|(w, _)| window < *w) {
+                let ns = before + window / 2;
+                best = Some((window, Self { ns, instant }));
+            }
+        }
+        best.unwrap().1
+    }
+
+    /// Whether both anchors describe the same clock, up to [`ANCHOR_TOLERANCE_NS`].
+    fn agrees_with(self, other: Self) -> bool {
+        // Map `other.ns` through `self`, then compare against `other.instant`.
+        let mapped = self.to_instant(other.ns);
+        let diff = if mapped > other.instant {
+            mapped - other.instant
+        } else {
+            other.instant - mapped
+        };
+        tracing::info!(target = "rvnic", "Difference between anchors: {:?}", diff);
+        diff.as_nanos() < ANCHOR_TOLERANCE_NS as u128
+    }
+
+    /// Converts a kernel `CLOCK_MONOTONIC` timestamp in nanoseconds to an `Instant`.
+    #[inline(always)]
+    pub fn to_instant(self, ns: u64) -> tokio::time::Instant {
+        use std::time::Duration;
+        if ns >= self.ns {
+            self.instant + Duration::from_nanos(ns - self.ns)
+        } else {
+            self.instant
+                .checked_sub(Duration::from_nanos(self.ns - ns))
+                .unwrap_or(self.instant)
+        }
+    }
+}
+
+impl Default for MonotonicAnchor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{monotonic_ns, parse_instant_debug, MonotonicAnchor};
+    use std::time::Duration;
+    use test_log::test;
+
+    #[test]
+    fn monotonic_anchor_matches_instant() {
+        let anchor = MonotonicAnchor::new();
+        std::thread::sleep(Duration::from_millis(5));
+        let ts = nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC).unwrap();
+        let ns = ts.tv_sec() as u64 * 1_000_000_000 + ts.tv_nsec() as u64;
+        let now = tokio::time::Instant::now();
+        let mapped = anchor.to_instant(ns);
+        let diff = if now > mapped {
+            now - mapped
+        } else {
+            mapped - now
+        };
+        assert!(diff < Duration::from_micros(1), "diff = {diff:?}");
+        // Timestamps before the anchor map to earlier instants.
+        assert!(anchor.to_instant(ns - 1_000_000) < mapped);
+    }
+
+    #[test]
+    fn exact_anchor_is_available_and_precise() {
+        // Holds on Linux with the current std `Debug` format; if this starts
+        // failing after a toolchain bump, `MonotonicAnchor` silently falls back
+        // to the estimated anchor.
+        let before = monotonic_ns();
+        let parsed = parse_instant_debug(&format!("{:?}", std::time::Instant::now()))
+            .expect("parsable Debug");
+        let after = monotonic_ns();
+        tracing::info!("{} <= {} (Parsed) <= {}", before, parsed, after);
+        assert!(
+            before <= parsed && parsed <= after,
+            "{before} <= {parsed} <= {after}"
+        );
+        let exact = MonotonicAnchor::exact().unwrap();
+        assert!(exact.agrees_with(MonotonicAnchor::estimated()));
+    }
+
+    #[test]
+    fn parse_instant_debug_rejects_garbage() {
+        assert_eq!(
+            parse_instant_debug("Instant { tv_sec: 3, tv_nsec: 5 }"),
+            Some(3_000_000_005)
+        );
+        assert_eq!(parse_instant_debug("Instant(12345)"), None);
+        assert_eq!(
+            parse_instant_debug("Instant { tv_sec: 3, tv_nsec: 1000000000 }"),
+            None
+        );
+    }
+}

@@ -34,7 +34,7 @@ rattan-log = { path = "../rattan-log" }
 test-log = { workspace = true }
 
 [features]
-default = []
+default = ["rvnic"]
 drop-stat = []
 packet-seq = []
 serde = ["dep:serde"]

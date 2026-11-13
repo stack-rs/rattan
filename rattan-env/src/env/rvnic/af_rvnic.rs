@@ -15,7 +15,7 @@ use super::rvnic_env::{QueueID, RVNIC_PACKET_RECYCLE_TX, UMEM};
 use super::DriverMetaData;
 use crate::{
     common::*,
-    env::rvnic::utils::{set_cpu_affinity, Epoll},
+    env::rvnic::utils::{set_cpu_affinity, Epoll, MonotonicAnchor},
     timer::Timer,
     Packet,
 };
@@ -393,6 +393,10 @@ impl InterfaceDriver for RvnicDriver {
 
         let mut events = vec![libc::epoll_event { events: 0, u64: 0 }; 32];
 
+        // The kernel stamps each descriptor with its arrival time (`ktime_get_ns()`,
+        // i.e. CLOCK_MONOTONIC) when the packet is pushed to the RX ring.
+        let clock_anchor = MonotonicAnchor::new();
+
         // Per-queue monotonic packet sequence, assigned in RX-ring order.
         // Only tracked with the `packet_seq` feature.
         #[cfg(feature = "packet-seq")]
@@ -427,7 +431,6 @@ impl InterfaceDriver for RvnicDriver {
                     }
                     batch_count += filled;
 
-                    let timestamp = Instant::now();
                     #[cfg(feature = "packet-seq")]
                     let base_seq = recv_seq;
                     let result =
@@ -440,7 +443,7 @@ impl InterfaceDriver for RvnicDriver {
                                 #[cfg(feature = "packet-seq")]
                                 seq: base_seq + _i as u64,
                                 header: None,
-                                timestamp,
+                                timestamp: clock_anchor.to_instant(desc.timestamp),
                                 received_from: receiver.id,
                                 sent: false,
                             });
