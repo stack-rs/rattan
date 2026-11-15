@@ -8,7 +8,7 @@
 
         <!-- Custom HTML head -->
 
-        <meta name="description" content="Rattan is a high-performance modular transport channel emulator ready for modern WAN.">
+        <meta name="description" content="Rattan is an extensible and scalable modular Internet path emulator.">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
@@ -234,7 +234,7 @@
   <a href="https://github.com/stack-rs/rattan/actions/workflows/build.yml"><img alt="CI" src="https://github.com/stack-rs/rattan/actions/workflows/build.yml/badge.svg"></a>
 </div>
 <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
-<p><strong>Rattan</strong> is an extensible and scalable Internet path emulator framework.</p>
+<p><strong>Rattan</strong> is an extensible and scalable modular Internet path emulator. It separates what users emulate from how it is executed: users compose <em>cells</em>, each implementing one path effect, into <em>channels</em> that describe end-to-end Internet paths.</p>
 <p>We provide a simple and easy-to-use API to create and manage network emulations. Rattan is designed to be used in a wide range of scenarios, from testing network applications to debugging complex network performance issues.</p>
 <p>Our modular design makes it easy to extend <strong>Rattan</strong> with different network effects or conditions. We provide a set of built-in modules that can be used to emulate different network conditions, such as bandwidth, latency, packet loss, ISP policies and etc.</p>
 <p>We support Linux only at the moment. Currently, kernel version v5.4, v5.15, v6.8 and v6.12 are tested.</p>
@@ -280,15 +280,23 @@ add features: if you'd like to contribute, please read
 the <a href="https://github.com/stack-rs/rattan/blob/master/CONTRIBUTING.md">CONTRIBUTING</a> guide and consider opening
 a <a href="https://github.com/stack-rs/rattan/pulls">pull request</a>.</p>
 <h2 id="citation"><a class="header" href="#citation">Citation</a></h2>
-<p>If you want to cite our paper, please use the doi: <a href="https://arxiv.org/abs/2507.08134">2507.08134</a> or the BibTeX entry below:</p>
-<pre><code class="language-bibtex">@misc{wang2025rattanextensiblescalablemodular,
+<p>Rattan is published at the 2026 ACM SIGOPS Annual Technical Conference (SIGOPS ATC '26). The artifact for reproducing the paper's experiments is available at <a href="https://doi.org/10.5281/zenodo.23267891">10.5281/zenodo.23267891</a> or the <code>ATC26</code> branch.</p>
+<p>If you want to cite our paper, please use the doi: <a href="https://doi.org/10.1145/3828523.3857129">10.1145/3828523.3857129</a> or the BibTeX entry below:</p>
+<pre><code class="language-bibtex">@inproceedings{10.1145/3828523.3857129,
+      author={Shen, Yixin and Wang, Minhu and Wang, Bo and Tong, Haixuan and Li, Chenghao and Xie, Yutong and Gao, Yixuan and Xu, Mingwei and Wu, Jianping},
       title={Rattan: An Extensible and Scalable Modular Internet Path Emulator},
-      author={Minhu Wang and Yixin Shen and Bo Wang and Haixuan Tong and Yutong Xie and Yixuan Gao and Yan Liu and Li Chen and Mingwei Xu and Jianping Wu},
-      year={2025},
-      eprint={2507.08134},
-      archivePrefix={arXiv},
-      primaryClass={cs.NI},
-      url={https://arxiv.org/abs/2507.08134},
+      year={2026},
+      isbn={9798400728181},
+      publisher={Association for Computing Machinery},
+      address={New York, NY, USA},
+      url={https://doi.org/10.1145/3828523.3857129},
+      doi={10.1145/3828523.3857129},
+      booktitle={Proceedings of the 2026 ACM SIGOPS Annual Technical Conference},
+      pages={129--144},
+      numpages={16},
+      keywords={Network emulation, Internet paths, modularity, reproducibility, transport evaluation},
+      location={Hong Kong, China},
+      series={SIGOPS ATC '26}
 }
 </code></pre>
 
