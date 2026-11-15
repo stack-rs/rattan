@@ -9,7 +9,7 @@ Rattan now contains two parts of tests:
 
 ## Kernels
 
-Rattan is currently tested on the latest four LTS kernels, that are 5.4 (the default one on Ubuntu 20.04), 5.15 (the default one on Ubuntu 22.04), 6.8 (the default one on Ubuntu 24.04) and 6.10 (the latest upstream release).
+Rattan is currently tested on the latest four LTS kernels, that are 5.4 (the default one on Ubuntu 20.04), 5.15 (the default one on Ubuntu 22.04), 6.8 (the default one on Ubuntu 24.04) and 6.12 (the latest LTS release).
 
 This directory contains artifacts setting up four test machines with equipped aforementioned four kernels as our development and CI environments.
 

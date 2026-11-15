@@ -7,13 +7,13 @@
   <a href="https://github.com/stack-rs/rattan/actions/workflows/build.yml"><img alt="CI" src="https://github.com/stack-rs/rattan/actions/workflows/build.yml/badge.svg"></a>
 </div>
 
-**Rattan** is an extensible and scalable Internet path emulator framework.
+**Rattan** is an extensible and scalable modular Internet path emulator. It separates what users emulate from how it is executed: users compose _cells_, each implementing one path effect, into _channels_ that describe end-to-end Internet paths.
 
 We provide a simple and easy-to-use API to create and manage network emulations. Rattan is designed to be used in a wide range of scenarios, from testing network applications to debugging complex network performance issues.
 
 Our modular design makes it easy to extend **Rattan** with different network effects. We provide a set of built-in modules that can be used to emulate different network conditions, such as bandwidth, latency, packet loss, ISP policies and etc.
 
-We support Linux only at the moment. Currently, kernel version v5.4, v5.15, v6.8 and v6.10 are tested.
+We support Linux only at the moment. Currently, kernel version v5.4, v5.15, v6.8 and v6.12 are tested.
 
 ## Usage
 
@@ -39,16 +39,25 @@ a [pull request](https://github.com/stack-rs/rattan/pulls).
 
 ## Citation
 
-If you want to cite our paper, please use the doi: [2507.08134](https://arxiv.org/abs/2507.08134) or the BibTeX entry below:
+Rattan is published at the 2026 ACM SIGOPS Annual Technical Conference (SIGOPS ATC '26). The artifact for reproducing the paper's experiments is available at [10.5281/zenodo.23267891](https://doi.org/10.5281/zenodo.23267891) or the `ATC26` branch.
+
+If you want to cite our paper, please use the doi: [10.1145/3828523.3857129](https://doi.org/10.1145/3828523.3857129) or the BibTeX entry below:
 
 ```bibtex
-@misc{wang2025rattanextensiblescalablemodular,
+@inproceedings{10.1145/3828523.3857129,
+      author={Shen, Yixin and Wang, Minhu and Wang, Bo and Tong, Haixuan and Li, Chenghao and Xie, Yutong and Gao, Yixuan and Xu, Mingwei and Wu, Jianping},
       title={Rattan: An Extensible and Scalable Modular Internet Path Emulator},
-      author={Minhu Wang and Yixin Shen and Bo Wang and Haixuan Tong and Yutong Xie and Yixuan Gao and Yan Liu and Li Chen and Mingwei Xu and Jianping Wu},
-      year={2025},
-      eprint={2507.08134},
-      archivePrefix={arXiv},
-      primaryClass={cs.NI},
-      url={https://arxiv.org/abs/2507.08134},
+      year={2026},
+      isbn={9798400728181},
+      publisher={Association for Computing Machinery},
+      address={New York, NY, USA},
+      url={https://doi.org/10.1145/3828523.3857129},
+      doi={10.1145/3828523.3857129},
+      booktitle={Proceedings of the 2026 ACM SIGOPS Annual Technical Conference},
+      pages={129--144},
+      numpages={16},
+      keywords={Network emulation, Internet paths, modularity, reproducibility, transport evaluation},
+      location={Hong Kong, China},
+      series={SIGOPS ATC '26}
 }
 ```
