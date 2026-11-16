@@ -13,21 +13,20 @@ use camellia_net::{
         shared::SharedAccessorRef,
     },
 };
-use etherparse::{Ethernet2Header, Ipv4Header};
 use once_cell::sync::Lazy;
-use rattan_env::veth::VethCell;
+use tokio::runtime::Handle;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Instant};
 use tracing::debug;
+
+use super::VethLikeDriver;
+use crate::common::*;
 
 static UMEM: Lazy<Arc<std::sync::Mutex<UMem>>> = Lazy::new(|| {
     Arc::new(std::sync::Mutex::new(
         UMemBuilder::new().num_chunks(32768).build().unwrap(),
     ))
 });
-
-use crate::cells::Packet;
-use crate::metal::io::common::{InterfaceDriver, InterfaceReceiver, InterfaceSender};
 
 type XDPSocketRef = Arc<Mutex<XskSocket<SharedAccessorRef>>>;
 
@@ -76,6 +75,8 @@ pub struct XDPReceiver {
 }
 
 impl InterfaceReceiver<XDPPacket> for XDPReceiver {
+    // XDP socket has native support for batch receiving, so we
+    // are using `receive_bulk` to implement `receive`.
     fn receive(&mut self) -> std::io::Result<Option<XDPPacket>> {
         if let Some(p) = self.buffer.pop_front() {
             return Ok(Some(p));
@@ -127,7 +128,7 @@ impl XDPDriver {
         xdp_packet: XDPSocketRef,
         cell: Arc<VethCell>,
     ) {
-        let mut packets = vec![];
+        let mut packets = Vec::with_capacity(32);
 
         // TODO(minhuw): it should not leave forever. But let is be now.
         // we should stop the buffered send task when the cell exists.
@@ -139,13 +140,13 @@ impl XDPDriver {
                     }
 
                     if packets.len() >= 32 {
-                        let mut send_packets = vec![];
+                        let mut send_packets = Vec::with_capacity(32);
                         std::mem::swap(&mut packets, &mut send_packets);
                         let _ = Self::send(&xdp_packet, &cell, send_packets).await;
                     }
                 },
                 _ = sleep(Duration::from_millis(10)) => {
-                    let mut send_packets = vec![];
+                    let mut send_packets = Vec::with_capacity(32);
                     std::mem::swap(&mut packets, &mut send_packets);
                     let _ = Self::send(&xdp_packet, &cell, send_packets).await;
                 }
@@ -187,12 +188,8 @@ impl XDPDriver {
     }
 }
 
-impl InterfaceDriver for XDPDriver {
-    type Packet = XDPPacket;
-    type Sender = XDPSender;
-    type Receiver = XDPReceiver;
-
-    fn bind_cell(cell: Arc<VethCell>) -> Result<Vec<Self>, crate::metal::error::MetalError>
+impl VethLikeDriver for XDPDriver {
+    fn bind_cell(cell: Arc<VethCell>, runtime: &Handle) -> Result<Vec<Self>, MetalError>
     where
         Self: Sized,
     {
@@ -206,10 +203,9 @@ impl InterfaceDriver for XDPDriver {
                 .enable_cooperate_schedule()
                 .build_shared()?,
         ));
-
         let (sender, receiver) = tokio::sync::mpsc::channel(64);
 
-        tokio::spawn(XDPDriver::buffered_send(
+        runtime.spawn(XDPDriver::buffered_send(
             receiver,
             xdp_socket.clone(),
             cell.clone(),
@@ -224,6 +220,12 @@ impl InterfaceDriver for XDPDriver {
             xdp_socket,
         }])
     }
+}
+
+impl InterfaceDriver for XDPDriver {
+    type Packet = XDPPacket;
+    type Sender = XDPSender;
+    type Receiver = XDPReceiver;
 
     fn raw_fd(&self) -> i32 {
         self.xdp_socket.blocking_lock().as_fd().as_raw_fd()
@@ -268,13 +270,6 @@ impl Packet for XDPPacket {
         todo!()
     }
 
-    /// For test code only.
-    #[cfg(any(test, doc))]
-    fn with_timestamp(_buf: &[u8], _timestamp: Instant) -> Self {
-        // Not implemented since from_raw_buffer is not implemented.
-        todo!()
-    }
-
     fn length(&self) -> usize {
         self.buf.len()
     }
@@ -294,19 +289,6 @@ impl Packet for XDPPacket {
 
     fn as_raw_buffer(&mut self) -> &mut [u8] {
         self.buf.raw_buffer_mut()
-    }
-
-    fn ip_hdr(&self) -> Option<Ipv4Header> {
-        if let Ok(result) = etherparse::Ethernet2Header::from_slice(self.as_slice()) {
-            if let Ok(ip_hdr) = etherparse::Ipv4Header::from_slice(result.1) {
-                return Some(ip_hdr.0);
-            }
-        }
-        None
-    }
-
-    fn ether_hdr(&self) -> Option<Ethernet2Header> {
-        etherparse::Ethernet2Header::from_slice(self.as_slice()).map_or(None, |x| Some(x.0))
     }
 
     fn get_timestamp(&self) -> Instant {

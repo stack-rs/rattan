@@ -9,11 +9,12 @@ use bytesize::ByteSize;
 #[cfg(feature = "serde")]
 use rattan_core::{cells::token_bucket::TokenBucketCellConfig, control::RattanOp};
 use rattan_core::{
-    cells::StdPacket,
     config::{CellBuildConfig, RattanConfig, TokenBucketCellBuildConfig},
-    env::{StdNetEnvConfig, StdNetEnvMode},
-    metal::io::af_packet::AfPacketDriver,
     radix::RattanRadix,
+};
+use rattan_env::{
+    env::standard::{AfPacketDriver, StdNetEnv, StdNetEnvConfig, StdPacket},
+    RattanEnv, StdNetEnvMode,
 };
 use regex::Regex;
 use tracing::{info, instrument, span, Level};
@@ -22,7 +23,7 @@ use tracing::{info, instrument, span, Level};
 #[test_log::test]
 #[serial_test::serial]
 fn test_token_bucket() {
-    let mut config = RattanConfig::<StdPacket> {
+    let mut config = RattanConfig::<StdPacket, StdNetEnvConfig> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
@@ -49,7 +50,7 @@ fn test_token_bucket() {
         ("right".to_string(), "down_tb".to_string()),
         ("down_tb".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver, StdNetEnv>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
@@ -60,7 +61,7 @@ fn test_token_bucket() {
     {
         let _span = span!(Level::INFO, "ping_with_tb_unset").entered();
         info!("try to ping with token bucket unset");
-        let right_ip = radix.right_ip(1).to_string();
+        let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1).to_string();
         let left_handle = radix
             .left_spawn(None, move || {
                 let handle = std::process::Command::new("ping")
@@ -107,7 +108,7 @@ fn test_token_bucket() {
             ))
             .unwrap();
 
-        let right_ip = radix.right_ip(1).to_string();
+        let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1).to_string();
         let left_handle = radix
             .left_spawn(None, move || {
                 let handle = std::process::Command::new("ping")

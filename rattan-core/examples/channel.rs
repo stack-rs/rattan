@@ -1,20 +1,19 @@
+use std::{collections::HashMap, thread::sleep, time::Duration};
+
 use bandwidth::Bandwidth;
+use clap::Parser;
 use rattan_core::{
-    cells::{
-        bandwidth::{queue::InfiniteQueueConfig, BwCellConfig},
-        StdPacket,
-    },
+    cells::bandwidth::{queue::InfiniteQueueConfig, BwCellConfig},
     config::{
         BwCellBuildConfig, CellBuildConfig, DelayCellBuildConfig, LossCellBuildConfig, RattanConfig,
     },
-    env::{StdNetEnvConfig, StdNetEnvMode},
-    metal::io::af_packet::AfPacketDriver,
     radix::RattanRadix,
 };
+use rattan_env::{
+    env::standard::{AfPacketDriver, StdNetEnv, StdNetEnvConfig, StdPacket},
+    RattanEnv, StdNetEnvMode,
+};
 use regex::Regex;
-use std::{collections::HashMap, thread::sleep, time::Duration};
-
-use clap::Parser;
 
 /// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser)]
@@ -24,7 +23,7 @@ struct Cli {
 }
 
 fn main() {
-    let mut config = RattanConfig::<StdPacket> {
+    let mut config = RattanConfig::<StdPacket, StdNetEnvConfig> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
@@ -79,7 +78,7 @@ fn main() {
 
     config.resource.cpu = Some(vec![2]);
 
-    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver, StdNetEnv>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
@@ -99,7 +98,7 @@ fn main() {
 
         sleep(Duration::from_millis(500));
 
-        let right_ip = radix.right_ip(1).to_string();
+        let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1).to_string();
         let left_handle = radix
             .left_spawn(None, move || {
                 let client_handle = std::process::Command::new("taskset")

@@ -1,3 +1,4 @@
+use rattan_env::error::MetalError;
 use std::process::{ExitCode, Termination};
 
 use ipnet::AddrParseError;
@@ -13,7 +14,7 @@ pub enum Error {
     #[error("Encounter IO error, {0}")]
     IoError(#[from] std::io::Error),
     #[error("Metal error: {0}")]
-    MetalError(#[from] crate::metal::error::MetalError),
+    MetalError(#[from] MetalError),
     #[error("Tokio Runtime error: {0}")]
     TokioRuntimeError(#[from] TokioRuntimeError),
     #[error("Rattan radix error: {0}")]

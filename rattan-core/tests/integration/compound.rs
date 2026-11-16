@@ -3,31 +3,31 @@
 use std::{collections::HashMap, thread::sleep, time::Duration};
 
 use netem_trace::Bandwidth;
+use rattan_core::{
+    cells::bandwidth::{queue::InfiniteQueueConfig, BwCellConfig},
+    config::{
+        BwCellBuildConfig, CellBuildConfig, DelayCellBuildConfig, LossCellBuildConfig, RattanConfig,
+    },
+    radix::RattanRadix,
+};
 #[cfg(feature = "serde")]
 use rattan_core::{
     cells::{bandwidth::queue::InfiniteQueue, delay::DelayCellConfig, loss::LossCellConfig},
     control::RattanOp,
 };
-use rattan_core::{
-    cells::{
-        bandwidth::{queue::InfiniteQueueConfig, BwCellConfig},
-        StdPacket,
-    },
-    config::{
-        BwCellBuildConfig, CellBuildConfig, DelayCellBuildConfig, LossCellBuildConfig, RattanConfig,
-    },
-    env::{StdNetEnvConfig, StdNetEnvMode},
-    metal::io::af_packet::AfPacketDriver,
-    radix::RattanRadix,
-};
 use regex::Regex;
 use tracing::{info, instrument, span, warn, Level};
+
+use rattan_env::{
+    env::standard::{AfPacketDriver, StdNetEnv, StdNetEnvConfig, StdPacket},
+    RattanEnv, StdNetEnvMode,
+};
 
 #[instrument]
 #[test_log::test]
 #[serial_test::serial]
 fn test_compound() {
-    let mut config = RattanConfig::<StdPacket> {
+    let mut config = RattanConfig::<StdPacket, StdNetEnvConfig> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
@@ -78,7 +78,7 @@ fn test_compound() {
         ("down_delay".to_string(), "down_loss".to_string()),
         ("down_loss".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver, StdNetEnv>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
@@ -98,7 +98,7 @@ fn test_compound() {
             })
             .unwrap();
         sleep(Duration::from_millis(500));
-        let right_ip = radix.right_ip(1).to_string();
+        let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1).to_string();
         let left_handle = radix
             .left_spawn(None, move || {
                 let client_handle = std::process::Command::new("iperf3")
@@ -195,7 +195,7 @@ fn test_compound() {
             })
             .unwrap();
         sleep(Duration::from_millis(500));
-        let right_ip = radix.right_ip(1).to_string();
+        let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1).to_string();
         let left_handle = radix
             .left_spawn(None, move || {
                 let client_handle = std::process::Command::new("iperf3")
