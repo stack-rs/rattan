@@ -21,9 +21,19 @@ concurrency:
 
 jobs:
   build:
-    name: cargo build with all features
+    name: cargo build (${{ matrix.name }})
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name != github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default features
+            features: ""
+          # No `xdp` here. It builds the libbpf vendored by libxdp-sys, 
+          # which fails on newer toolchains.
+          - name: selected features
+            features: "--features drift-stat,drift-log,first-packet,first-payload,http,nat"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -31,13 +41,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt update && sudo apt install pkg-config m4 clang llvm libelf-dev libpcap-dev gcc-multilib libnftnl-dev libmnl-dev autoconf automake autopoint flex bison gawk libtool -y
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-features
-      - run: cargo build --workspace --all-features
+        with:
+          key: ${{ matrix.name }}
+      - run: cargo check --workspace ${{ matrix.features }}
+      - run: cargo build --workspace ${{ matrix.features }}
 
   clippy:
-    name: cargo clippy
+    name: cargo clippy (${{ matrix.name }})
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name != github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default features
+            features: ""
+            # No `xdp` here. It builds the libbpf vendored by libxdp-sys, 
+            # which fails on newer toolchains.
+          - name: selected features
+            features: "--features drift-stat,drift-log,first-packet,first-payload,http,nat"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -47,11 +69,9 @@ jobs:
           components: clippy
       - run: sudo apt update && sudo apt install pkg-config m4 clang llvm libelf-dev libpcap-dev gcc-multilib libnftnl-dev libmnl-dev autoconf automake autopoint flex bison gawk libtool -y
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-features --tests -- -Dwarnings
-      # - uses: giraffate/clippy-action@v1
-      #   with:
-      #     reporter: 'github-pr-review'
-      #     clippy_flags: --workspace --all-features --tests
+        with:
+          key: ${{ matrix.name }}
+      - run: cargo clippy --workspace ${{ matrix.features }} --tests -- -Dwarnings
 
   fmt:
     name: cargo fmt
