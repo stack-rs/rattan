@@ -17,7 +17,6 @@ clap = { workspace = true }
 derive_more = { workspace = true }
 etherparse = { workspace = true }
 flowstats = "0.1.2"
-hex = "0.4.3"
 memmap2 = "0.9.9"
 num_enum = { workspace = true }
 once_cell = { workspace = true }
