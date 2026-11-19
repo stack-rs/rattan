@@ -3,7 +3,6 @@ name = "rattan-env"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 readme.workspace = true
@@ -33,6 +32,6 @@ rattan-log = { path = "../rattan-log" }
 test-log = { workspace = true }
 
 [features]
-default = ["xdp"]
+default = []
 serde = ["dep:serde"]
 xdp = ["dep:camellia-net"]

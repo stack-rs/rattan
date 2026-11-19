@@ -3,7 +3,6 @@ name = "rattan-log"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 readme.workspace = true
@@ -18,7 +17,6 @@ clap = { workspace = true }
 derive_more = { workspace = true }
 etherparse = { workspace = true }
 flowstats = "0.1.2"
-hex = "0.4.3"
 memmap2 = "0.9.9"
 num_enum = { workspace = true }
 once_cell = { workspace = true }
