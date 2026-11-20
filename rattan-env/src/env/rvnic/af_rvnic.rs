@@ -15,7 +15,7 @@ use super::rvnic_env::{QueueID, RVNIC_PACKET_RECYCLE_TX, UMEM};
 use super::DriverMetaData;
 use crate::{
     common::*,
-    env::rvnic::utils::{set_cpu_affinity, Epoll},
+    env::rvnic::utils::{set_cpu_affinity, Epoll, MonotonicAnchor},
     timer::Timer,
     Packet,
 };
@@ -236,7 +236,7 @@ impl RvnicDriver {
             packets.into_iter().map(packet_send_prepare).unzip();
 
         let sent = tx.produce(&packets);
-        tracing::debug!(target: "rvnic", "[{}]Send batch {}/{}", meta.device_fd, packets.len(), sent);
+        tracing::trace!(target: "rvnic", "[{}]Send batch {}/{}", meta.device_fd, packets.len(), sent);
         meta.kick_self();
         if sent < packets.len() {
             for to_report in loss_report.into_iter().skip(sent) {
@@ -367,6 +367,10 @@ impl InterfaceDriver for RvnicDriver {
 
         let mut events = vec![libc::epoll_event { events: 0, u64: 0 }; 32];
 
+        // The kernel stamps each descriptor with its arrival time (`ktime_get_ns()`,
+        // i.e. CLOCK_MONOTONIC) when the packet is pushed to the RX ring.
+        let clock_anchor = MonotonicAnchor::new();
+
         for loop_cnt in 0..u64::MAX {
             let Ok(nfds) = epoll_fd
                 .wait(&mut events, RECV_EPOLL_MAX_WAIT_MS)
@@ -396,19 +400,20 @@ impl InterfaceDriver for RvnicDriver {
                     }
                     batch_count += filled;
 
-                    let timestamp = Instant::now();
-                    let result = to_receive.into_iter().take(filled).map(|desc| RvnicPacket {
-                        desc,
-                        header: None,
-                        timestamp,
-                        received_from: receiver.id,
-                        sent: false,
-                    });
-                    for packet in result {
+                    for i in 0..filled {
+                        let desc = to_receive[i];
+                        let timestamp = clock_anchor.to_instant(desc.timestamp);
+                        let packet = RvnicPacket {
+                            desc,
+                            header: None,
+                            timestamp,
+                            received_from: receiver.id,
+                            sent: false,
+                        };
                         let _ = tx.blocking_send(packet);
                     }
                 }
-                tracing::debug!(target: "rvnic", "[{}]Recv batch {} @ {}", self_raw_fd, batch_count, loop_cnt);
+                tracing::trace!(target: "rvnic", "[{}]Recv batch {} @ {}", self_raw_fd, batch_count, loop_cnt);
             }
         }
 
