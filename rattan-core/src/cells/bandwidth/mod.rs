@@ -1122,10 +1122,10 @@ mod tests {
         let start = origin + Duration::from_millis(10);
         egress.next_available = start;
         egress.change_bandwidth(Bandwidth::from_mbps(1), start);
-        egress.set_transmitting_packet(StdPacket::with_timestamp(
-            &[0; 114],
-            start - Duration::from_millis(2),
-        ));
+        egress.set_transmitting_packet(
+            TestPacket::<StdPacket>::with_timestamp(&[0; 114], start - Duration::from_millis(2))
+                .packet,
+        );
         egress.change_bandwidth(Bandwidth::from_mbps(2), start + Duration::from_micros(400));
         let transmitting = egress.transmitting_packet.take().unwrap();
         let packet = transmitting.finish(egress.next_available, egress.dequeue_recorder.as_mut());

@@ -134,8 +134,9 @@
 //! - **Timestamps**: the enqueue time is the packet's logical timestamp, and the
 //!   sojourn time is `dequeue_at(timestamp) - packet.get_timestamp()`.
 //! - **RNG**: a seedable [`StdRng`] makes runs reproducible.
-//! - **Statistics** (`ecn_mark`, `step_marks`, ...) are not exported; the
-//!   probability and delays are logged at `trace` level on each update.
+//! - **Telemetry**: optional AQM event logging reports actual drops and newly
+//!   applied CE marks with their decision reasons. Probability and delays are
+//!   logged at `trace` level on each update.
 
 use std::collections::VecDeque;
 
@@ -912,6 +913,48 @@ mod tests {
             .map(|p| p.ecn() == Some(IpEcn::CongestionExperienced))
             .collect();
         assert_eq!(marked, [true, true, false, false, false]);
+    }
+
+    #[test]
+    fn test_dualpi2_events_count_arrivals_drops_and_only_new_ce() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("events.csv");
+        let recorder = crate::cells::bandwidth::QueueEventRecorder::open(&path).unwrap();
+        let mut q = super::super::AQM::new(queue(DualPi2QueueConfig {
+            packet_limit: Some(3),
+            step_threshold: DualPi2StepThreshold::Packets(0),
+            ..Default::default()
+        }));
+        q.set_event_recorder(recorder).unwrap();
+        let t0 = Instant::now();
+        for ecn in [
+            IpEcn::Ect1,
+            IpEcn::CongestionExperienced,
+            IpEcn::Ect1,
+            IpEcn::NotEct,
+        ] {
+            assert!(q.enqueue(mtu_packet(ecn, t0)).is_none());
+        }
+        let sent: Vec<_> = std::iter::from_fn(|| q.dequeue_at(t0))
+            .map(|packet| packet.ecn().unwrap())
+            .collect();
+        assert_eq!(
+            sent,
+            [
+                IpEcn::CongestionExperienced,
+                IpEcn::CongestionExperienced,
+                IpEcn::Ect1
+            ]
+        );
+        drop(q);
+        let content = std::fs::read_to_string(path).unwrap();
+        assert_eq!(content.matches("arrive,input,").count(), 4);
+        assert_eq!(content.matches("drop,overlimit,").count(), 1);
+        assert_eq!(content.matches("mark,step,").count(), 1);
+        assert_eq!(
+            content.lines().last(),
+            Some("# complete records=6 dropped=0")
+        );
     }
 
     #[test_log::test]
