@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=https://json.schemastore.org/clang-format-21.x.json
+
+BasedOnStyle: LLVM
+
+IndentWidth: 4
+ContinuationIndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+BreakBeforeBraces: Attach
+ColumnLimit: 100
