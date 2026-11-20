@@ -1198,12 +1198,13 @@ mod tests {
 
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
-        egress.reset();
-        egress.change_state(CellState::Normal);
-
         let logical_send_time = Instant::now();
         let logical_start = logical_send_time;
-        relative_time(logical_start);
+        // Give this synthetic trace its own epoch. Other tests share the
+        // process-wide TRACE_START_INSTANT and may have initialized it earlier.
+        egress.next_available = logical_start;
+        egress.next_change = logical_start;
+        egress.change_state(CellState::Normal);
 
         let _handle = rt.spawn(pacing_send::<{ 256 + 14 }, TestPacket<StdPacket>>(
             16,
@@ -1236,7 +1237,7 @@ mod tests {
             tracing::info!(
                 "Packet {} sent at {:?} has been delayed by {:?} ",
                 received.packet.buf[0],
-                relative_time(received.packet.get_timestamp()) - received.delay(),
+                (received.packet.get_timestamp() - received.delay()).duration_since(logical_start),
                 received.delay()
             );
         }
