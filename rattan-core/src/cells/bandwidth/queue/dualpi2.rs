@@ -401,6 +401,7 @@ pub struct DualPi2Queue<P> {
     /// WRR credit: the L-queue is served while it is `<= 0`.
     c_protection_credit: i64,
     rng: StdRng,
+    event_recorder: Option<super::super::QueueEventRecorder>,
 }
 
 impl<P> Default for DualPi2Queue<P>
@@ -499,7 +500,7 @@ where
     /// the packet with CE instead.
     ///
     /// Must be called with `now_bytes` not including `packet`.
-    fn must_drop(&mut self, packet: &mut P, is_l4s: bool) -> bool {
+    fn must_drop(&mut self, packet: &mut P, is_l4s: bool, now: Instant) -> bool {
         // Never mark or drop if the standing queue is less than 2 MTUs.
         if self.now_bytes < 2 * self.mtu() {
             return false;
@@ -510,17 +511,30 @@ where
 
         if !is_l4s {
             // Classic: p_C = p'², drop instead of marking when overloaded.
-            return self.roll(prob) && self.roll(prob) && (overload || !packet.set_ce());
+            return self.roll(prob)
+                && self.roll(prob)
+                && (overload || !self.mark(packet, now, "coupled"));
         }
         if overload {
             if self.config.drop_overload && self.roll(prob) && self.roll(prob) {
                 return true;
             }
-            packet.set_ce();
+            self.mark(packet, now, "coupled");
         } else if self.roll(l4s_prob) {
-            packet.set_ce();
+            self.mark(packet, now, "coupled");
         }
         false
+    }
+
+    fn mark(&self, packet: &mut P, now: Instant, reason: &'static str) -> bool {
+        let was_ce = packet.ecn().is_some_and(|ecn| ecn.value() == 3);
+        let marked = packet.set_ce();
+        if marked && !was_ce {
+            if let Some(log) = &self.event_recorder {
+                log.record(packet, now, "mark", reason);
+            }
+        }
+        marked
     }
 
     fn step_threshold_exceeded(&self, packet: &P, now: Instant) -> bool {
@@ -553,6 +567,7 @@ where
             next_update: None,
             c_protection_credit: 0,
             rng: StdRng::seed_from_u64(seed),
+            event_recorder: None,
         };
         queue.reset_c_protection();
         Ok(queue)
@@ -583,8 +598,19 @@ where
                     None => break,
                 },
             };
+            if let Some(log) = &self.event_recorder {
+                log.record(&packet, Instant::now(), "drop", "reconfigure");
+            }
             self.now_bytes -= self.get_packet_size(&packet);
         }
+    }
+
+    fn set_event_recorder(
+        &mut self,
+        recorder: super::super::QueueEventRecorder,
+    ) -> Result<(), &'static str> {
+        self.event_recorder = Some(recorder);
+        Ok(())
     }
 
     fn is_zero_buffer(&self) -> bool {
@@ -608,6 +634,9 @@ where
                 .byte_limit
                 .is_none_or(|limit| self.now_bytes + packet_size <= limit);
         if !below_hard_limit {
+            if let Some(log) = &self.event_recorder {
+                log.record(&packet, packet.get_timestamp(), "drop", "overlimit");
+            }
             #[cfg(test)]
             trace!(
                 queue_len = self.length(),
@@ -619,7 +648,11 @@ where
             return;
         }
 
-        if self.config.drop_early && self.must_drop(&mut packet, is_l4s) {
+        let packet_time = packet.get_timestamp();
+        if self.config.drop_early && self.must_drop(&mut packet, is_l4s, packet_time) {
+            if let Some(log) = &self.event_recorder {
+                log.record(&packet, packet_time, "drop", "pi2");
+            }
             #[cfg(test)]
             trace!(
                 prob = self.prob,
@@ -666,7 +699,10 @@ where
                 0
             };
 
-            if !self.config.drop_early && self.must_drop(&mut packet, is_l4s) {
+            if !self.config.drop_early && self.must_drop(&mut packet, is_l4s, timestamp) {
+                if let Some(log) = &self.event_recorder {
+                    log.record(&packet, timestamp, "drop", "pi2");
+                }
                 #[cfg(test)]
                 trace!(
                     prob = self.prob,
@@ -681,7 +717,7 @@ where
             // Step AQM.  L4S packets are always ECN-capable, so they are never
             // dropped here.
             if apply_step && self.step_threshold_exceeded(&packet, timestamp) {
-                packet.set_ce();
+                self.mark(&mut packet, timestamp, "step");
             }
 
             self.c_protection_credit += credit_change;
