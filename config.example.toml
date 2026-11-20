@@ -142,6 +142,7 @@ bandwidth = "1Gbps 200Mbps"
 # - "DropTail" : DropTail queue
 # - "DropHead" : DropHead queue
 # - "CoDel"    : CoDel queue
+# - "DualPi2"  : DualPI2 coupled AQM for L4S (RFC 9332)
 #
 # Default: "Infinite"
 queue = "DropTail"
@@ -163,6 +164,30 @@ queue = "DropTail"
 #   - "interval"     : CoDel Interval.                 Default: 100ms
 #   - "target"       : CoDel Target Delay.             Default: 5ms
 #   - "mtu"          : MTU for CoDel decision.         Default: 1500
+#
+# - For DualPi2 queue, we have 16 fields (defaults follow the Linux kernel):
+#   - "packet_limit"    : Queue size in packets numbers (both queues).   Default: 10000
+#   - "byte_limit"      : Queue size in bytes (both queues).             Default: Unlimited
+#   - "bw_type"         : Type of byte calculation.                      Default: "NetworkLayer"
+#   - "target"          : PI2 target queuing delay.                      Default: 15ms
+#   - "tupdate"         : PI2 probability update interval.               Default: 16ms
+#   - "alpha"           : PI2 integral gain, in Hz.                      Default: 0.16
+#   - "beta"            : PI2 proportional gain, in Hz.                  Default: 3.2
+#   - "step_threshold"  : L4S step marking threshold, either a sojourn
+#                         time (e.g. "1ms") or a number of packets in
+#                         the L4S queue (e.g. 5).                        Default: "1ms"
+#   - "min_qlen_step"   : Min L4S queue length to apply step marking.    Default: 0
+#   - "coupling_factor" : k, L4S marking prob = k * base prob.           Default: 2.0
+#   - "c_protection"    : WRR weight (%) of the Classic queue.           Default: 10
+#   - "ecn_mask"        : ECN codepoints sent to the L4S queue:
+#                         "L4sEct" (ECT(1) and CE), "ClaEct" (ECT(0)
+#                         and CE) or "AnyEct" (any ECT and CE).          Default: "L4sEct"
+#   - "drop_early"      : Drop/mark at enqueue instead of dequeue.       Default: false
+#   - "drop_overload"   : Drop L4S packets when overloaded, instead of
+#                         only marking them.                             Default: true
+#   - "mtu"             : MTU for the 2-MTU rule and WRR credit.         Default: 1500
+#   - "seed"            : Seed of the random number generator.           Default: 42
+#   For example: queue_config = { step_threshold = "2ms", ecn_mask = "AnyEct" }
 #
 queue_config = { packet_limit = 60 }
 

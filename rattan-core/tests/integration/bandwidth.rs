@@ -19,7 +19,10 @@ use rattan_core::{
 use rattan_core::{
     cells::{
         bandwidth::{
-            queue::{DropTailQueue, DropTailQueueConfig, InfiniteQueueConfig, PacketQueue},
+            queue::{
+                DropTailQueue, DropTailQueueConfig, DualPi2QueueConfig, InfiniteQueueConfig,
+                PacketQueue,
+            },
             BwCellConfig, BwReplayCell, BwReplayCellConfig, BwType,
         },
         ControlInterface,
@@ -751,6 +754,220 @@ fn test_codel_queue() {
         server_cancel_token.cancel();
         right_handle.join().unwrap().unwrap();
     }
+}
+
+/// Receives one datagram and returns its length and the TOS byte of its IPv4
+/// header (requires `IP_RECVTOS` on the socket).
+fn recv_with_tos(
+    socket: &std::net::UdpSocket,
+    buf: &mut [u8],
+) -> std::io::Result<(usize, Option<u8>)> {
+    use std::os::fd::AsRawFd;
+
+    let mut iov = libc::iovec {
+        iov_base: buf.as_mut_ptr().cast(),
+        iov_len: buf.len(),
+    };
+    let mut control = [0u64; 8];
+    // SAFETY: `msg` points to `iov` and `control`, which outlive the calls below,
+    // and the CMSG_* macros only walk the control buffer filled in by the kernel.
+    unsafe {
+        let mut msg: libc::msghdr = std::mem::zeroed();
+        msg.msg_iov = &mut iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = control.as_mut_ptr().cast();
+        msg.msg_controllen = std::mem::size_of_val(&control) as _;
+        let len = libc::recvmsg(socket.as_raw_fd(), &mut msg, 0);
+        if len < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut tos = None;
+        let mut cmsg = libc::CMSG_FIRSTHDR(&msg);
+        while !cmsg.is_null() {
+            if (*cmsg).cmsg_level == libc::IPPROTO_IP && (*cmsg).cmsg_type == libc::IP_TOS {
+                tos = Some(*libc::CMSG_DATA(cmsg));
+            }
+            cmsg = libc::CMSG_NXTHDR(&msg, cmsg);
+        }
+        Ok((len as usize, tos))
+    }
+}
+
+/// An L4S (ECT(1)) flow at half the link rate and a Classic (Not-ECT) flow at
+/// the full link rate share a DualPI2 bottleneck.  The L4S flow must keep a low
+/// delay and only be marked, while the Classic flow builds a queue and is
+/// dropped.  As the L4S packets reach the receiver, their IPv4 checksum is also
+/// correct after CE marking (the kernel would discard them otherwise).
+#[instrument]
+#[test_log::test]
+#[serial_test::parallel]
+fn test_dualpi2_queue() {
+    use std::{
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc,
+        },
+        time::Instant,
+    };
+
+    use nix::sys::socket::{setsockopt, sockopt};
+
+    const CLASSIC: u8 = 0;
+    const L4S: u8 = 1;
+    const ECT1: i32 = 0b01;
+    const TICKS: u32 = 1000;
+    const TICK: Duration = Duration::from_millis(2); // 1000 B at 4 Mbps
+
+    let mut config = RattanConfig::<StdPacket, StdNetEnvConfig> {
+        env: StdNetEnvConfig {
+            mode: StdNetEnvMode::Isolated,
+            client_cores: vec![1],
+            server_cores: vec![3],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    config.cells.insert(
+        "up_bw".to_string(),
+        CellBuildConfig::Bw(BwCellBuildConfig::DualPi2(BwCellConfig::new(
+            Bandwidth::from_mbps(4),
+            DualPi2QueueConfig {
+                // Keep the unresponsive L4S flow loss-free: mark instead of
+                // dropping on overload.
+                drop_overload: false,
+                ..Default::default()
+            },
+            None,
+        ))),
+    );
+    config.cells.insert(
+        "down_bw".to_string(),
+        CellBuildConfig::Bw(BwCellBuildConfig::Infinite(BwCellConfig::new(
+            None,
+            InfiniteQueueConfig::new(),
+            None,
+        ))),
+    );
+    config.links = HashMap::from([
+        ("left".to_string(), "up_bw".to_string()),
+        ("up_bw".to_string(), "right".to_string()),
+        ("right".to_string(), "down_bw".to_string()),
+        ("down_bw".to_string(), "left".to_string()),
+    ]);
+    let mut radix = RattanRadix::<AfPacketDriver, StdNetEnv>::new(config).unwrap();
+    radix.spawn_rattan().unwrap();
+    radix.start_rattan().unwrap();
+
+    let _span = span!(Level::INFO, "run_test").entered();
+    info!("Test DualPi2Queue (4 Mbps, L4S at 2 Mbps + Classic at 4 Mbps, 1000 B packets)");
+
+    let (msg_tx, msg_rx) = mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    let server_stop = stop.clone();
+
+    let right_handle = radix
+        .right_spawn(None, move || {
+            let socket = std::net::UdpSocket::bind("0.0.0.0:54321").unwrap();
+            setsockopt(&socket, sockopt::IpRecvTos, &true).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_millis(50)))
+                .unwrap();
+            let mut buf = [0u8; 2048];
+            while !server_stop.load(Ordering::Relaxed) {
+                if let Ok((size, tos)) = recv_with_tos(&socket, &mut buf) {
+                    let seq = u32::from_be_bytes(buf[1..5].try_into().unwrap());
+                    msg_tx
+                        .send((buf[0], seq, size, tos, Instant::now()))
+                        .unwrap();
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+
+    let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1);
+    let left_handle = radix
+        .left_spawn(None, move || {
+            sleep(Duration::from_millis(100));
+            let classic_socket = std::net::UdpSocket::bind("0.0.0.0:54322").unwrap();
+            classic_socket.connect(format!("{right_ip}:54321")).unwrap();
+            let l4s_socket = std::net::UdpSocket::bind("0.0.0.0:54323").unwrap();
+            setsockopt(&l4s_socket, sockopt::Ipv4Tos, &ECT1).unwrap();
+            l4s_socket.connect(format!("{right_ip}:54321")).unwrap();
+
+            info!("Send Classic every 2 ms and L4S every 4 ms for 2 s");
+            let mut send_times = [Vec::new(), Vec::new()];
+            let mut payload = [0u8; 1000 - 28]; // 28 = 20(IPv4) + 8(UDP)
+            let mut next_time = Instant::now();
+            for tick in 0..TICKS {
+                for (class, socket) in [(CLASSIC, &classic_socket), (L4S, &l4s_socket)] {
+                    if class == L4S && tick % 2 == 1 {
+                        continue;
+                    }
+                    let seq = send_times[class as usize].len() as u32;
+                    payload[0] = class;
+                    payload[1..5].copy_from_slice(&seq.to_be_bytes());
+                    socket.send(&payload).unwrap();
+                    send_times[class as usize].push(Instant::now());
+                }
+                next_time += TICK;
+                sleep(next_time.saturating_duration_since(Instant::now()));
+            }
+            // Let the Classic queue drain.
+            sleep(Duration::from_millis(2000));
+
+            let mut delays = [Vec::new(), Vec::new()];
+            let mut ce = [0, 0];
+            while let Ok((class, seq, size, tos, received)) = msg_rx.try_recv() {
+                assert_eq!(size, payload.len());
+                let ecn = tos.expect("TOS should be reported") & 0b11;
+                match class {
+                    CLASSIC => assert_eq!(ecn, 0, "Classic packets are Not-ECT"),
+                    L4S => assert_ne!(ecn, 0, "L4S packets stay ECN-capable"),
+                    _ => panic!("unexpected class {class}"),
+                }
+                ce[class as usize] += usize::from(ecn == 0b11);
+                delays[class as usize].push(received - send_times[class as usize][seq as usize]);
+            }
+            for d in delays.iter_mut() {
+                d.sort();
+            }
+            let sent = [send_times[0].len(), send_times[1].len()];
+            let received = [delays[0].len(), delays[1].len()];
+            let median = |d: &Vec<Duration>| d[d.len() / 2];
+            info!(?sent, ?received, ?ce);
+            info!(
+                classic_median = ?median(&delays[0]),
+                l4s_median = ?median(&delays[1]),
+                l4s_p99 = ?delays[1][delays[1].len() * 99 / 100],
+            );
+
+            // L4S: never dropped, mostly marked, low delay.
+            assert_eq!(received[1], sent[1], "L4S packets must not be dropped");
+            assert!(
+                ce[1] * 10 >= received[1] * 8,
+                "most L4S packets should be CE-marked: {}/{}",
+                ce[1],
+                received[1]
+            );
+            assert!(median(&delays[1]) < Duration::from_millis(15));
+
+            // Classic: dropped with p'^2 <= 25% (p' is capped at 1/k), high delay.
+            let classic_dropped = sent[0] - received[0];
+            assert!(
+                (sent[0] / 20..=sent[0] * 2 / 5).contains(&classic_dropped),
+                "Classic drops: {classic_dropped}/{}",
+                sent[0]
+            );
+            assert!(median(&delays[0]) > Duration::from_millis(100));
+            assert!(median(&delays[0]) > 10 * median(&delays[1]));
+            Ok(())
+        })
+        .unwrap();
+
+    left_handle.join().unwrap().unwrap();
+    stop.store(true, Ordering::Relaxed);
+    right_handle.join().unwrap().unwrap();
 }
 
 #[instrument]

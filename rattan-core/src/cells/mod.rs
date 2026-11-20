@@ -31,6 +31,7 @@ pub use timed_config::TimedConfig;
 
 // For back compatibility
 pub use rattan_env::common::Packet;
+pub use rattan_env::ecn;
 pub use rattan_env::env::standard::StdPacket;
 
 pub const LARGE_DURATION: Duration = Duration::from_secs(10 * 365 * 24 * 60 * 60);
