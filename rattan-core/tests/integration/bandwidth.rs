@@ -818,7 +818,7 @@ fn test_dualpi2_queue() {
     const TICKS: u32 = 1000;
     const TICK: Duration = Duration::from_millis(2); // 1000 B at 4 Mbps
 
-    let mut config = RattanConfig::<StdPacket> {
+    let mut config = RattanConfig::<StdPacket, StdNetEnvConfig> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
             client_cores: vec![1],
@@ -854,7 +854,7 @@ fn test_dualpi2_queue() {
         ("right".to_string(), "down_bw".to_string()),
         ("down_bw".to_string(), "left".to_string()),
     ]);
-    let mut radix = RattanRadix::<AfPacketDriver>::new(config).unwrap();
+    let mut radix = RattanRadix::<AfPacketDriver, StdNetEnv>::new(config).unwrap();
     radix.spawn_rattan().unwrap();
     radix.start_rattan().unwrap();
 
@@ -885,7 +885,7 @@ fn test_dualpi2_queue() {
         })
         .unwrap();
 
-    let right_ip = radix.right_ip(1);
+    let right_ip = <StdNetEnv as RattanEnv<AfPacketDriver>>::right_ip(&radix, 1);
     let left_handle = radix
         .left_spawn(None, move || {
             sleep(Duration::from_millis(100));

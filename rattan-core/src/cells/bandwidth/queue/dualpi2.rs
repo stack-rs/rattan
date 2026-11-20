@@ -737,7 +737,7 @@ mod tests {
         let mut buf = vec![0x02, 0, 0, 0, 0, 0x01, 0x02, 0, 0, 0, 0, 0x02, 0x08, 0x00];
         buf.extend_from_slice(&header.to_bytes());
         buf.resize(14 + l3_length, 0);
-        StdPacket::with_timestamp(&buf, timestamp)
+        crate::cells::TestPacket::<StdPacket>::with_timestamp(&buf, timestamp).packet
     }
 
     fn mtu_packet(ecn: IpEcn, timestamp: Instant) -> StdPacket {
@@ -793,7 +793,7 @@ mod tests {
 
         // Non-IP frames are Classic.
         let mut q = queue(Default::default());
-        q.enqueue(StdPacket::with_timestamp(&[0u8; 100], now));
+        q.enqueue(crate::cells::TestPacket::<StdPacket>::with_timestamp(&[0u8; 100], now).packet);
         assert_eq!(q.c_queue.len(), 1);
     }
 
