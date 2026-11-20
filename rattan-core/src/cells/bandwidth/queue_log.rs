@@ -3,6 +3,10 @@ use std::io::{self, BufWriter, Write};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -57,6 +61,110 @@ struct DequeueRecord {
     sojourn_ns: u128,
     l3_len: usize,
     ip: Option<IpFields>,
+}
+
+/// Optional nonblocking AQM event sink. Clones share one bounded writer.
+#[derive(Clone, Debug)]
+pub struct QueueEventRecorder(Arc<EventLog>);
+
+#[derive(Debug)]
+struct EventLog {
+    sender: Option<SyncSender<EventEntry>>,
+    writer: Option<JoinHandle<io::Result<()>>>,
+    dropped: AtomicU64,
+    origin: Instant,
+    path: PathBuf,
+}
+
+enum EventEntry {
+    Record(&'static str, &'static str, DequeueRecord),
+    Finish(u64),
+}
+
+impl QueueEventRecorder {
+    pub(crate) fn open(path: &Path) -> io::Result<Self> {
+        let (_, unix_us, origin) = *BASE_TS;
+        let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+        let (sender, receiver) = mpsc::sync_channel(BUFFER_RECORDS);
+        let writer = thread::Builder::new()
+            .name("aqm-log".into())
+            .spawn(move || {
+                let mut out = BufWriter::with_capacity(64 * 1024, file);
+                writeln!(out, "# aqm_log_version=1 base_unix_us={unix_us}")?;
+                writeln!(out, "event,reason,{HEADER}")?;
+                let mut records = 0u64;
+                for entry in receiver {
+                    match entry {
+                        EventEntry::Record(event, reason, record) => {
+                            write!(out, "{event},{reason},")?;
+                            record.write(&mut out)?;
+                            records += 1;
+                        }
+                        EventEntry::Finish(dropped) => {
+                            out.flush()?;
+                            writeln!(out, "# complete records={records} dropped={dropped}")?;
+                            return out.flush();
+                        }
+                    }
+                }
+                Err(io::Error::other("AQM log closed without completion"))
+            })?;
+        Ok(Self(Arc::new(EventLog {
+            sender: Some(sender),
+            writer: Some(writer),
+            dropped: AtomicU64::new(0),
+            origin,
+            path: path.into(),
+        })))
+    }
+
+    pub fn record(
+        &self,
+        packet: &impl Packet,
+        at: Instant,
+        event: &'static str,
+        reason: &'static str,
+    ) {
+        let t_ns = match at.checked_duration_since(self.0.origin) {
+            Some(dt) => dt.as_nanos() as i128,
+            None => -(self.0.origin.duration_since(at).as_nanos() as i128),
+        };
+        let record = DequeueRecord {
+            t_ns,
+            sojourn_ns: at
+                .saturating_duration_since(packet.get_timestamp())
+                .as_nanos(),
+            l3_len: packet.l3_length(),
+            ip: IpFields::parse(packet.as_slice()),
+        };
+        if self
+            .0
+            .sender
+            .as_ref()
+            .unwrap()
+            .try_send(EventEntry::Record(event, reason, record))
+            .is_err()
+        {
+            self.0.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+impl Drop for EventLog {
+    fn drop(&mut self) {
+        let dropped = self.dropped.load(Ordering::Relaxed);
+        if let Some(sender) = self.sender.take() {
+            let _ = sender.send(EventEntry::Finish(dropped));
+        }
+        if let Some(writer) = self.writer.take() {
+            match writer.join() {
+                Ok(Ok(())) if dropped == 0 => {}
+                result => {
+                    tracing::error!(path = %self.path.display(), dropped, ?result, "AQM log incomplete")
+                }
+            }
+        }
+    }
 }
 
 impl DequeueRecord {
@@ -186,6 +294,28 @@ mod tests {
     use super::*;
     use crate::cells::StdPacket;
     use etherparse::PacketBuilder;
+
+    #[test]
+    fn event_log_clones_finish_once_and_preserve_decision_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("events.csv");
+        let first = QueueEventRecorder::open(&path).unwrap();
+        let second = first.clone();
+        let packet = StdPacket::from_raw_buffer(&[0; 64]);
+        let at = first.0.origin + Duration::from_millis(1);
+        first.record(&packet, at, "arrive", "input");
+        drop(first);
+        second.record(&packet, at, "drop", "overlimit");
+        drop(second);
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("arrive,input,1000000,"));
+        assert!(content.contains("drop,overlimit,1000000,"));
+        assert_eq!(
+            content.lines().last(),
+            Some("# complete records=2 dropped=0")
+        );
+        assert_eq!(content.matches("# complete").count(), 1);
+    }
 
     #[test]
     fn queue_log_flushes_packet_metadata_and_refuses_existing_file() {

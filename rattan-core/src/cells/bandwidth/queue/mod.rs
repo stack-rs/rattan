@@ -9,6 +9,7 @@ use tokio::time::Instant;
 
 // All queue implementations can use this import
 use super::BwType;
+use super::QueueEventRecorder;
 use crate::cells::{Packet, LARGE_DURATION};
 
 mod codel;
@@ -58,6 +59,7 @@ where
     inbound_buffer: VecDeque<P>,
     queue: Q,
     latest_enqueue_timestamp: Option<Instant>,
+    event_recorder: Option<QueueEventRecorder>,
 }
 
 impl<Q, P> AQM<Q, P>
@@ -70,11 +72,24 @@ where
             inbound_buffer: VecDeque::with_capacity(1024),
             queue,
             latest_enqueue_timestamp: None,
+            event_recorder: None,
         }
     }
 
     pub fn configure(&mut self, config: Q::Config) {
         self.queue.configure(config);
+    }
+
+    pub fn set_event_recorder(&mut self, recorder: QueueEventRecorder) -> Result<(), &'static str> {
+        self.queue.set_event_recorder(recorder.clone())?;
+        self.event_recorder = Some(recorder);
+        Ok(())
+    }
+
+    pub(super) fn record_drop(&self, packet: &P, at: Instant, reason: &'static str) {
+        if let Some(log) = &self.event_recorder {
+            log.record(packet, at, "drop", reason);
+        }
     }
 
     /// If this returns true, the caller should try to enqueue more packets.
@@ -89,6 +104,9 @@ where
     pub fn enqueue(&mut self, packet: P) -> Option<P> {
         self.latest_enqueue_timestamp = packet.get_timestamp().into();
         if self.queue.is_zero_buffer() {
+            if let Some(log) = &self.event_recorder {
+                log.record(&packet, packet.get_timestamp(), "arrive", "input");
+            }
             packet.into()
         } else {
             self.inbound_buffer.push_back(packet);
@@ -107,7 +125,11 @@ where
     pub fn dequeue_at(&mut self, timestamp: Instant) -> Option<P> {
         while let Some(head) = self.inbound_buffer.front() {
             if head.get_timestamp() <= timestamp {
-                self.queue.enqueue(self.inbound_buffer.pop_front().unwrap());
+                let packet = self.inbound_buffer.pop_front().unwrap();
+                if let Some(log) = &self.event_recorder {
+                    log.record(&packet, packet.get_timestamp(), "arrive", "input");
+                }
+                self.queue.enqueue(packet);
             } else {
                 break;
             }
@@ -137,6 +159,11 @@ where
         Self: Sized;
 
     fn configure(&mut self, config: Self::Config);
+
+    /// Installs an event sink. Unsupported queues reject logging explicitly.
+    fn set_event_recorder(&mut self, _recorder: QueueEventRecorder) -> Result<(), &'static str> {
+        Err("AQM event logging is unsupported for this queue")
+    }
 
     fn enqueue(&mut self, packet: P);
 

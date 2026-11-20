@@ -55,7 +55,8 @@ macro_rules! impl_bw_cell_into_factory {
                         let queue = queue::$queue::<P>::new(self.queue_config.unwrap_or_default())
                             .map_err(|e| Error::ConfigError(e.to_string()))?;
                         BwCell::new(self.bandwidth, queue, self.bw_type.unwrap_or_default())?
-                            .with_queue_log(self.queue_log.as_deref())
+                            .with_queue_log(self.queue_log.as_deref())?
+                            .with_aqm_log(self.aqm_log.as_deref())
                     }
                 }
             }
@@ -106,6 +107,7 @@ where
     pub bw_type: Option<BwType>,
     /// Optional CSV path for recording transmission starts. Set at build time.
     pub queue_log: Option<PathBuf>,
+    pub aqm_log: Option<PathBuf>,
 }
 
 impl<P, Q> Clone for BwReplayQueueConfig<P, Q>
@@ -120,6 +122,7 @@ where
             queue_config: self.queue_config.clone(),
             bw_type: self.bw_type,
             queue_log: self.queue_log.clone(),
+            aqm_log: self.aqm_log.clone(),
         }
     }
 }
@@ -139,6 +142,7 @@ where
             queue_config: queue_config.into(),
             bw_type: bw_type.into(),
             queue_log: None,
+            aqm_log: None,
         }
     }
 }
@@ -233,7 +237,8 @@ macro_rules! impl_bw_replay_cell_into_factory {
                         let queue = queue::$queue::<P>::new(self.queue_config.unwrap_or_default())
                             .map_err(|e| Error::ConfigError(e.to_string()))?;
                         BwReplayCell::new(trace, queue, self.bw_type.unwrap_or_default())?
-                            .with_queue_log(self.queue_log.as_deref())
+                            .with_queue_log(self.queue_log.as_deref())?
+                            .with_aqm_log(self.aqm_log.as_deref())
                     }
                 }
             }

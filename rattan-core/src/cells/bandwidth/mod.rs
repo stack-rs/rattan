@@ -22,6 +22,7 @@ use crate::error::Error;
 
 pub mod queue;
 mod queue_log;
+pub use queue_log::QueueEventRecorder;
 
 use queue::PacketQueue;
 use queue_log::DequeueRecorder;
@@ -234,6 +235,8 @@ where
             );
             self.transmitting_packet = transmitting_packet.into();
         } else {
+            self.packet_queue
+                .record_drop(&packet, packet.get_timestamp(), "zero_buffer");
             #[cfg(test)]
             tracing::debug!(
                 "Packet at {:?} is going to be dropped",
@@ -395,6 +398,8 @@ where
     pub bw_type: Option<BwType>,
     /// Optional CSV path for recording transmission starts. Set at build time.
     pub queue_log: Option<PathBuf>,
+    /// Optional arrival, mark and drop event CSV. Set at build time.
+    pub aqm_log: Option<PathBuf>,
 }
 
 impl<P, Q> Clone for BwCellConfig<P, Q>
@@ -409,6 +414,7 @@ where
             queue_config: self.queue_config.clone(),
             bw_type: self.bw_type,
             queue_log: self.queue_log.clone(),
+            aqm_log: self.aqm_log.clone(),
         }
     }
 }
@@ -428,6 +434,7 @@ where
             queue_config: queue_config.into(),
             bw_type: bw_type.into(),
             queue_log: None,
+            aqm_log: None,
         }
     }
 }
@@ -448,9 +455,9 @@ where
     type Config = BwCellConfig<P, Q>;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
-        if config.queue_log.is_some() {
+        if config.queue_log.is_some() || config.aqm_log.is_some() {
             return Err(Error::ConfigError(
-                "queue_log can only be set when building the cell".into(),
+                "queue_log and aqm_log can only be set when building the cell".into(),
             ));
         }
         if config.bandwidth.is_none() && config.queue_config.is_none() && config.bw_type.is_none() {
@@ -543,6 +550,17 @@ where
             },
             control_interface: Arc::new(BwCellControlInterface { config_tx }),
         })
+    }
+
+    pub(crate) fn with_aqm_log(mut self, path: Option<&Path>) -> Result<Self, Error> {
+        if let Some(path) = path {
+            let recorder = QueueEventRecorder::open(path).map_err(Error::IoError)?;
+            self.egress
+                .packet_queue
+                .set_event_recorder(recorder)
+                .map_err(|e| Error::ConfigError(e.into()))?;
+        }
+        Ok(self)
     }
 
     pub(crate) fn with_queue_log(mut self, path: Option<&Path>) -> Result<Self, Error> {
@@ -703,6 +721,8 @@ where
             );
             self.transmitting_packet = transmitting_packet.into();
         } else {
+            self.packet_queue
+                .record_drop(&packet, packet.get_timestamp(), "zero_buffer");
             #[cfg(test)]
             tracing::debug!(
                 "Packet at {:?} is going to be dropped",
@@ -1029,6 +1049,17 @@ where
         })
     }
 
+    pub(crate) fn with_aqm_log(mut self, path: Option<&Path>) -> Result<Self, Error> {
+        if let Some(path) = path {
+            let recorder = QueueEventRecorder::open(path).map_err(Error::IoError)?;
+            self.egress
+                .packet_queue
+                .set_event_recorder(recorder)
+                .map_err(|e| Error::ConfigError(e.into()))?;
+        }
+        Ok(self)
+    }
+
     pub(crate) fn with_queue_log(mut self, path: Option<&Path>) -> Result<Self, Error> {
         self.egress.dequeue_recorder = open_queue_log(path)?;
         Ok(self)
@@ -1345,7 +1376,7 @@ mod tests {
             tracing::info!(
                 "Packet {} sent at {:?} has been delayed by {:?} ",
                 received.packet.buf[0],
-                relative_time(received.packet.get_timestamp()) - received.delay(),
+                (received.packet.get_timestamp() - received.delay()).duration_since(logical_start),
                 received.delay()
             );
         }

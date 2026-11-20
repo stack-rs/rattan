@@ -270,6 +270,22 @@ A missing completion line indicates an unfinished or failed write. Exclude
 incomplete logs from percentile calculations. The header and footer start with
 `#` so a CSV reader can skip them after this check.
 
+#### AQM event logging
+
+Set `aqm_log = "bottleneck.events.csv"` on a `Bw` or `BwReplay` cell to record
+arrivals, newly applied CE marks and packet drops. The queue must implement the
+event hook. Unsupported queues return a configuration error. The file uses the
+same timestamp origin and packet fields as `queue_log`, with `event` and `reason`
+columns added. Arrival timestamps refer to admission into the inner queue.
+Marks and AQM drops use the decision time. Runtime buffer reconfiguration drops
+use the time the configuration is applied. A packet already carrying CE does
+not produce another mark event. Use a new file and validate its completion
+footer before analyzing the records.
+
+Both logging paths are construction-time settings. Runtime control requests
+that include these paths return an error. Event logging uses an independent
+bounded writer so that forwarding does not wait for disk writes.
+
 ### Links Section
 
 This section describes how to link the cells.
