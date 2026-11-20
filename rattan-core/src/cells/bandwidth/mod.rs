@@ -1,5 +1,7 @@
 use std::fmt::Debug;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use netem_trace::{model::BwTraceConfig, Bandwidth, BwTrace, Delay};
@@ -19,8 +21,10 @@ use crate::cells::relative_time;
 use crate::error::Error;
 
 pub mod queue;
+mod queue_log;
 
 use queue::PacketQueue;
+use queue_log::DequeueRecorder;
 
 pub const MAX_BANDWIDTH: Bandwidth = Bandwidth::from_bps(u64::MAX);
 
@@ -45,14 +49,23 @@ struct Transmitting<P: Packet> {
     /// At the time of `packet.get_timestamp()`, what portion of the packet has not been partially transmitted
     /// [0,1]
     unsent_portion: f64,
+    // Keep the initial timing even if a bandwidth change advances the packet's timestamp.
+    queue_timing: Option<(Instant, Duration)>,
 }
 
 impl<P: Packet> Transmitting<P> {
-    fn start(mut packet: P, start_time: Instant) -> Self {
+    fn start(mut packet: P, start_time: Instant, log_queue: bool) -> Self {
+        let queue_timing = log_queue.then(|| {
+            (
+                start_time,
+                start_time.duration_since(packet.get_timestamp()),
+            )
+        });
         packet.delay_until(start_time);
         Self {
             packet,
             unsent_portion: 1.0f64,
+            queue_timing,
         }
     }
 
@@ -85,7 +98,11 @@ impl<P: Packet> Transmitting<P> {
         self.get_timestamp() + transfer_time
     }
 
-    fn take(self) -> P {
+    fn finish(mut self, finish_time: Instant, recorder: Option<&mut DequeueRecorder>) -> P {
+        if let (Some((start, sojourn)), Some(recorder)) = (self.queue_timing, recorder) {
+            recorder.record(&self.packet, start, sojourn);
+        }
+        self.packet.delay_until(finish_time);
         self.packet
     }
 }
@@ -154,6 +171,7 @@ where
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
     transmitting_packet: Option<Transmitting<P>>,
+    dequeue_recorder: Option<DequeueRecorder>,
 }
 
 impl<P, Q> BwCellEgress<P, Q>
@@ -205,7 +223,8 @@ where
     fn set_transmitting_packet(&mut self, packet: P) {
         if self.transmitting_packet.is_none() {
             let start_transmission = self.next_available.max(packet.get_timestamp());
-            let transmitting_packet = Transmitting::start(packet, start_transmission);
+            let transmitting_packet =
+                Transmitting::start(packet, start_transmission, self.dequeue_recorder.is_some());
             self.next_available = transmitting_packet.finish_time(self.bandwidth, self.bw_type);
             #[cfg(test)]
             tracing::debug!(
@@ -284,10 +303,10 @@ where
         // Thus, the `dequeue_at()` sees a correct queue, containing any packet that should
         // enter the AQM at `self.next_available`.
 
-        let packet_to_send = self.transmitting_packet.take().map(|mut p| {
-            p.delay_until(self.next_available);
-            p.take()
-        });
+        let packet_to_send = self
+            .transmitting_packet
+            .take()
+            .map(|p| p.finish(self.next_available, self.dequeue_recorder.as_mut()));
         if let Some(next_packet) = self.packet_queue.dequeue_at(self.next_available) {
             // Here, self.transmitting_packet can not be Some, thus the next_packet would not be dropped.
             self.set_transmitting_packet(next_packet);
@@ -343,10 +362,7 @@ where
 
         self.transmitting_packet
             .take_if(|_| self.next_available <= Instant::now())
-            .map(|mut p| {
-                p.delay_until(self.next_available);
-                p.take()
-            })
+            .map(|p| p.finish(self.next_available, self.dequeue_recorder.as_mut()))
     }
 
     fn change_state(&self, state: CellState) {
@@ -377,6 +393,8 @@ where
     pub bandwidth: Option<Bandwidth>,
     pub queue_config: Option<Q::Config>,
     pub bw_type: Option<BwType>,
+    /// Optional CSV path for recording transmission starts. Set at build time.
+    pub queue_log: Option<PathBuf>,
 }
 
 impl<P, Q> Clone for BwCellConfig<P, Q>
@@ -390,6 +408,7 @@ where
             bandwidth: self.bandwidth,
             queue_config: self.queue_config.clone(),
             bw_type: self.bw_type,
+            queue_log: self.queue_log.clone(),
         }
     }
 }
@@ -408,6 +427,7 @@ where
             bandwidth: bandwidth.into(),
             queue_config: queue_config.into(),
             bw_type: bw_type.into(),
+            queue_log: None,
         }
     }
 }
@@ -428,6 +448,11 @@ where
     type Config = BwCellConfig<P, Q>;
 
     fn set_config(&self, config: Self::Config) -> Result<(), Error> {
+        if config.queue_log.is_some() {
+            return Err(Error::ConfigError(
+                "queue_log can only be set when building the cell".into(),
+            ));
+        }
         if config.bandwidth.is_none() && config.queue_config.is_none() && config.bw_type.is_none() {
             // This ensures that incorrect HTTP requests will return errors.
             return Err(Error::ConfigError(
@@ -514,10 +539,28 @@ where
                 notify_rx: None,
                 started: false,
                 transmitting_packet: None,
+                dequeue_recorder: None,
             },
             control_interface: Arc::new(BwCellControlInterface { config_tx }),
         })
     }
+
+    pub(crate) fn with_queue_log(mut self, path: Option<&Path>) -> Result<Self, Error> {
+        self.egress.dequeue_recorder = open_queue_log(path)?;
+        Ok(self)
+    }
+}
+
+fn open_queue_log(path: Option<&Path>) -> Result<Option<DequeueRecorder>, Error> {
+    path.map(|path| {
+        DequeueRecorder::open(path).map_err(|err| {
+            Error::IoError(std::io::Error::new(
+                err.kind(),
+                format!("Cannot open queue log {}: {err}", path.display()),
+            ))
+        })
+    })
+    .transpose()
 }
 
 type BwReplayCellIngress<P> = BwCellIngress<P>;
@@ -541,6 +584,7 @@ where
     notify_rx: Option<tokio::sync::broadcast::Receiver<crate::control::RattanNotify>>,
     started: bool,
     transmitting_packet: Option<Transmitting<P>>,
+    dequeue_recorder: Option<DequeueRecorder>,
 }
 
 impl<P, Q> BwReplayCellEgress<P, Q>
@@ -642,7 +686,8 @@ where
     fn set_transmitting_packet(&mut self, packet: P) {
         if self.transmitting_packet.is_none() {
             let start_transmission = self.next_available.max(packet.get_timestamp());
-            let transmitting_packet = Transmitting::start(packet, start_transmission);
+            let transmitting_packet =
+                Transmitting::start(packet, start_transmission, self.dequeue_recorder.is_some());
             let bandwidth = self
                 .current_bandwidth
                 .get_at_timestamp(start_transmission)
@@ -735,10 +780,10 @@ where
         // Thus, the `dequeue_at()` sees a correct queue, containing any packet that should
         // enter the AQM at `self.next_available`.
 
-        let packet_to_send = self.transmitting_packet.take().map(|mut p| {
-            p.delay_until(self.next_available);
-            p.take()
-        });
+        let packet_to_send = self
+            .transmitting_packet
+            .take()
+            .map(|p| p.finish(self.next_available, self.dequeue_recorder.as_mut()));
         if let Some(next_packet) = self.packet_queue.dequeue_at(self.next_available) {
             // Here, self.transmitting_packet can not be Some, thus the next_packet would not be dropped.
             self.set_transmitting_packet(next_packet);
@@ -796,10 +841,7 @@ where
 
         self.transmitting_packet
             .take_if(|_| self.next_available <= Instant::now())
-            .map(|mut p| {
-                p.delay_until(self.next_available);
-                p.take()
-            })
+            .map(|p| p.finish(self.next_available, self.dequeue_recorder.as_mut()))
     }
 
     // This must be called before any dequeue
@@ -981,9 +1023,15 @@ where
                 notify_rx: None,
                 started: false,
                 transmitting_packet: None,
+                dequeue_recorder: None,
             },
             control_interface: Arc::new(BwReplayCellControlInterface { config_tx }),
         })
+    }
+
+    pub(crate) fn with_queue_log(mut self, path: Option<&Path>) -> Result<Self, Error> {
+        self.egress.dequeue_recorder = open_queue_log(path)?;
+        Ok(self)
     }
 }
 
@@ -1015,6 +1063,48 @@ mod tests {
                 .unwrap();
             logical_send_time += Duration::from_millis(interval_ms);
         }
+    }
+
+    #[test_log::test]
+    fn queue_log_bw_replay_preserves_transmission_start() -> Result<(), Error> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let _guard = rt.enter();
+        let tmp = tempfile::tempdir()?;
+        let path = tmp.path().join("replay.csv");
+        let trace = RepeatedBwPatternConfig::new()
+            .pattern(vec![Box::new(StaticBwConfig {
+                bw: Some(Bandwidth::from_mbps(1)),
+                duration: Some(Duration::from_secs(1)),
+            })])
+            .count(0)
+            .build();
+        let cell = BwReplayCell::new(
+            Box::new(trace),
+            InfiniteQueue::<StdPacket>::new(InfiniteQueueConfig::new()).unwrap(),
+            BwType::NetworkLayer,
+        )?
+        .with_queue_log(Some(&path))?;
+        let mut egress = cell.into_receiver();
+        let origin = crate::radix::BASE_TS.2;
+        let start = origin + Duration::from_millis(10);
+        egress.next_available = start;
+        egress.change_bandwidth(Bandwidth::from_mbps(1), start);
+        egress.set_transmitting_packet(StdPacket::with_timestamp(
+            &[0; 114],
+            start - Duration::from_millis(2),
+        ));
+        egress.change_bandwidth(Bandwidth::from_mbps(2), start + Duration::from_micros(400));
+        let transmitting = egress.transmitting_packet.take().unwrap();
+        let packet = transmitting.finish(egress.next_available, egress.dequeue_recorder.as_mut());
+        assert_eq!(packet.get_timestamp(), start + Duration::from_micros(600));
+        drop(egress);
+
+        let data = std::fs::read_to_string(path)?;
+        assert_eq!(data.lines().nth(2), Some("10000000,2000000,100,,,,,,"));
+        assert_eq!(data.lines().last(), Some("# complete records=1 dropped=0"));
+        Ok(())
     }
 
     #[rstest]
@@ -1118,7 +1208,10 @@ mod tests {
         let bandwidth = Bandwidth::from_bps(25600);
         let packet_queue =
             DropTailQueue::new(DropTailQueueConfig::new(None, 0, BwType::NetworkLayer)).unwrap();
-        let cell = BwCell::new(bandwidth, packet_queue, BwType::NetworkLayer)?;
+        let tmp = tempfile::tempdir()?;
+        let path = tmp.path().join("zero-buffer.csv");
+        let cell = BwCell::new(bandwidth, packet_queue, BwType::NetworkLayer)?
+            .with_queue_log(Some(&path))?;
 
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
@@ -1160,6 +1253,20 @@ mod tests {
 
         compare_receive_time(receive_time);
 
+        drop(egress);
+        let log = std::fs::read_to_string(path)?;
+        assert_eq!(log.lines().last(), Some("# complete records=4 dropped=0"));
+        let mut reader = csv::ReaderBuilder::new()
+            .comment(Some(b'#'))
+            .from_reader(log.as_bytes());
+        assert_eq!(
+            reader
+                .records()
+                .map(|row| row.unwrap()[1].parse::<u64>().unwrap())
+                .collect::<Vec<_>>(),
+            [0; 4]
+        );
+
         Ok(())
     }
 
@@ -1198,6 +1305,7 @@ mod tests {
 
         let ingress = cell.sender();
         let mut egress = cell.into_receiver();
+
         let logical_send_time = Instant::now();
         let logical_start = logical_send_time;
         // Give this synthetic trace its own epoch. Other tests share the
@@ -1237,7 +1345,7 @@ mod tests {
             tracing::info!(
                 "Packet {} sent at {:?} has been delayed by {:?} ",
                 received.packet.buf[0],
-                (received.packet.get_timestamp() - received.delay()).duration_since(logical_start),
+                relative_time(received.packet.get_timestamp()) - received.delay(),
                 received.delay()
             );
         }

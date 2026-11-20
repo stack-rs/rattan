@@ -818,6 +818,8 @@ fn test_dualpi2_queue() {
     const TICKS: u32 = 1000;
     const TICK: Duration = Duration::from_millis(2); // 1000 B at 4 Mbps
 
+    let temp = tempfile::tempdir().unwrap();
+    let queue_log = temp.path().join("dualpi2.csv");
     let mut config = RattanConfig::<StdPacket, StdNetEnvConfig> {
         env: StdNetEnvConfig {
             mode: StdNetEnvMode::Isolated,
@@ -827,18 +829,20 @@ fn test_dualpi2_queue() {
         },
         ..Default::default()
     };
+    let mut up = BwCellConfig::new(
+        Bandwidth::from_mbps(4),
+        DualPi2QueueConfig {
+            // Keep the unresponsive L4S flow loss-free: mark instead of
+            // dropping on overload.
+            drop_overload: false,
+            ..Default::default()
+        },
+        None,
+    );
+    up.queue_log = Some(queue_log.clone());
     config.cells.insert(
         "up_bw".to_string(),
-        CellBuildConfig::Bw(BwCellBuildConfig::DualPi2(BwCellConfig::new(
-            Bandwidth::from_mbps(4),
-            DualPi2QueueConfig {
-                // Keep the unresponsive L4S flow loss-free: mark instead of
-                // dropping on overload.
-                drop_overload: false,
-                ..Default::default()
-            },
-            None,
-        ))),
+        CellBuildConfig::Bw(BwCellBuildConfig::DualPi2(up)),
     );
     config.cells.insert(
         "down_bw".to_string(),
@@ -862,6 +866,7 @@ fn test_dualpi2_queue() {
     info!("Test DualPi2Queue (4 Mbps, L4S at 2 Mbps + Classic at 4 Mbps, 1000 B packets)");
 
     let (msg_tx, msg_rx) = mpsc::channel();
+    let (counts_tx, counts_rx) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
     let server_stop = stop.clone();
 
@@ -961,6 +966,7 @@ fn test_dualpi2_queue() {
             );
             assert!(median(&delays[0]) > Duration::from_millis(100));
             assert!(median(&delays[0]) > 10 * median(&delays[1]));
+            counts_tx.send((received, ce)).unwrap();
             Ok(())
         })
         .unwrap();
@@ -968,6 +974,41 @@ fn test_dualpi2_queue() {
     left_handle.join().unwrap().unwrap();
     stop.store(true, Ordering::Relaxed);
     right_handle.join().unwrap().unwrap();
+    drop(radix);
+
+    let (received, ce) = counts_rx.recv().unwrap();
+    let log = std::fs::read_to_string(queue_log).unwrap();
+    let total = received.iter().sum::<usize>();
+    assert_eq!(
+        log.lines().last().unwrap(),
+        format!("# complete records={total} dropped=0")
+    );
+    let mut reader = csv::ReaderBuilder::new()
+        .comment(Some(b'#'))
+        .from_reader(log.as_bytes());
+    let mut recorded = [0, 0];
+    let mut marked = [0, 0];
+    let mut previous_start = i128::MIN;
+    for row in reader.records() {
+        let row = row.unwrap();
+        assert_eq!(&row[2], "1000");
+        assert_eq!(&row[4], "17");
+        assert_eq!(&row[6], &right_ip.to_string());
+        assert_eq!(&row[8], "54321");
+        let class = match &row[7] {
+            "54322" => CLASSIC as usize,
+            "54323" => L4S as usize,
+            port => panic!("unexpected source port {port}"),
+        };
+        let start: i128 = row[0].parse().unwrap();
+        assert!(start >= previous_start);
+        previous_start = start;
+        let _: u64 = row[1].parse().unwrap();
+        recorded[class] += 1;
+        marked[class] += usize::from(&row[3] == "3");
+    }
+    assert_eq!(recorded, received);
+    assert_eq!(marked, ce);
 }
 
 #[instrument]
