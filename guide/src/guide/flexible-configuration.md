@@ -282,9 +282,10 @@ use the time the configuration is applied. A packet already carrying CE does
 not produce another mark event. Use a new file and validate its completion
 footer before analyzing the records.
 
-Both logging paths are construction-time settings. Runtime control requests
-that include these paths return an error. Event logging uses an independent
-bounded writer so that forwarding does not wait for disk writes.
+Both logging paths are construction-time settings. The `Bw` control interface
+reports an error for requests containing these paths. The `BwReplay` runtime
+schema covers traces, queue configuration and bandwidth accounting. Event logging
+uses an independent bounded writer so that forwarding does not wait for disk writes.
 
 ### Links Section
 
