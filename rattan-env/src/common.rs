@@ -1,3 +1,4 @@
+use crate::ecn;
 use std::fmt::Debug;
 
 use etherparse::{Ethernet2Header, Ipv4Header};
@@ -44,6 +45,21 @@ pub trait Packet: Debug + 'static + Send {
 
     fn ether_hdr(&self) -> Option<Ethernet2Header> {
         etherparse::Ethernet2Header::from_slice(self.as_slice()).map_or(None, |x| Some(x.0))
+    }
+
+    /// Returns the ECN codepoint of the packet, or `None` if it is not an IPv4/IPv6 packet.
+    ///
+    /// See [`ecn::get_ecn`] for the supported frame formats.
+    fn ecn(&self) -> Option<ecn::IpEcn> {
+        ecn::get_ecn(self.as_slice())
+    }
+
+    /// Marks the packet with ECN Congestion Experienced (CE) in place.
+    ///
+    /// Returns `false` (leaving the packet untouched) if the packet is not ECN-capable,
+    /// in which case an AQM should drop it instead. See [`ecn::set_ce`] for details.
+    fn set_ce(&mut self) -> bool {
+        ecn::set_ce(self.as_raw_buffer())
     }
 
     // TODO: remove this when 0.1.1 is released.

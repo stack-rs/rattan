@@ -241,6 +241,52 @@ For example, `38:7e:58:e7:02:01` is a unicast MAC address because the 8th bit (t
 
 This design ensures that the trace does not begin replaying until actual application traffic has started.
 
+#### Queue delay logging
+
+With `rattan run`, add `queue_log` to a `Bw` or `BwReplay` cell in the TOML
+configuration. Each cell needs a new output path in an existing directory.
+
+```toml
+[cells.bottleneck]
+type = "Bw"
+bandwidth = "40Mbps"
+queue = "DualPi2"
+queue_log = "bottleneck.queue.csv"
+```
+
+The CSV contains one row per packet forwarded by the bandwidth cell. It records the
+logical start of transmission (`t_ns`, in nanoseconds relative to the header's
+`base_unix_us`) and the time from logical arrival to that start (`sojourn_ns`).
+The waiting time excludes serialization and propagation. Packets dropped
+before forwarding and packets that bypass bandwidth processing are excluded.
+The ECN codepoint is read after the AQM. IPv4 and IPv6 addresses, the IP protocol
+number, and TCP or UDP ports are recorded where available. Use the flow tuple
+and the experiment's port assignments to group packets by congestion control.
+
+Wait for a normal shutdown and check the final comment line. A complete log has
+`# complete records=N dropped=0`, with `N` equal to the number of data rows.
+A positive `dropped` value counts missing log rows from the bounded buffer.
+A missing completion line indicates an unfinished or failed write. Exclude
+incomplete logs from percentile calculations. The header and footer start with
+`#` so a CSV reader can skip them after this check.
+
+#### AQM event logging
+
+Set `aqm_log = "bottleneck.events.csv"` on a `Bw` or `BwReplay` cell to record
+arrivals, newly applied CE marks and packet drops. The queue must implement the
+event hook. Unsupported queues return a configuration error. The file uses the
+same timestamp origin and packet fields as `queue_log`, with `event` and `reason`
+columns added. Arrival timestamps refer to admission into the inner queue.
+Marks and AQM drops use the decision time. Runtime buffer reconfiguration drops
+use the time the configuration is applied. A packet already carrying CE does
+not produce another mark event. Use a new file and validate its completion
+footer before analyzing the records.
+
+Both logging paths are construction-time settings. The `Bw` control interface
+reports an error for requests containing these paths. The `BwReplay` runtime
+schema covers traces, queue configuration and bandwidth accounting. Event logging
+uses an independent bounded writer so that forwarding does not wait for disk writes.
+
 ### Links Section
 
 This section describes how to link the cells.

@@ -107,7 +107,7 @@ Options:
       --uplink-queue <Queue Type>
           Uplink queue type
 
-          [possible values: infinite, droptail, drophead, codel]
+          [possible values: infinite, droptail, drophead, codel, red, pie, dualpi2]
 
       --generate-path <File>
           Generate config file to the specified path instead of stdout
@@ -130,7 +130,7 @@ Options:
       --downlink-queue <Queue Type>
           Downlink queue type
 
-          [possible values: infinite, droptail, drophead, codel]
+          [possible values: infinite, droptail, drophead, codel, red, pie, dualpi2]
 
       --file-log-path <File>
           File log path, default to $CACHE_DIR/rattan/core.log
