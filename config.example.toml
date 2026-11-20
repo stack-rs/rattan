@@ -136,6 +136,10 @@ bw_type = "NetworkLayer"
 # Default: Unlimited
 bandwidth = "1Gbps 200Mbps"
 
+# Optional CSV path for logical queue delay measurements (also supported by BwReplay).
+# Use a new file in an existing directory. The setting only applies at startup.
+# queue_log = "up_1.queue.csv"
+
 # Queue type
 # Possible values:
 # - "Infinite" : Infinite queue

@@ -241,6 +241,35 @@ For example, `38:7e:58:e7:02:01` is a unicast MAC address because the 8th bit (t
 
 This design ensures that the trace does not begin replaying until actual application traffic has started.
 
+#### Queue delay logging
+
+With `rattan run`, add `queue_log` to a `Bw` or `BwReplay` cell in the TOML
+configuration. Each cell needs a new output path in an existing directory.
+
+```toml
+[cells.bottleneck]
+type = "Bw"
+bandwidth = "40Mbps"
+queue = "DualPi2"
+queue_log = "bottleneck.queue.csv"
+```
+
+The CSV contains one row per packet forwarded by the bandwidth cell. It records the
+logical start of transmission (`t_ns`, in nanoseconds relative to the header's
+`base_unix_us`) and the time from logical arrival to that start (`sojourn_ns`).
+The waiting time excludes serialization and propagation. Packets dropped
+before forwarding and packets that bypass bandwidth processing are excluded.
+The ECN codepoint is read after the AQM. IPv4 and IPv6 addresses, the IP protocol
+number, and TCP or UDP ports are recorded where available. Use the flow tuple
+and the experiment's port assignments to group packets by congestion control.
+
+Wait for a normal shutdown and check the final comment line. A complete log has
+`# complete records=N dropped=0`, with `N` equal to the number of data rows.
+A positive `dropped` value counts missing log rows from the bounded buffer.
+A missing completion line indicates an unfinished or failed write. Exclude
+incomplete logs from percentile calculations. The header and footer start with
+`#` so a CSV reader can skip them after this check.
+
 ### Links Section
 
 This section describes how to link the cells.
