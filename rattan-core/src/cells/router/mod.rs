@@ -9,7 +9,7 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use super::{Cell, ControlInterface, Egress, Ingress, Packet};
+use super::{Cell, ControlInterface, Egress, Ingress, Packet, PacketHeader};
 use crate::error::{Error, RoutingTableError};
 
 pub mod routing;
@@ -27,7 +27,7 @@ where
 
 impl<P, R> Ingress<P> for RouterCellIngress<P, R>
 where
-    P: Packet + Send,
+    P: PacketHeader,
     R: RoutingTable,
 {
     fn enqueue(&self, packet: P) -> Result<(), Error> {
@@ -176,7 +176,7 @@ where
 
 impl<P, R> Cell<P> for RouterCell<P, R>
 where
-    P: Packet + Send + Sync + 'static,
+    P: PacketHeader + Sync,
     R: RoutingTable,
 {
     type IngressType = RouterCellIngress<P, R>;

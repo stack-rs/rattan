@@ -30,8 +30,7 @@ pub mod token_bucket;
 pub use timed_config::TimedConfig;
 
 // For back compatibility
-pub use rattan_env::common::Packet;
-pub use rattan_env::ecn;
+pub use rattan_env::common::{IpEcn, Packet, PacketHeader};
 pub use rattan_env::env::standard::StdPacket;
 
 pub const LARGE_DURATION: Duration = Duration::from_secs(10 * 365 * 24 * 60 * 60);
@@ -110,10 +109,6 @@ mod test_packet {
             self.packet.as_raw_buffer()
         }
 
-        fn ip_hdr(&self) -> Option<Ipv4Header> {
-            self.packet.ip_hdr()
-        }
-
         fn ether_hdr(&self) -> Option<Ethernet2Header> {
             self.packet.ether_hdr()
         }
@@ -148,6 +143,32 @@ mod test_packet {
     }
 
     /// How long ago this packet was created, in terms of logical timestamp.
+    impl<P: PacketHeader> PacketHeader for TestPacket<P> {
+        fn l3_offset(&self) -> Option<usize> {
+            self.packet.l3_offset()
+        }
+
+        fn ip_slice(&self) -> Option<&[u8]> {
+            self.packet.ip_slice()
+        }
+
+        fn ip_slice_mut(&mut self) -> Option<&mut [u8]> {
+            self.packet.ip_slice_mut()
+        }
+
+        fn ip_hdr(&self) -> Option<Ipv4Header> {
+            self.packet.ip_hdr()
+        }
+
+        fn ecn(&self) -> Option<IpEcn> {
+            self.packet.ecn()
+        }
+
+        fn set_ce(&mut self) -> bool {
+            self.packet.set_ce()
+        }
+    }
+
     impl<P: Packet> TestPacket<P> {
         pub fn delay(&self) -> Duration {
             self.get_timestamp() - self.init_timestamp

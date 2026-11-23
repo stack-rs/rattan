@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     cells::{
         router::{self, SimpleRoutingTable},
-        Ingress, Packet,
+        Ingress, PacketHeader,
     },
     core::CellFactory,
 };
@@ -11,7 +11,7 @@ use crate::{
 pub type RouterCellBuildConfig = router::RouterCellConfig;
 
 impl RouterCellBuildConfig {
-    pub fn into_factory<P: Packet>(
+    pub fn into_factory<P: PacketHeader>(
         self,
         receivers: Vec<Arc<dyn Ingress<P>>>,
     ) -> impl CellFactory<router::RouterCell<P, SimpleRoutingTable>> {

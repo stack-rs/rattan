@@ -1,5 +1,5 @@
 pub mod common;
-pub mod ecn;
+mod ecn;
 pub mod env;
 pub mod error;
 pub mod interface;

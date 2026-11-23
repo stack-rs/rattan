@@ -1,7 +1,6 @@
 //! Explicit Congestion Notification (ECN) helpers.
 //!
-//! These functions operate in place on raw Ethernet II frames (as returned by
-//! [`Packet::as_slice`](super::Packet::as_slice)), so that AQMs can read the ECN
+//! These functions operate on slices starting at the IP header, so AQMs can read the ECN
 //! codepoint and mark packets with Congestion Experienced (CE) instead of dropping them.
 //!
 //! # References
@@ -15,19 +14,8 @@
 //! - Linux kernel `IP_ECN_set_ce()` / `IP6_ECN_set_ce()`:
 //!   [`include/net/inet_ecn.h`](https://github.com/torvalds/linux/blob/master/include/net/inet_ecn.h)
 //!
-//! # Supported frames
-//!
-//! Only untagged Ethernet II frames carrying IPv4 or IPv6 are recognized. VLAN-tagged
-//! frames, other EtherTypes, truncated headers, and frames whose IP version nibble does
-//! not match the EtherType are treated as non-IP: [`get_ecn`] returns `None` and
-//! [`set_ce`] leaves the frame untouched.
 
-pub use etherparse::IpEcn;
-
-const ETHERNET_HEADER_LEN: usize = 14;
-const ETHER_TYPE_OFFSET: usize = 12;
-const ETHER_TYPE_IPV4: u16 = 0x0800;
-const ETHER_TYPE_IPV6: u16 = 0x86DD;
+use etherparse::IpEcn;
 
 /// Minimal IPv4 header length: Version/IHL ... Destination Address.
 const IPV4_MIN_HEADER_LEN: usize = 20;
@@ -51,22 +39,10 @@ enum IpVersion {
     V6,
 }
 
-/// Returns the IP version of the frame if it is an untagged Ethernet II frame carrying a
-/// complete IPv4 or IPv6 fixed header whose version nibble matches the EtherType.
-fn ip_version(frame: &[u8]) -> Option<IpVersion> {
-    let ether_type = u16::from_be_bytes([
-        *frame.get(ETHER_TYPE_OFFSET)?,
-        *frame.get(ETHER_TYPE_OFFSET + 1)?,
-    ]);
-    let ip_header = frame.get(ETHERNET_HEADER_LEN..)?;
-    let version = *ip_header.first()? >> 4;
-    match ether_type {
-        ETHER_TYPE_IPV4 if version == 4 && ip_header.len() >= IPV4_MIN_HEADER_LEN => {
-            Some(IpVersion::V4)
-        }
-        ETHER_TYPE_IPV6 if version == 6 && ip_header.len() >= IPV6_HEADER_LEN => {
-            Some(IpVersion::V6)
-        }
+fn ip_version(ip: &[u8]) -> Option<IpVersion> {
+    match ip.first()? >> 4 {
+        4 if ip.len() >= IPV4_MIN_HEADER_LEN => Some(IpVersion::V4),
+        6 if ip.len() >= IPV6_HEADER_LEN => Some(IpVersion::V6),
         _ => None,
     }
 }
@@ -80,22 +56,20 @@ fn ecn_from_bits(bits: u8) -> IpEcn {
     }
 }
 
-/// Reads the ECN codepoint of an Ethernet II frame.
-///
-/// Returns `None` if the frame does not carry an IPv4 or IPv6 packet.
-pub fn get_ecn(frame: &[u8]) -> Option<IpEcn> {
-    let bits = match ip_version(frame)? {
-        IpVersion::V4 => frame[ETHERNET_HEADER_LEN + IPV4_TOS_OFFSET],
-        IpVersion::V6 => frame[ETHERNET_HEADER_LEN + IPV6_ECN_BYTE_OFFSET] >> IPV6_ECN_SHIFT,
+/// Reads the ECN codepoint from an IPv4 or IPv6 header.
+pub(crate) fn get_ecn(ip: &[u8]) -> Option<IpEcn> {
+    let bits = match ip_version(ip)? {
+        IpVersion::V4 => ip[IPV4_TOS_OFFSET],
+        IpVersion::V6 => ip[IPV6_ECN_BYTE_OFFSET] >> IPV6_ECN_SHIFT,
     };
     Some(ecn_from_bits(bits))
 }
 
-/// Marks an Ethernet II frame with ECN Congestion Experienced (CE), in place.
+/// Marks an IP header with ECN Congestion Experienced (CE), in place.
 ///
 /// Mirrors the semantics of the Linux kernel's `INET_ECN_set_ce()`:
 ///
-/// | Codepoint before | Frame after | Return value |
+/// | Codepoint before | Header after | Return value |
 /// |------------------|-------------|--------------|
 /// | Not-ECT          | unchanged   | `false`      |
 /// | ECT(0) / ECT(1)  | CE          | `true`       |
@@ -106,37 +80,36 @@ pub fn get_ecn(frame: &[u8]) -> Option<IpEcn> {
 /// signal congestion should drop the packet instead.
 ///
 /// For IPv4, the header checksum is updated incrementally (RFC 1624) rather than
-/// recomputed, so a frame that arrived with a wrong checksum keeps it wrong.
-pub fn set_ce(frame: &mut [u8]) -> bool {
-    let Some(version) = ip_version(frame) else {
+/// recomputed, so a header that arrived with a wrong checksum keeps it wrong.
+pub(crate) fn set_ce(ip: &mut [u8]) -> bool {
+    let Some(version) = ip_version(ip) else {
         return false;
     };
-    let ecn_byte_index = ETHERNET_HEADER_LEN
-        + match version {
-            IpVersion::V4 => IPV4_TOS_OFFSET,
-            IpVersion::V6 => IPV6_ECN_BYTE_OFFSET,
-        };
+    let ecn_byte_index = match version {
+        IpVersion::V4 => IPV4_TOS_OFFSET,
+        IpVersion::V6 => IPV6_ECN_BYTE_OFFSET,
+    };
     let shift = match version {
         IpVersion::V4 => 0,
         IpVersion::V6 => IPV6_ECN_SHIFT,
     };
 
-    let old_byte = frame[ecn_byte_index];
+    let old_byte = ip[ecn_byte_index];
     match ecn_from_bits(old_byte >> shift) {
         IpEcn::NotEct => return false,
         IpEcn::CongestionExperienced => return true,
         IpEcn::Ect0 | IpEcn::Ect1 => {}
     }
     let new_byte = old_byte | (ECN_MASK << shift);
-    frame[ecn_byte_index] = new_byte;
+    ip[ecn_byte_index] = new_byte;
 
     if version == IpVersion::V4 {
-        let checksum_index = ETHERNET_HEADER_LEN + IPV4_CHECKSUM_OFFSET;
-        let old_checksum = u16::from_be_bytes([frame[checksum_index], frame[checksum_index + 1]]);
+        let checksum = &mut ip[IPV4_CHECKSUM_OFFSET..IPV4_CHECKSUM_OFFSET + 2];
+        let old_checksum = u16::from_be_bytes([checksum[0], checksum[1]]);
         // The TOS byte is the low byte of the 16-bit word made of Version/IHL and TOS.
         let new_checksum =
             incremental_checksum_update(old_checksum, u16::from(old_byte), u16::from(new_byte));
-        frame[checksum_index..checksum_index + 2].copy_from_slice(&new_checksum.to_be_bytes());
+        checksum.copy_from_slice(&new_checksum.to_be_bytes());
     }
     true
 }
@@ -153,10 +126,20 @@ fn incremental_checksum_update(checksum: u16, old_word: u16, new_word: u16) -> u
 
 #[cfg(test)]
 mod tests {
-    use etherparse::{IpDscp, IpNumber, Ipv4Header, Ipv6FlowLabel, Ipv6Header};
+    use etherparse::{
+        EtherType, Ethernet2Header, IpDscp, IpNumber, Ipv4Header, Ipv6FlowLabel, Ipv6Header,
+    };
 
     use super::*;
-    use crate::{common::Packet, env::standard::StdPacket};
+    use crate::{
+        common::{Packet, PacketHeader},
+        env::standard::StdPacket,
+    };
+
+    const ETHERNET_HEADER_LEN: usize = Ethernet2Header::LEN;
+    const ETHER_TYPE_OFFSET: usize = 12;
+    const ETHER_TYPE_IPV4: u16 = EtherType::IPV4.0;
+    const ETHER_TYPE_IPV6: u16 = EtherType::IPV6.0;
 
     const ALL_ECN: [IpEcn; 4] = [
         IpEcn::NotEct,
@@ -222,7 +205,11 @@ mod tests {
             // A DSCP with all bits set must not leak into the ECN field.
             for dscp in [0, 0b10_1110, IpDscp::MAX_U8] {
                 let frame = ipv4_frame(&ipv4_header(ecn, dscp, 0));
-                assert_eq!(get_ecn(&frame), Some(ecn), "dscp {dscp:#b}");
+                assert_eq!(
+                    get_ecn(&frame[ETHERNET_HEADER_LEN..]),
+                    Some(ecn),
+                    "dscp {dscp:#b}"
+                );
             }
         }
     }
@@ -232,7 +219,11 @@ mod tests {
         for ecn in ALL_ECN {
             for dscp in [0, 0b10_1110, IpDscp::MAX_U8] {
                 let frame = ipv6_frame(ecn, dscp, 0xF_FFFF);
-                assert_eq!(get_ecn(&frame), Some(ecn), "dscp {dscp:#b}");
+                assert_eq!(
+                    get_ecn(&frame[ETHERNET_HEADER_LEN..]),
+                    Some(ecn),
+                    "dscp {dscp:#b}"
+                );
             }
         }
     }
@@ -242,7 +233,7 @@ mod tests {
         for ecn in ALL_ECN {
             let original = ipv4_frame(&ipv4_header(ecn, 0b10_1110, 0x1234));
             let mut frame = original.clone();
-            let marked = set_ce(&mut frame);
+            let marked = set_ce(&mut frame[ETHERNET_HEADER_LEN..]);
             match ecn {
                 IpEcn::NotEct => {
                     assert!(!marked);
@@ -281,7 +272,7 @@ mod tests {
             for dscp in [0, IpDscp::MAX_U8] {
                 for identification in 0..=u16::MAX {
                     let mut frame = ipv4_frame(&ipv4_header(ecn, dscp, identification));
-                    assert!(set_ce(&mut frame));
+                    assert!(set_ce(&mut frame[ETHERNET_HEADER_LEN..]));
                     let header = parse_ipv4(&frame);
                     assert_eq!(
                         header.header_checksum,
@@ -299,8 +290,8 @@ mod tests {
         header.options = [1, 1, 1, 0].as_slice().try_into().unwrap(); // NOP, NOP, NOP, EOL
         header.header_checksum = header.calc_header_checksum();
         let mut frame = ipv4_frame(&header);
-        assert_eq!(get_ecn(&frame), Some(IpEcn::Ect1));
-        assert!(set_ce(&mut frame));
+        assert_eq!(get_ecn(&frame[ETHERNET_HEADER_LEN..]), Some(IpEcn::Ect1));
+        assert!(set_ce(&mut frame[ETHERNET_HEADER_LEN..]));
         let header = parse_ipv4(&frame);
         assert_eq!(header.ecn, IpEcn::CongestionExperienced);
         assert_eq!(header.header_checksum, header.calc_header_checksum());
@@ -311,7 +302,7 @@ mod tests {
         for ecn in ALL_ECN {
             let original = ipv6_frame(ecn, 0b10_1110, 0xA_BCDE);
             let mut frame = original.clone();
-            let marked = set_ce(&mut frame);
+            let marked = set_ce(&mut frame[ETHERNET_HEADER_LEN..]);
             assert_eq!(marked, ecn != IpEcn::NotEct);
             let header = parse_ipv6(&frame);
             let expected_ecn = if ecn == IpEcn::NotEct {
@@ -372,10 +363,10 @@ mod tests {
             ("ipv6 ethertype, ipv4 payload", v6_type_v4_payload),
         ];
         for (name, original) in cases {
-            assert_eq!(get_ecn(&original), None, "{name}");
-            let mut frame = original.clone();
-            assert!(!set_ce(&mut frame), "{name}");
-            assert_eq!(frame, original, "{name} must not be modified");
+            let mut packet = StdPacket::from_raw_buffer(&original);
+            assert_eq!(packet.ecn(), None, "{name}");
+            assert!(!packet.set_ce(), "{name}");
+            assert_eq!(packet.as_slice(), original, "{name} must not be modified");
         }
     }
 
@@ -388,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn test_packet_trait_methods() {
+    fn test_packet_header_methods() {
         let mut packet = StdPacket::from_raw_buffer(&ipv4_frame(&ipv4_header(IpEcn::Ect1, 0, 1)));
         assert_eq!(packet.ecn(), Some(IpEcn::Ect1));
         assert!(packet.set_ce());
@@ -399,5 +390,65 @@ mod tests {
         let mut packet = StdPacket::from_raw_buffer(&ipv4_frame(&ipv4_header(IpEcn::NotEct, 0, 1)));
         assert!(!packet.set_ce());
         assert_eq!(packet.ecn(), Some(IpEcn::NotEct));
+    }
+
+    #[test]
+    fn test_packet_header_with_raw_ip() {
+        use tokio::time::{Duration, Instant};
+
+        #[derive(Debug)]
+        struct RawIpPacket(StdPacket);
+
+        impl Packet for RawIpPacket {
+            type PacketGenerator = <StdPacket as Packet>::PacketGenerator;
+
+            fn empty(maximum: usize, generator: &Self::PacketGenerator) -> Self {
+                Self(StdPacket::empty(maximum, generator))
+            }
+
+            fn from_raw_buffer(buf: &[u8]) -> Self {
+                Self(StdPacket::from_raw_buffer(buf))
+            }
+
+            fn length(&self) -> usize {
+                self.0.length()
+            }
+            fn l2_length(&self) -> usize {
+                self.length()
+            }
+            fn l3_length(&self) -> usize {
+                self.length()
+            }
+            fn as_slice(&self) -> &[u8] {
+                self.0.as_slice()
+            }
+            fn as_raw_buffer(&mut self) -> &mut [u8] {
+                self.0.as_raw_buffer()
+            }
+            fn get_timestamp(&self) -> Instant {
+                self.0.get_timestamp()
+            }
+            fn delay_by(&mut self, delay: Duration) {
+                self.0.delay_by(delay);
+            }
+            fn delay_until(&mut self, timestamp: Instant) {
+                self.0.delay_until(timestamp);
+            }
+        }
+
+        impl PacketHeader for RawIpPacket {
+            fn l3_offset(&self) -> Option<usize> {
+                Some(0)
+            }
+        }
+
+        let frame = ipv4_frame(&ipv4_header(IpEcn::Ect0, 19, 7));
+        let mut packet = RawIpPacket::from_raw_buffer(&frame[ETHERNET_HEADER_LEN..]);
+        assert_eq!(packet.ecn(), Some(IpEcn::Ect0));
+        assert!(packet.set_ce());
+        let header = packet.ip_hdr().unwrap();
+        assert_eq!(header.ecn, IpEcn::CongestionExperienced);
+        assert_eq!(header.dscp.value(), 19);
+        assert_eq!(header.header_checksum, header.calc_header_checksum());
     }
 }

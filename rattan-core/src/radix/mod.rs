@@ -26,7 +26,7 @@ use tracing::{debug, error, info, span, warn, Level};
 use crate::{
     cells::{
         external::{get_clock_ns, VirtualEthernet, VirtualEthernetId},
-        Cell, Packet,
+        Cell, Packet, PacketHeader,
     },
     config::{CellBuildConfig, RattanConfig},
     control::{RattanOp, RattanOpEndpoint, RattanOpResult},
@@ -107,6 +107,7 @@ where
     pub fn new<EC>(config: RattanConfig<D::Packet, EC>) -> crate::error::Result<Self>
     where
         EC: RattanEnvConfig<BuildOutput = E>,
+        D::Packet: PacketHeader,
     {
         let instance_id = INSTANCE_ID.get_or_init(|| {
             // get env var from RATTAN_INSTANCE_ID
@@ -325,6 +326,7 @@ where
     pub fn load_cells_config<I>(&mut self, cells: I) -> Result<(), Error>
     where
         I: IntoIterator<Item = (String, CellBuildConfig<D::Packet>)>,
+        D::Packet: PacketHeader,
     {
         let mut router_configs = vec![];
 
