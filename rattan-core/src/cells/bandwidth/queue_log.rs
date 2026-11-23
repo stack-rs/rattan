@@ -292,7 +292,7 @@ fn write_log(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cells::StdPacket;
+    use crate::cells::{PacketHeader, StdPacket};
     use etherparse::PacketBuilder;
 
     #[test]

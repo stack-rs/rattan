@@ -149,7 +149,7 @@ use tracing::{debug, trace, warn};
 #[cfg(feature = "serde")]
 use super::serde_default;
 use super::{BwType, PacketQueue};
-use crate::cells::PacketHeader;
+use crate::cells::{IpEcn, PacketHeader};
 
 /// Weights of the WRR scheduler are expressed in percent: `wc + wl = 100`.
 const MAX_WC: u8 = 100;
@@ -528,7 +528,7 @@ where
     }
 
     fn mark(&self, packet: &mut P, now: Instant, reason: &'static str) -> bool {
-        let was_ce = packet.ecn().is_some_and(|ecn| ecn.value() == 3);
+        let was_ce = packet.ecn() == Some(IpEcn::CongestionExperienced);
         let marked = packet.set_ce();
         if marked && !was_ce {
             if let Some(log) = &self.event_recorder {
@@ -755,7 +755,7 @@ mod tests {
     use etherparse::{IpNumber, Ipv4Header};
 
     use super::*;
-    use crate::cells::{IpEcn, StdPacket};
+    use crate::cells::StdPacket;
 
     const MS: Duration = Duration::from_millis(1);
 
