@@ -1,7 +1,6 @@
 use std::{os::fd::AsRawFd, sync::Arc};
 
 use etherparse::{Ethernet2Header, Ipv4Header};
-
 use rvnic::{sys::RattanDesc, RxRing, TxRing};
 use tokio::{
     runtime::Handle,

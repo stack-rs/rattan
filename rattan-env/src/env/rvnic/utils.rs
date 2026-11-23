@@ -1,7 +1,12 @@
+use std::fs::File;
+use std::io;
+use std::net::IpAddr;
+use std::os::fd::{AsRawFd, RawFd};
+
+use futures::stream::TryStreamExt;
+use nix::sched::{setns, CloneFlags};
 use rtnetlink::{LinkMessageBuilder, LinkUnspec};
 use rvnic::{QueueConfig, QueueRings, Rings};
-use std::io;
-use std::os::fd::{AsRawFd, RawFd};
 use tracing::info;
 
 use super::constants::BATCH_SIZE;
@@ -209,11 +214,6 @@ pub fn prefill_device_queues(
 
     total
 }
-
-use futures::stream::TryStreamExt;
-use nix::sched::{setns, CloneFlags};
-use std::fs::File;
-use std::net::IpAddr;
 
 /// Configure interface inside a specific network namespace using native netlink
 pub fn configure_interface_in_netns(
