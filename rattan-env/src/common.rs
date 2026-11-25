@@ -1,5 +1,7 @@
+use crate::ecn;
 use std::fmt::Debug;
 
+pub use etherparse::IpEcn;
 use etherparse::{Ethernet2Header, Ipv4Header};
 use tokio::time::{Duration, Instant};
 
@@ -32,15 +34,6 @@ pub trait Packet: Debug + 'static + Send {
     fn l3_length(&self) -> usize;
     fn as_slice(&self) -> &[u8];
     fn as_raw_buffer(&mut self) -> &mut [u8];
-
-    fn ip_hdr(&self) -> Option<Ipv4Header> {
-        if let Ok(result) = etherparse::Ethernet2Header::from_slice(self.as_slice()) {
-            if let Ok(ip_hdr) = etherparse::Ipv4Header::from_slice(result.1) {
-                return Some(ip_hdr.0);
-            }
-        }
-        None
-    }
 
     fn ether_hdr(&self) -> Option<Ethernet2Header> {
         etherparse::Ethernet2Header::from_slice(self.as_slice()).map_or(None, |x| Some(x.0))
@@ -86,5 +79,60 @@ pub trait Packet: Debug + 'static + Send {
     fn set_flow_id(&mut self, _flow_id: u32) {}
     fn get_flow_id(&self) -> u32 {
         0
+    }
+}
+
+/// Finds the IP header in an untagged Ethernet II frame.
+///
+/// Returns `None` for unsupported EtherTypes or a missing or mismatched IP
+/// version nibble. Accessors validate the header bytes they need.
+pub fn ethernet_l3_offset(frame: &[u8]) -> Option<usize> {
+    use etherparse::{EtherType, Ethernet2HeaderSlice};
+
+    let ethernet = Ethernet2HeaderSlice::from_slice(frame).ok()?;
+    let offset = Ethernet2Header::LEN;
+    match (ethernet.ether_type(), *frame.get(offset)? >> 4) {
+        (EtherType::IPV4, 4) | (EtherType::IPV6, 6) => Some(offset),
+        _ => None,
+    }
+}
+
+/// Access to a packet's IP header. Implement this trait explicitly for packet
+/// types that expose an IP header, overriding the offset for other layouts.
+pub trait PacketHeader: Packet {
+    /// Byte offset of the IP header, shared by both buffer views.
+    fn l3_offset(&self) -> Option<usize> {
+        ethernet_l3_offset(self.as_slice())
+    }
+
+    /// Returns the IP header and remaining bytes.
+    fn ip_slice(&self) -> Option<&[u8]> {
+        self.as_slice().get(self.l3_offset()?..)
+    }
+
+    /// Returns the mutable IP header and remaining bytes.
+    fn ip_slice_mut(&mut self) -> Option<&mut [u8]> {
+        let offset = self.l3_offset()?;
+        self.as_raw_buffer().get_mut(offset..)
+    }
+
+    /// Parses the IPv4 header, if present.
+    fn ip_hdr(&self) -> Option<Ipv4Header> {
+        Ipv4Header::from_slice(self.ip_slice()?)
+            .ok()
+            .map(|(header, _)| header)
+    }
+
+    /// Reads the ECN codepoint from an IPv4 or IPv6 header.
+    fn ecn(&self) -> Option<IpEcn> {
+        ecn::get_ecn(self.ip_slice()?)
+    }
+
+    /// Marks ECT(0) or ECT(1) as CE, updating the IPv4 header checksum.
+    ///
+    /// Returns `true` for a successful mark or an existing CE codepoint.
+    /// Unsupported or Not-ECT packets return `false` and stay unchanged.
+    fn set_ce(&mut self) -> bool {
+        self.ip_slice_mut().is_some_and(ecn::set_ce)
     }
 }

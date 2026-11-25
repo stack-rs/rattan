@@ -287,6 +287,8 @@ pub struct StdPacket {
     flow_id: u32,
 }
 
+impl PacketHeader for StdPacket {}
+
 impl Packet for StdPacket {
     type PacketGenerator = ();
 

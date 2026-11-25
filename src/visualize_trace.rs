@@ -12,7 +12,7 @@ use netem_trace::{
     Bandwidth, LossPattern,
 };
 use rattan_core::{
-    cells::Packet,
+    cells::PacketHeader,
     config::{BwCellBuildConfig, BwReplayCellBuildConfig, CellBuildConfig},
     error::{Result, VisualizeTraceError as Error},
 };
@@ -232,7 +232,7 @@ impl VisualizeTraceBuilder {
     }
 }
 
-pub fn write_visualize_trace<P: Packet>(
+pub fn write_visualize_trace<P: PacketHeader>(
     output_mode: OutputMode,
     output: impl Write,
     cells: HashMap<String, CellBuildConfig<P>>,
@@ -263,6 +263,7 @@ pub fn write_visualize_trace<P: Packet>(
                     BwCellBuildConfig::DropTail(config) => config.bandwidth,
                     BwCellBuildConfig::Red(config) => config.bandwidth,
                     BwCellBuildConfig::Pie(config) => config.bandwidth,
+                    BwCellBuildConfig::DualPi2(config) => config.bandwidth,
                 }
                 .unwrap_or(Bandwidth::from_bps(u64::MAX));
                 trace_record.add_cell(
@@ -296,6 +297,7 @@ pub fn write_visualize_trace<P: Packet>(
                     BwReplayCellBuildConfig::Infinite(config) => config.get_trace(),
                     BwReplayCellBuildConfig::Red(config) => config.get_trace(),
                     BwReplayCellBuildConfig::Pie(config) => config.get_trace(),
+                    BwReplayCellBuildConfig::DualPi2(config) => config.get_trace(),
                 }?;
 
                 let trace_points = expand_bw_trace(trace.as_mut(), start, end_time)
