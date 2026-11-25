@@ -87,4 +87,8 @@ pub trait Packet: Debug + 'static + Send {
     fn get_flow_id(&self) -> u32 {
         0
     }
+
+    fn debug_log(&self, _args: std::fmt::Arguments) {
+        let _ = _args;
+    }
 }

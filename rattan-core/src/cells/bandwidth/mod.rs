@@ -131,6 +131,7 @@ where
     P: Packet + Send,
 {
     fn enqueue(&self, packet: P) -> Result<(), Error> {
+        packet.debug_log(format_args!("BwCellIngress::enqueue"));
         self.ingress
             .send(packet)
             .map_err(|_| Error::ChannelError("Data channel is closed.".to_string()))?;
@@ -195,6 +196,13 @@ where
             relative_time(new_packet.get_timestamp()),
             relative_time(Instant::now())
         );
+        let linger_packets = self.egress.len();
+        let aqm_inbound_packets = self.packet_queue.inbound_length();
+        let aqm_queued_packets = self.packet_queue.queue_length();
+        new_packet.debug_log(format_args!(
+            "BwCellEgress::dequeue {} pkts linger in channel, {} pkts in AQM inbound buffer, {} pkts in AQM queue of Bw Cell",
+            linger_packets, aqm_inbound_packets, aqm_queued_packets
+        ));
         if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet) {
             // If the `self.transmitting_packet` is Some, the `packet_to_drop` is dropped.
             self.set_transmitting_packet(packet_to_drop);
@@ -286,7 +294,9 @@ where
 
         let packet_to_send = self.transmitting_packet.take().map(|mut p| {
             p.delay_until(self.next_available);
-            p.take()
+            let p = p.take();
+            p.debug_log(format_args!("BwCellEgress exit"));
+            p
         });
         if let Some(next_packet) = self.packet_queue.dequeue_at(self.next_available) {
             // Here, self.transmitting_packet can not be Some, thus the next_packet would not be dropped.
@@ -345,7 +355,9 @@ where
             .take_if(|_| self.next_available <= Instant::now())
             .map(|mut p| {
                 p.delay_until(self.next_available);
-                p.take()
+                let p = p.take();
+                p.debug_log(format_args!("BwCellEgress exit"));
+                p
             })
     }
 
@@ -632,6 +644,13 @@ where
             relative_time(new_packet.get_timestamp()),
             relative_time(Instant::now())
         );
+        let linger_packets = self.egress.len();
+        let aqm_inbound_packets = self.packet_queue.inbound_length();
+        let aqm_queued_packets = self.packet_queue.queue_length();
+        new_packet.debug_log(format_args!(
+            "BwReplayCellEgress::dequeue {} pkts linger in channel, {} pkts in AQM inbound buffer, {} pkts in AQM queue of BwReplay Cell",
+            linger_packets, aqm_inbound_packets, aqm_queued_packets
+        ));
         if let Some(packet_to_drop) = self.packet_queue.enqueue(new_packet) {
             // If the `self.transmitting_packet` is Some, the `packet_to_drop` is dropped.
             self.set_transmitting_packet(packet_to_drop);
@@ -737,7 +756,9 @@ where
 
         let packet_to_send = self.transmitting_packet.take().map(|mut p| {
             p.delay_until(self.next_available);
-            p.take()
+            let p = p.take();
+            p.debug_log(format_args!("BwReplayCellEgress exit"));
+            p
         });
         if let Some(next_packet) = self.packet_queue.dequeue_at(self.next_available) {
             // Here, self.transmitting_packet can not be Some, thus the next_packet would not be dropped.
@@ -798,7 +819,9 @@ where
             .take_if(|_| self.next_available <= Instant::now())
             .map(|mut p| {
                 p.delay_until(self.next_available);
-                p.take()
+                let p = p.take();
+                p.debug_log(format_args!("BwReplayCellEgress exit"));
+                p
             })
     }
 
