@@ -145,7 +145,9 @@ To process many artifacts directories at once, see
 [scripts/parse_time_drift.sh](https://github.com/stack-rs/rattan/blob/main/scripts/parse_time_drift.sh).
 
 Packets are matched by their flow and the TCP/IP header fields that the `compact-tcp` mode records
-(`tcp.seq`, `tcp.ack`, `ip.id`, `ip.checksum`, `tcp.flags` and `tcp.dataofs`).
+(`tcp.seq`, `tcp.ack`, `ip.id`, `tcp.flags` and `tcp.dataofs`). The IPv4 header checksum is
+intentionally not used: CE marking updates it in place (RFC 3168), so the ingress/egress log
+entries and the endpoint pcaps of a marked packet would no longer share the same value.
 Progress, the flows found, and the trace start time are printed to stderr.
 To stdout, one line is printed per packet, sorted by the time it entered Rattan, with tab-separated columns.
 All times are in microseconds, and a value that could not be computed (the packet was not seen at some point)

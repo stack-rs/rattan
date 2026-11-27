@@ -58,13 +58,17 @@ pub enum Direction {
     Sent,
 }
 
+/// Fields used to identify a packet across the Rattan log and the endpoint pcaps.
+///
+/// The IPv4 header checksum is deliberately not part of the key: CE marking updates it in
+/// place (RFC 3168), so the same packet would have different checksums before and after an
+/// ECN-marking queue. The remaining fields are stable across Rattan.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct PacketMatching {
     flow_id: u32,
     seq: u32,
     ack: u32,
     ip_id: u16,
-    checksum: u16,
     flags: u8,
     dataofs: u8,
 }
@@ -184,7 +188,6 @@ fn load_pcap(
         }
 
         let ip_id = ip_hdr.identification();
-        let ip_checksum = ip_hdr.header_checksum();
 
         let l3_header_len = ip_hdr.slice().len();
         let l4_packet = l3_packet.get(l3_header_len..).unwrap_or(&[]);
@@ -212,7 +215,6 @@ fn load_pcap(
             seq: tcp_hdr.sequence_number(),
             ack: tcp_hdr.acknowledgment_number(),
             ip_id,
-            checksum: ip_checksum,
             flags: tcp_hdr.slice()[13],
             dataofs: tcp_hdr.data_offset(),
         };
@@ -252,7 +254,6 @@ fn load_rtl(
                 ack,
                 ip_frag,
                 ip_id,
-                checksum,
                 flags,
                 dataofs,
                 ..
@@ -285,7 +286,6 @@ fn load_rtl(
                 seq,
                 ack,
                 ip_id,
-                checksum,
                 flags,
                 dataofs,
             };
