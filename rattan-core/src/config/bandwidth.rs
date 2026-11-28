@@ -14,7 +14,7 @@ use crate::{
             queue::{self, PacketQueue},
             BwCell, BwReplayCell, BwType,
         },
-        Packet,
+        Packet, PacketHeader,
     },
     core::CellFactory,
     error::Error,
@@ -30,19 +30,20 @@ use serde::{Deserialize, Serialize};
     serde(bound = "", tag = "queue")
 )]
 #[derive(Clone, Debug)]
-pub enum BwCellBuildConfig<P: Packet> {
+pub enum BwCellBuildConfig<P: PacketHeader> {
     Infinite(bandwidth::BwCellConfig<P, queue::InfiniteQueue<P>>),
     DropTail(bandwidth::BwCellConfig<P, queue::DropTailQueue<P>>),
     DropHead(bandwidth::BwCellConfig<P, queue::DropHeadQueue<P>>),
     CoDel(bandwidth::BwCellConfig<P, queue::CoDelQueue<P>>),
     Red(bandwidth::BwCellConfig<P, queue::RedQueue<P>>),
     Pie(bandwidth::BwCellConfig<P, queue::PieQueue<P>>),
+    DualPi2(bandwidth::BwCellConfig<P, queue::DualPi2Queue<P>>),
 }
 
 macro_rules! impl_bw_cell_into_factory {
-    ($($queue:ident),*) => {
+    ($($queue:ident: $packet:ident),*) => {
         $(
-            impl<P: Packet> bandwidth::BwCellConfig<P, queue::$queue<P>> {
+            impl<P: $packet> bandwidth::BwCellConfig<P, queue::$queue<P>> {
                 pub fn into_factory(
                     self,
                 ) -> impl CellFactory<bandwidth::BwCell<P, queue::$queue<P>>> {
@@ -59,12 +60,13 @@ macro_rules! impl_bw_cell_into_factory {
 }
 
 impl_bw_cell_into_factory!(
-    InfiniteQueue,
-    DropTailQueue,
-    DropHeadQueue,
-    CoDelQueue,
-    RedQueue,
-    PieQueue
+    InfiniteQueue: Packet,
+    DropTailQueue: Packet,
+    DropHeadQueue: Packet,
+    CoDelQueue: Packet,
+    RedQueue: Packet,
+    PieQueue: Packet,
+    DualPi2Queue: PacketHeader
 );
 
 #[cfg_attr(
@@ -73,13 +75,14 @@ impl_bw_cell_into_factory!(
     serde(bound = "", tag = "queue")
 )]
 #[derive(Clone, Debug)]
-pub enum BwReplayCellBuildConfig<P: Packet> {
+pub enum BwReplayCellBuildConfig<P: PacketHeader> {
     Infinite(BwReplayQueueConfig<P, queue::InfiniteQueue<P>>),
     DropTail(BwReplayQueueConfig<P, queue::DropTailQueue<P>>),
     DropHead(BwReplayQueueConfig<P, queue::DropHeadQueue<P>>),
     CoDel(BwReplayQueueConfig<P, queue::CoDelQueue<P>>),
     Red(BwReplayQueueConfig<P, queue::RedQueue<P>>),
     Pie(BwReplayQueueConfig<P, queue::PieQueue<P>>),
+    DualPi2(BwReplayQueueConfig<P, queue::DualPi2Queue<P>>),
 }
 
 #[cfg_attr(
@@ -210,9 +213,9 @@ where
 }
 
 macro_rules! impl_bw_replay_cell_into_factory {
-    ($($queue:ident),*) => {
+    ($($queue:ident: $packet:ident),*) => {
         $(
-            impl<P: Packet> BwReplayQueueConfig<P, queue::$queue<P>> {
+            impl<P: $packet> BwReplayQueueConfig<P, queue::$queue<P>> {
                 pub fn into_factory(
                     self,
                 ) -> impl CellFactory<bandwidth::BwReplayCell<P, queue::$queue<P>>> {
@@ -230,10 +233,11 @@ macro_rules! impl_bw_replay_cell_into_factory {
 }
 
 impl_bw_replay_cell_into_factory!(
-    InfiniteQueue,
-    DropTailQueue,
-    DropHeadQueue,
-    CoDelQueue,
-    RedQueue,
-    PieQueue
+    InfiniteQueue: Packet,
+    DropTailQueue: Packet,
+    DropHeadQueue: Packet,
+    CoDelQueue: Packet,
+    RedQueue: Packet,
+    PieQueue: Packet,
+    DualPi2Queue: PacketHeader
 );

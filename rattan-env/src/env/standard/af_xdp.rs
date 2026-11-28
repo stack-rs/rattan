@@ -259,6 +259,8 @@ impl XDPPacket {
     }
 }
 
+impl PacketHeader for XDPPacket {}
+
 impl Packet for XDPPacket {
     type PacketGenerator = XDPSocketRef;
 
